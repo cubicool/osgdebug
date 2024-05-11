@@ -1,0 +1,2 @@
+interceptor_via_lib:libosg
+interceptor_via_lib:libosgGA
