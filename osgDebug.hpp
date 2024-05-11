@@ -146,21 +146,26 @@ public:
 	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const {
 		// pushGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, __FUNCTION__);
 		// messageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, 0, GL_DEBUG_SEVERITY_MEDIUM, -1, "bla bla");
-		messageInsert(Source::APPLICATION, Type::OTHER, 0, Severity::MEDIUM, "bla bla");
+		// messageInsert(Source::APPLICATION, Type::OTHER, 0, Severity::MEDIUM, "bla bla");
 		// popGroup();
 
-		std::cout << " >> " << drawable->getName() << " draw call back - pre drawImplementation" << drawable << std::endl;
+		// std::cout << " >> " << drawable->getName() << " draw call back - pre drawImplementation" << drawable << std::endl;
+		auto start = _time(ri);
 
 		drawable->drawImplementation(ri);
 
-		std::cout << " >> " << drawable->getName() << " draw call back - post drawImplementation" << drawable << std::endl;
+		auto stop = _time(ri);
+
+		std::cout << " >> " << drawable->getName() << ": " << stop - start << std::endl;
+
+		// std::cout << " >> " << drawable->getName() << " draw call back - post drawImplementation" << drawable << std::endl;
 
 		// const_cast<osg::Drawable*>(drawable)->dirtyGLObjects();
-		std::cout << _time(ri) << std::endl;
+		// std::cout << _time(ri) << std::endl;
 	}
 
 protected:
-	constexpr auto _time(const osg::RenderInfo& ri) const {
+	inline double _time(const osg::RenderInfo& ri) const {
 		return ri.getState()->getFrameStamp()->getReferenceTime();
 	}
 };
@@ -354,7 +359,7 @@ public:
 	}
 
 protected:
-	inline constexpr size_t _index() const {
+	inline size_t _index() const {
 		return _i;
 	}
 
@@ -406,6 +411,19 @@ public:
 		_path.push_back(&n.getName());
 
 		std::cout << _getIndent() << _getNameLibraryClass(n) << std::endl;
+		// std::cout << _getIndent() << _getNameLibraryClass(n);
+
+		/* if(n.getNumParents() >= 1) {
+			std::cout << " [";
+
+			for(auto p = 0; p < n.getNumParents(); p++) {
+				std::cout << "parent" << p << "=" << n.getParent(p)->getName() << " ";
+			}
+
+			std::cout << "]";
+		}
+
+		std::cout << std::endl; */
 
 		itraverse(n);
 
@@ -415,7 +433,9 @@ public:
 	virtual void apply(osg::Drawable& d) {
 		_path.push_back(&d.getName());
 
-		std::cout << _getIndent() << _getNameLibraryClass(d) << std::endl;
+		std::cout << _getIndent() << "+ " << _getNameLibraryClass(d) << std::endl;
+
+		itraverse(d);
 
 		_path.pop_back();
 	}
