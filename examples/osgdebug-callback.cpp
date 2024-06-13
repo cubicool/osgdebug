@@ -1,5 +1,8 @@
 // vimrun! ./examples/osgdebug-callback
 
+#include "../osgDebug.hpp"
+
+#if 0
 #include <osg/Geode>
 #include <osg/ShapeDrawable>
 #include <osg/MatrixTransform>
@@ -7,9 +10,9 @@
 #include <osg/PolygonMode>
 
 #include <osgViewer/Viewer>
+#endif
 
-#include "../osgx.hpp"
-#include "../osgDebug.hpp"
+#include <osg/MatrixTransform>
 
 auto createSphere(osgx::vec_t radius, osgx::vec_t pSize=1.0) {
 	auto s = new osg::ShapeDrawable(new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), radius));

@@ -1,12 +1,15 @@
 // vimrun! ./examples/osgdebug-culling
 
-#include <osg/Geode>
-#include <osg/ShapeDrawable>
+#include "../osgDebug.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/io_utils>
 #include <osg/MatrixTransform>
 
-#include <osgViewer/Viewer>
+#include <osgDB/WriteFile>
 
-#include "../osgx.hpp"
+OSGX_ENABLE_WARNINGS
 
 class CullCallback: public osg::NodeCallback {
 public:
@@ -35,7 +38,9 @@ auto createSphereAt(const std::string& name, const osg::Vec3& pos, osgx::vec_t r
 
 	auto s = new osg::ShapeDrawable(new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), radius), t);
 
-	g->setName(name + "_drawable");
+	s->setName(name + "_Drawable");
+
+	g->setName(name + "_Geode");
 	g->addDrawable(s);
 	g->setCullCallback(new DrawableCullCallback());
 
@@ -51,25 +56,25 @@ int main(int argc, char** argv) {
 
 	auto root = osgx::make_ref<osg::Group>();
 
-	for(auto row = 0; row < 5; row++) {
-		for(auto col = 0; col < 5; col++) {
-			std::ostringstream oss;
+	osgx::grid(5, 5, [&root](size_t row, size_t col, const osg::Vec3& pos) {
+		std::cout << row << "x" << col << " = " << (pos * 10.0) << std::endl;
 
-			oss << "Sphere" << row << "x" << col;
+		std::ostringstream oss;
 
-			root->addChild(createSphereAt(
-				oss.str(),
-				osg::Vec3(10.0 * col, 0.0, -10.0 * row),
-				2.5
-			));
-		}
-	}
+		oss << "Sphere_" << row << "x" << col;
+
+		root->addChild(createSphereAt(oss.str(), pos * 10.0, 2.5));
+	});
+
+	auto dv = osgDebug::DrawVisitor();
+
+	root->accept(dv);
 
 	viewer.setSceneData(root);
 
 	auto r = viewer.run();
 
-	// osgDB::writeNodeFile(*root, "tmp.osgt");
+	osgDB::writeNodeFile(*root, "osgdebug-culling.osgt");
 
 	return r;
 }
