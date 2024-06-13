@@ -5,7 +5,9 @@
 	_Pragma("GCC diagnostic ignored \"-Wconversion\"") \
 	_Pragma("GCC diagnostic ignored \"-Wdeprecated-copy\"") \
 	_Pragma("GCC diagnostic ignored \"-Wfloat-conversion\"") \
-	_Pragma("GCC diagnostic ignored \"-Wsign-compare\"")
+	_Pragma("GCC diagnostic ignored \"-Wsign-compare\"") \
+	_Pragma("GCC diagnostic ignored \"-Woverloaded-virtual\"") \
+	_Pragma("GCC diagnostic ignored \"-Wshadow\"")
 
 #define OSGX_ENABLE_WARNINGS \
 	_Pragma("GCC diagnostic pop")
@@ -55,7 +57,7 @@ auto make_ref(const Args&... args) {
 }
 
 template<typename T, typename... Args>
-auto make_ref(nullptr_t, const Args&... args) {
+auto make_ref(std::nullptr_t, const Args&... args) {
 	return osg::ref_ptr<T>();
 }
 
