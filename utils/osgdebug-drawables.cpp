@@ -1,4 +1,4 @@
-// vimrun! ./examples/osgdebug-visitor
+// vimrun! ./utils/osgdebug-drawables
 
 #include "../osgDebug.hpp"
 
@@ -60,27 +60,22 @@ int main(int argc, char** argv) {
 		root = group;
 	}
 
-	// Here is the standard way of applying Visitors to a scene; we all know this.
-	auto nv = osgx::NameVisitor();
+	auto dsv = osgx::DescribeSceneVisitor();
+	auto dv = osgDebug::DrawVisitor();
 
-	root->accept(nv);
+	root->accept(dsv);
+	root->accept(dv);
 
-	// HERE... we demonstrate a handy wrapper syntax for quickly applying a bit of code to a scene
-	// WITHOUT having to create a temporary osg::NodeVisitor instance; note that if you need to
-	// COLLECT data and return some kind of result, that's not really what osgx::LambdaVisitor is
-	// for (although you COULD use the "capture" block of the actual lambda to do just that).
-	osgx::LambdaVisitor<osg::Geode>([](auto& g) {
-		std::cout << &g << ": " << g.getName() << std::endl;
-	})(root);
-
-	// auto dsv = osgx::DescribeSceneVisitor();
-	// root->accept(dsv);
-
-	/* osgViewer::Viewer viewer;
+	// TODO: Make this optional (--view, --no-view, etc).
+	osgViewer::Viewer viewer;
 
 	viewer.setSceneData(root);
 
-	return viewer.run(); */
+	auto r = viewer.run();
+
+	root->accept(dsv);
+
+	return r;
 }
 
 #if 0

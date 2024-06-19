@@ -18,12 +18,20 @@
 
 OSGX_DISABLE_WARNINGS
 
+// TODO: Do I need these?
+#include <osg/io_utils>
+#include <osg/MatrixTransform>
+
 #include <osg/Geode>
 #include <osg/ShapeDrawable>
 #include <osg/Point>
 
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
+
+#include <osgViewer/View>
+// #include <osgViewer/ViewerBase>
+#include <osgViewer/Viewer>
 
 OSGX_ENABLE_WARNINGS
 
@@ -32,9 +40,52 @@ OSGX_ENABLE_WARNINGS
 // TODO: Colored/custom OSG_NOTIFY (output as JSON)
 // TODO: Name Visitor
 // TODO: osgDebug; set "indent" based on pushed group
+// TODO: A generic VisitorKeyHandler<Visitor>(key) that will run ANY visitor on the scene
+// TODO: A visitor/traversal that will determine what is or is NOT culled
 
 namespace osgx {
+// ------------------------------------------------------------------------------------------------
 
+namespace ascii {
+#if 0
+Black: \033[30m
+Red: \033[31m
+Green: \033[32m
+Yellow: \033[33m
+Blue: \033[34m
+Magenta: \033[35m
+Cyan: \033[36m
+White: \033[37m
+
+BACKGROUND: 4*
+BRIGHT FG: 9*
+RESET: 0
+#endif
+}
+
+// TODO: Support std::string&/*.
+// TODO: Make separator configurable.
+using path_t = std::list<std::string>;
+
+struct Path: public path_t {
+public:
+	// using path_t::path_t;
+	// using path_t::push_back;
+	// using path_t::pop_back;
+	// using path_t::begin;
+	// using path_t::end;
+
+	auto str() const {
+		return std::accumulate(begin(), end(), std::string(), [](
+			const auto& l,
+			const auto& r
+		) {
+			return l + "/" + r;
+		});
+	}
+};
+
+// ------------------------------------------------------------------------------------------------
 using vec_t = osg::Vec3::value_type;
 
 namespace literals {
@@ -167,7 +218,7 @@ public:
 
 	template<typename... Args>
 	static auto make_ref(const Args&... args) {
-		return osgx::make_ref<Shape>(args...);
+		return make_ref<Shape>(args...);
 	}
 
 protected:
@@ -330,6 +381,30 @@ protected:
 #endif
 
 // ------------------------------------------------------------------------------------------------
+template<typename Node=osg::Node>
+class LambdaVisitor: public osg::NodeVisitor {
+public:
+	using Function = std::function<void(Node&)>;
+
+	LambdaVisitor(Function function):
+	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
+	_function(function) {
+	}
+
+	virtual void apply(Node& n) override {
+		_function(n);
+
+		traverse(n);
+	}
+
+	virtual void operator()(osg::Node* node) {
+		node->accept(*this);
+	}
+
+protected:
+	Function _function;
+};
+
 class IndexedVisitor: public osg::NodeVisitor {
 public:
 	IndexedVisitor():
@@ -353,7 +428,8 @@ private:
 };
 
 // TODO: Call setUserValue("path", ...), if requested.
-class NameVisitor: public osg::NodeVisitor {
+// class NameVisitor: public osg::NodeVisitor {
+class NameVisitor: public IndexedVisitor {
 public:
 	// TODO: Add a "format" method, where the user can specify: "%c%i".
 	// TODO: Considering adding a "%%" format, which uses a lambda for formatting.
@@ -364,11 +440,21 @@ public:
 	};
 
 	NameVisitor(unsigned int options=Options::CLASS):
-	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
+	// osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
 	_options(options) {
 	}
 
-	virtual void apply(osg::Node& n) {
+	// TODO: See below.
+	virtual void apply(osg::Node& n) override {
+		_setName(n);
+
+		itraverse(n);
+	}
+
+protected:
+	// TODO: Is this REALLY the best way to handle this? If a subclass wants to kick off the apply()
+	// behavior FIRST (rather than before), I can't think of anything else...
+	void _setName(osg::Node& n) {
 		if(!n.getName().size()) {
 			std::ostringstream name;
 
@@ -380,8 +466,6 @@ public:
 
 			_cidmap[cn]++;
 		}
-
-		traverse(n);
 	}
 
 private:
@@ -404,15 +488,51 @@ std::cout << '\u2500' << std::endl;
 */
 
 // TODO: Add terminal color output! :)
-class DescribeSceneVisitor: public IndexedVisitor {
+// class DescribeSceneVisitor: public IndexedVisitor {
+class DescribeSceneVisitor: public NameVisitor {
 public:
+	// TODO: Create a osgViewer::EventHander for running this on a key press!
+	// TODO: Make the common/tedious viewer retrieval cleaner/reusable!
+	/* bool WindowSizeHandler::handle(const osgGA::GUIEventAdapter &ea, osgGA::GUIActionAdapter &aa) {
+		osgViewer::View* view = dynamic_cast<osgViewer::View*>(&aa);
+		if (!view) return false;
+
+		osgViewer::ViewerBase* viewer = view->getViewerBase();
+
+		if (viewer == NULL)
+		{
+			return false;
+		}
+
+		if (ea.getHandled()) return false;
+	} */
+
+	/* class EventHandler: public osgGA::GUIEventHandler {
+	public:
+		virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+			FrameByFrameViewer* viewer = dynamic_cast<FrameByFrameViewer*>(&aa);
+
+			if(viewer && ea.getEventType() == osgGA::GUIEventAdapter::KEYUP) {
+				if(ea.getKey() == 'n') {
+					viewer->_render = true;
+
+					return true;
+				}
+			}
+
+			return false;
+		}
+	}; */
+
 	DescribeSceneVisitor(const std::string& indent="   ", const std::string& separator="/"):
 	_indent(indent),
 	_separator(separator) {
 	}
 
-	virtual void apply(osg::Node& n) {
-		_path.push_back(&n.getName());
+	virtual void apply(osg::Node& n) override {
+		_setName(n);
+
+		_path.push_back(n.getName());
 
 		std::cout << _getIndent() << _getNameLibraryClass(n) << std::endl;
 
@@ -436,7 +556,9 @@ public:
 	}
 
 	virtual void apply(osg::Drawable& d) {
-		_path.push_back(&d.getName());
+		_setName(d);
+
+		_path.push_back(d.getName());
 
 		std::cout << _getIndent() << "+ " << _getNameLibraryClass(d) << std::endl;
 
@@ -466,27 +588,17 @@ protected:
 
 		oss
 			<< t.getName()
-			// << _getPath()
 			<< " (" << t.libraryName()
 			<< "::" << t.className()
-			<< ")"
+			<< ") [" << _path.str()
+			<< "]"
 		;
 
 		return oss.str();
 	}
 
-	std::string _getPath() const {
-		std::ostringstream oss;
-
-		if(_path.size()) {
-			for(auto i : _path) oss << _separator << *i;
-		}
-
-		return oss.str();
-	}
-
 private:
-	std::vector<const std::string*> _path;
+	Path _path;
 
 	std::string _indent;
 	std::string _separator;
@@ -538,5 +650,99 @@ void grid(
 		}
 	}
 }
+
+namespace scene {
+	// TODO: More arguments.
+	auto sphereAt(const std::string& name, const osg::Vec3& pos, vec_t radius) {
+		auto m = new osg::MatrixTransform(osg::Matrix::translate(pos));
+		auto g = new osg::Geode();
+		auto t = new osg::TessellationHints();
+
+		t->setDetailRatio(0.25);
+
+		auto s = new osg::ShapeDrawable(new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), radius), t);
+
+		s->setName(name + ".spr");
+
+		g->setName(name + ".geo");
+		g->addDrawable(s);
+		// g->setCullCallback(new DrawableCullCallback());
+
+		m->setName(name);
+		m->addChild(g);
+		// m->setCullCallback(new CullCallback());
+
+		return m;
+	}
+
+	// TODO: More arguments.
+	auto sphereGrid(size_t rows, size_t cols) {
+		auto g = make_ref<osg::Group>();
+
+		grid(rows, cols, [&g](size_t row, size_t col, const osg::Vec3& pos) {
+			std::cout << row << "x" << col << " = " << (pos * 10.0) << std::endl;
+
+			std::ostringstream oss;
+
+			oss << "Sphere_" << row << "x" << col;
+
+			g->addChild(sphereAt(oss.str(), pos * 10.0, 2.5));
+		});
+
+		return g;
+	}
+}
+
+// TODO: More control over how and with what the visitor is called.
+// TODO: Figure out a better way than just hard-coding the osgViewer::Viewer assumption.
+template<typename Visitor, typename Viewer=osgViewer::Viewer>
+class VisitorEventHandler: public osgGA::GUIEventHandler {
+public:
+	// TODO: OSG needs to make this less ghettofied.
+	using key_t = int;
+
+	VisitorEventHandler(key_t key, Visitor* visitor=nullptr):
+	_key(key),
+	_visitor(visitor) {
+	}
+
+	virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		// TODO: Is this really necessary?
+		if(ea.getHandled()) return false;
+
+		/* auto* view = dynamic_cast<osgViewer::View*>(&aa);
+
+		if(!view) return false;
+
+		auto* viewer = view->getViewerBase(); */
+
+		// auto* viewer = dynamic_cast<osgViewer::Viewer*>(&aa);
+		auto* viewer = dynamic_cast<Viewer*>(&aa);
+
+		if(!viewer) return false;
+
+		if(
+			ea.getEventType() == osgGA::GUIEventAdapter::KEYUP &&
+			ea.getKey() == _key
+		) {
+			auto* root = viewer->getSceneData();
+
+			if(_visitor) root->accept(*_visitor);
+
+			else {
+				auto v = Visitor();
+
+				root->accept(v);
+			}
+		}
+
+		return false;
+	}
+
+protected:
+	key_t _key;
+
+	osg::ref_ptr<Visitor> _visitor;
+};
 
 }

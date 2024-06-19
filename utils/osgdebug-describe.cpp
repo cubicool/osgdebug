@@ -61,18 +61,22 @@ int main(int argc, char** argv) {
 	}
 
 	auto nv = osgx::NameVisitor();
-
-	root->accept(nv);
-
 	auto dsv = osgx::DescribeSceneVisitor();
 
+	root->accept(nv);
 	root->accept(dsv);
 
-	/* osgViewer::Viewer viewer;
+	// TODO: Make this optional (--view, --no-view, etc).
+	osgViewer::Viewer viewer;
 
 	viewer.setSceneData(root);
 
-	return viewer.run(); */
+	auto r = viewer.run();
+
+	root->accept(nv);
+	root->accept(dsv);
+
+	return r;
 }
 
 #if 0

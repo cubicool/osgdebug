@@ -88,6 +88,19 @@ namespace internal {
 
 		_messageInsert(source, type, id, severity, -1, message.c_str());
 	}
+
+	template<typename T>
+	void setupFunction(const std::string& name, T* func) {
+		void* f = osg::getGLExtensionFuncPtr(name.c_str());
+
+		if(f) {
+			*func = reinterpret_cast<T>(f);
+
+			OSG_NOTICE << " >> Bound function '" << name << "' to @" << (void*)(*func) << std::endl;
+		}
+
+		else OSG_NOTICE << " >> FAILED to bind '" << name << "'" << std::endl;
+	}
 }
 
 inline void pushGroup(Source source, GLuint id, const std::string& message) {
@@ -128,6 +141,14 @@ inline void messageInsert(
 	);
 }
 
+void initialize(osg::GraphicsContext* gc) {
+	if(osg::isGLExtensionSupported(gc->getState()->getContextID(), "GL_KHR_debug")) {
+		internal::setupFunction("glPushDebugGroup", &internal::_pushGroup);
+		internal::setupFunction("glPopDebugGroup", &internal::_popGroup);
+		internal::setupFunction("glDebugMessageInsert", &internal::_messageInsert);
+	}
+}
+
 #if 0
 // TODO: osg::Drawable::DrawCallback
 // TODO: osg::DrawableUpdateCallback
@@ -149,9 +170,10 @@ public:
 };
 #endif
 
+// TODO: Make the Buffer size ALSO be a template argument!
 class DrawCallback: public osg::Drawable::DrawCallback {
 public:
-	using Buffer = osgx::aring_buffer<decltype(osg::Timer::instance()->tick()), 200>;
+	using Buffer = osgx::aring_buffer<decltype(osg::Timer::instance()->tick()), 60>;
 
 	DrawCallback(const std::string& name="", osg::Drawable::DrawCallback* cb=nullptr):
 	_name(name),
@@ -184,10 +206,12 @@ public:
 		// const_cast<Buffer&>(_buf).add(t);
 		_buf.add(t);
 
-		std::cout << " > start = " << start << "us, stop = " << stop << "us" << std::endl;
 		std::cout
-			<< " >> " << name << ": " << t << "us; average: "
+			<< "==============================================================" << std::endl
+			<< " > " << name << ": " << t << "us; average: "
 			<< _buf.average() << "us, " << _buf.size() << " samples" << std::endl
+			<< " > start = " << start << "us, stop = " << stop << "us" << std::endl
+			<< "==============================================================" << std::endl
 		;
 	}
 
@@ -237,25 +261,7 @@ public:
 	}
 
 	virtual void operator()(osg::GraphicsContext* gc) {
-		if(osg::isGLExtensionSupported(gc->getState()->getContextID(), "GL_KHR_debug")) {
-			_setupFunction("glPushDebugGroup", &internal::_pushGroup);
-			_setupFunction("glPopDebugGroup", &internal::_popGroup);
-			_setupFunction("glDebugMessageInsert", &internal::_messageInsert);
-		}
-	}
-
-private:
-	template<typename T>
-	void _setupFunction(const std::string& name, T* func) {
-		void* f = osg::getGLExtensionFuncPtr(name.c_str());
-
-		if(f) {
-			*func = reinterpret_cast<T>(f);
-
-			OSG_NOTICE << " >> Bound function '" << name << "' to @" << (void*)(*func) << std::endl;
-		}
-
-		else OSG_NOTICE << " >> FAILED to bind '" << name << "'" << std::endl;
+		initialize(gc);
 	}
 };
 
@@ -305,9 +311,9 @@ private:
 // class FrameByFrameViewer: public Viewer {
 class FrameByFrameViewer: public osgViewer::Viewer {
 public:
-	class RenderKeyHandler: public osgGA::GUIEventHandler {
+	class EventHandler: public osgGA::GUIEventHandler {
 	public:
-		bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) {
+		virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
 			FrameByFrameViewer* viewer = dynamic_cast<FrameByFrameViewer*>(&aa);
 
 			if(viewer && ea.getEventType() == osgGA::GUIEventAdapter::KEYUP) {
@@ -322,10 +328,10 @@ public:
 		}
 	};
 
-	friend class RenderKeyHandler;
+	friend class EventHandler;
 
 	FrameByFrameViewer(unsigned int sleep=100000):
-	_renderKeyHandler(new RenderKeyHandler()),
+	_renderKeyHandler(new EventHandler()),
 	_sleep(sleep) {
 		addEventHandler(_renderKeyHandler);
 	}
@@ -415,7 +421,7 @@ public:
 	}
 
 private:
-	osg::ref_ptr<RenderKeyHandler> _renderKeyHandler;
+	osg::ref_ptr<EventHandler> _renderKeyHandler;
 
 	bool _render = true;
 	size_t _count = 0;

@@ -1,7 +1,7 @@
 set(OSGDEBUG_EXAMPLES
-	# "callback"
-	# "culling"
-	# "viewer"
+	"callback"
+	"culling"
+	"viewer"
 	"visitor"
 )
 

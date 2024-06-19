@@ -1,0 +1,18 @@
+diff --git a/include/osg/Notify b/include/osg/Notify
+index 9e21a8695..0851c92bc 100644
+--- a/include/osg/Notify
++++ b/include/osg/Notify
+@@ -79,7 +79,12 @@ extern OSG_EXPORT std::ostream& notify(const NotifySeverity severity);
+ 
+ inline std::ostream& notify(void) { return notify(osg::INFO); }
+ 
+-#define OSG_NOTIFY(level) if (osg::isNotifyEnabled(level)) osg::notify(level)
++// #define OSG_NOTIFY(level) if (osg::isNotifyEnabled(level)) osg::notify(level)
++#define OSG_NOTIFY(level) if (osg::isNotifyEnabled(level)) (osg::notify(level) \
++   << "\033[32m" << __FILE__ << "\033[0m | " \
++   << "\033[33m" << __LINE__ << "\033[0m | " \
++   << "\033[34m" << __PRETTY_FUNCTION__ << "\033[0m | " \
++   << "\033[0m" )
+ #define OSG_ALWAYS OSG_NOTIFY(osg::ALWAYS)
+ #define OSG_FATAL OSG_NOTIFY(osg::FATAL)
+ #define OSG_WARN OSG_NOTIFY(osg::WARN)
