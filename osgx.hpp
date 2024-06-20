@@ -555,7 +555,7 @@ public:
 		_path.pop_back();
 	}
 
-	virtual void apply(osg::Drawable& d) {
+	virtual void apply(osg::Drawable& d) override {
 		_setName(d);
 
 		_path.push_back(d.getName());
