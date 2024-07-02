@@ -12,10 +12,6 @@
 #define OSGX_ENABLE_WARNINGS \
 	_Pragma("GCC diagnostic pop")
 
-// #include "chronode.hpp"
-
-// CHRONODE_MILLITIMER(OSGX)
-
 OSGX_DISABLE_WARNINGS
 
 // TODO: Do I need these?
@@ -168,7 +164,9 @@ protected:
 // by always replacing the oldest. Provides an "average" method for determining the mean
 // of all values (and skips indices that are not yet populated, if applicable).
 // template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic<T>::value>>
-template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+// template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+// template<typename T, size_t N> //, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic<T>::value>>
 class aring_buffer: public ring_buffer<T, N> {
 public:
 	RING_BUFFER_T(T, N)
@@ -534,7 +532,8 @@ public:
 
 		_path.push_back(n.getName());
 
-		std::cout << _getIndent() << _getNameLibraryClass(n) << std::endl;
+		// std::cout << _getIndent() << _getNameLibraryClass(n) << std::endl;
+		OSG_NOTICE << _getIndent() << _getNameLibraryClass(n) << std::endl;
 
 		/* std::cout << _getIndent() << _getNameLibraryClass(n);
 
@@ -590,8 +589,9 @@ protected:
 			<< t.getName()
 			<< " (" << t.libraryName()
 			<< "::" << t.className()
-			<< ") [" << _path.str()
-			<< "]"
+			// << ") [" << _path.str()
+			// << "]"
+			<< ") @" << &t
 		;
 
 		return oss.str();
@@ -628,7 +628,7 @@ enum class GridSettings {
 	ROWZNEG_COLX
 };
 
-void grid(
+inline void grid(
 	size_t rows,
 	size_t cols,
 	GridCallback cb,
@@ -653,7 +653,7 @@ void grid(
 
 namespace scene {
 	// TODO: More arguments.
-	auto sphereAt(const std::string& name, const osg::Vec3& pos, vec_t radius) {
+	inline auto sphereAt(const std::string& name, const osg::Vec3& pos, vec_t radius) {
 		auto m = new osg::MatrixTransform(osg::Matrix::translate(pos));
 		auto g = new osg::Geode();
 		auto t = new osg::TessellationHints();
@@ -676,7 +676,7 @@ namespace scene {
 	}
 
 	// TODO: More arguments.
-	auto sphereGrid(size_t rows, size_t cols) {
+	inline auto sphereGrid(size_t rows, size_t cols) {
 		auto g = make_ref<osg::Group>();
 
 		grid(rows, cols, [&g](size_t row, size_t col, const osg::Vec3& pos) {

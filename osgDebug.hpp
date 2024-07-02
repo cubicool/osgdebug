@@ -56,11 +56,11 @@ namespace internal {
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageInsert.xhtml
 	using glDebugMessageInsertFunc = void(*)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*);
 
-	glPushDebugGroupFunc _pushGroup = nullptr;
-	glDebugMessageInsertFunc _messageInsert = nullptr;
-	glPopDebugGroupFunc _popGroup = nullptr;
+	static glPushDebugGroupFunc _pushGroup = nullptr;
+	static glDebugMessageInsertFunc _messageInsert = nullptr;
+	static glPopDebugGroupFunc _popGroup = nullptr;
 
-	void pushGroup(Source source, GLuint id, const std::string& message) {
+	inline void pushGroup(Source source, GLuint id, const std::string& message) {
 		if(!_pushGroup) return;
 
 		_pushGroup(
@@ -71,13 +71,13 @@ namespace internal {
 		);
 	}
 
-	void popGroup() {
+	inline void popGroup() {
 		if(!_popGroup) return;
 
 		_popGroup();
 	}
 
-	void messageInsert(
+	inline void messageInsert(
 		GLenum source,
 		GLenum type,
 		GLuint id,
@@ -141,7 +141,7 @@ inline void messageInsert(
 	);
 }
 
-void initialize(osg::GraphicsContext* gc) {
+inline void initialize(osg::GraphicsContext* gc) {
 	if(osg::isGLExtensionSupported(gc->getState()->getContextID(), "GL_KHR_debug")) {
 		internal::setupFunction("glPushDebugGroup", &internal::_pushGroup);
 		internal::setupFunction("glPopDebugGroup", &internal::_popGroup);
