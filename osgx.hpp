@@ -7,7 +7,8 @@
 	_Pragma("GCC diagnostic ignored \"-Wfloat-conversion\"") \
 	_Pragma("GCC diagnostic ignored \"-Wsign-compare\"") \
 	_Pragma("GCC diagnostic ignored \"-Woverloaded-virtual\"") \
-	_Pragma("GCC diagnostic ignored \"-Wshadow\"")
+	_Pragma("GCC diagnostic ignored \"-Wshadow\"") \
+	_Pragma("GCC diagnostic ignored \"-Wunused-but-set-variable\"")
 
 #define OSGX_ENABLE_WARNINGS \
 	_Pragma("GCC diagnostic pop")
@@ -31,7 +32,12 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include <optional>
 #include <numeric>
+#include <regex>
+#include <concepts>
+#include <ranges>
+#include <span>
 
 // TODO: Colored/custom OSG_NOTIFY (output as JSON)
 // TODO: Name Visitor
@@ -42,21 +48,28 @@ OSGX_ENABLE_WARNINGS
 namespace osgx {
 // ------------------------------------------------------------------------------------------------
 
+// TODO: Add an ascii::esc() function that wraps a string in a color.
+// TODO: Add support for foreground/background/bold/etc.
 namespace ascii {
-#if 0
-Black: \033[30m
-Red: \033[31m
-Green: \033[32m
-Yellow: \033[33m
-Blue: \033[34m
-Magenta: \033[35m
-Cyan: \033[36m
-White: \033[37m
+	// const std::string ESC = "\033[..m";
 
-BACKGROUND: 4*
-BRIGHT FG: 9*
-RESET: 0
-#endif
+	/* constexpr std::string esc(std::string_view val) {
+		return std::string("\033[") + std::string(val) + "m";
+	} */
+
+	const std::string BLACK = "\033[30m";
+	const std::string RED = "\033[31m";
+	const std::string GREEN = "\033[32m";
+	const std::string YELLOW = "\033[33m";
+	const std::string BLUE = "\033[34m";
+	const std::string MAGENTA = "\033[35m";
+	const std::string CYAN = "\033[36m";
+	const std::string WHITE = "\033[37m";
+
+	// BACKGROUND: 4*
+	// BRIGHT FG: 9*
+
+	const std::string RESET = "\033[0m";
 }
 
 // TODO: Support std::string&/*.
@@ -98,16 +111,30 @@ namespace literals {
 using namespace literals;
 // using namespace std::literals;
 
+// Handles the standard case, where you really DO want to create an instance; for example:
+//
+//	auto g0 = osgx::make_ref<osg::Geode>();
+//	auto g1 = osgx::make_ref<osg::Geode>(geometry);
+//
+// No matter the arguments--even if NONE are passed--you will end up with an INSTANCE.
 template<typename T, typename... Args>
 auto make_ref(const Args&... args) {
 	return osg::ref_ptr<T>(new T(args...));
 }
 
+// This is a special version that allows you to create a typed `osg::ref_ptr`, but one that is
+// immediately set to `nullptr`; the version above will ALWAYS create an instance, no matter what
+// you pass; this version will allow you to call it like this:
+//
+//	auto g0 = osgx::make_ref<osg::Geode>(nullptr);
+//
+// After the above call, you'll have an empty `osg::ref_ptr`, ready to hold something later on.
 template<typename T, typename... Args>
 auto make_ref(std::nullptr_t, const Args&... args) {
 	return osg::ref_ptr<T>();
 }
 
+// NAMING objects is so common, it's worth having a helper for it!
 template<typename T, typename... Args>
 auto make_nref(const std::string& name, const Args&... args) {
 	auto ref = osg::ref_ptr<T>(new T(args...));
@@ -115,6 +142,26 @@ auto make_nref(const std::string& name, const Args&... args) {
 	ref->setName(name);
 
 	return ref;
+}
+
+constexpr auto tick = [](){ return osg::Timer::instance()->tick(); };
+
+template<typename Func, typename... Args>
+auto call(Func&& func, Args&&... args) -> decltype(auto) {
+	if constexpr(!std::is_void_v<decltype(func(args...))>) {
+		auto start = tick();
+		auto result = func(std::forward<Args>(args)...);
+
+		return std::make_pair(std::optional<decltype(func(args...))>(result), tick() - start);
+	}
+
+	else {
+		auto start = tick();
+
+		func(std::forward<Args>(args)...);
+
+		return std::make_pair(std::nullopt, tick() - start);
+	}
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -164,9 +211,7 @@ protected:
 // by always replacing the oldest. Provides an "average" method for determining the mean
 // of all values (and skips indices that are not yet populated, if applicable).
 // template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic<T>::value>>
-// template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
-// template<typename T, size_t N> //, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
-template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic<T>::value>>
+template<typename T, size_t N, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
 class aring_buffer: public ring_buffer<T, N> {
 public:
 	RING_BUFFER_T(T, N)
@@ -184,201 +229,8 @@ public:
 	}
 };
 
-#if 0
 // ------------------------------------------------------------------------------------------------
-enum class Option {
-	Tesselation,
-	PointSize
-};
-
-// Box, Cone, Cylinder, Capsule
-template<typename S=osg::Sphere>
-class Shape: public osg::ShapeDrawable {
-public:
-	using shape_t = S;
-
-	Shape(vec_t radius=1.0) {
-		_build(radius);
-	}
-
-	template<typename Opt, typename T, typename... Opts>
-	Shape(vec_t radius, Opt opt, const T& val, Opts... opts) {
-		_processOption(opt, val);
-
-		if constexpr(sizeof...(Opts) > 1) {
-			static_assert(sizeof...(Opts) % 2 == 0);
-
-			_processOptions(opts...);
-		}
-
-		_build(radius);
-	}
-
-	template<typename... Args>
-	static auto make_ref(const Args&... args) {
-		return make_ref<Shape>(args...);
-	}
-
-protected:
-	void _build(vec_t radius) {
-		setShape(new S(osg::Vec3(0.0, 0.0, 0.0), radius));
-	}
-
-	template<typename Opt, typename T>
-	void _processOption(Opt opt, const T& val) {
-		auto o = static_cast<Option>(opt);
-
-		if(o == Option::Tesselation) {
-			auto* hints = new osg::TessellationHints();
-
-			hints->setDetailRatio(val);
-
-			setTessellationHints(hints);
-		}
-
-		else {
-			getOrCreateStateSet()->setAttribute(
-				new osg::Point(val),
-				osg::StateAttribute::ON
-			);
-		}
-	}
-};
-
-// ------------------------------------------------------------------------------------------------
-class NodeCallback: public osg::NodeCallback {
-public:
-	NodeCallback(const std::string& msg): _msg(msg) {}
-
-	virtual void operator()(osg::Node* node, osg::NodeVisitor* nv) {
-		std::cout << _msg << ": update callback - pre traverse" << node << std::endl;
-
-		traverse(node,nv);
-
-		std::cout << _msg << ": update callback - post traverse" << node << std::endl;
-	}
-
-private:
-	std::string _msg;
-};
-
-class DrawableDrawCallback: public osg::Drawable::DrawCallback {
-public:
-	virtual void drawImplementation(osg::RenderInfo& renderInfo, const osg::Drawable* drawable) const {
-		// auto ext = renderInfo.getState()->get<osg::GLExtensions>();
-
-		std::cout << ">> " << drawable->getName() << " draw call back - pre drawImplementation" << drawable << std::endl;
-
-		// CHRONODE_START(OSGX, drawable->getName())
-
-		// drawable->drawImplementation(renderInfo);
-
-		// CHRONODE_STOP(OSGX)
-
-		std::cout << ">> " << drawable->getName() << " draw call back - post drawImplementation" << drawable << std::endl;
-
-		// const_cast<osg::Drawable*>(drawable)->dirtyGLObjects();
-	}
-};
-
-class DrawableCullCallback: public osg::DrawableCullCallback {
-public:
-	virtual bool cull(osg::NodeVisitor*, osg::Drawable* drawable, osg::State* /*state*/) const {
-		std::cout << "Drawable cull callback " << drawable << std::endl;
-
-		return false;
-	}
-};
-
-class DrawableUpdateCallback: public osg::DrawableUpdateCallback {
-public:
-	virtual void update(osg::NodeVisitor*, osg::Drawable* drawable) {
-		std::cout << "Drawable update callback " << drawable << std::endl;
-		/* drawable->getOrCreateStateSet()->addUniform(
-			new osg::Uniform( "col", osg::Vec3(0.0f, 0.0f, 0.0f)
-		));
-		drawable->dirtyGLObjects(); */
-	}
-};
-
-class ReadFileCallback: public osgDB::Registry::ReadFileCallback {
-public:
-	virtual osgDB::ReaderWriter::ReadResult readNode(const std::string& fileName, const osgDB::ReaderWriter::Options* options) {
-		std::cout << "before readNode" << std::endl;
-
-		// note when calling the Registry to do the read you have to call readNodeImplementation NOT readNode, as this will
-		// cause on infinite recusive loop.
-		osgDB::ReaderWriter::ReadResult result = osgDB::Registry::instance()->readNodeImplementation(fileName,options);
-
-		std::cout << "after readNode" << std::endl;
-
-		return result;
-	}
-};
-
-class InsertCallbacksVisitor: public osg::NodeVisitor {
-public:
-	InsertCallbacksVisitor(): osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN) {}
-
-	virtual void apply(osg::Node& node) {
-		_checkName(&node);
-
-		// node.setUpdateCallback(new NodeCallback("UPDATE"));
-		// node.setCullCallback(new NodeCallback("CULL"));
-
-		traverse(node);
-	}
-
-	virtual void apply(osg::Geode& geode) {
-		_checkName(&geode);
-
-		// geode.setUpdateCallback(new NodeCallback("UPDATE"));
-
-		// note, it makes no sense to attach a cull callback to the node
-		// at there are no nodes to traverse below the geode, only
-		// drawables, and as such the Cull node callbacks is ignored.
-		// If you wish to control the culling of drawables
-		// then use a drawable cullback...
-
-		for(unsigned int i = 0; i < geode.getNumDrawables(); i++) {
-			auto* d = geode.getDrawable(i);
-
-			_checkName(d);
-
-			std::cout << "Found: " << d->getName() << std::endl;
-
-			d->setUpdateCallback(new DrawableUpdateCallback());
-			// d->setCullCallback(new DrawableCullCallback());
-			d->setDrawCallback(new DrawableDrawCallback());
-		}
-
-		traverse(geode);
-	}
-
-	/* virtual void apply(osg::Transform& node) {
-		apply(static_cast<osg::Node&>(node));
-	} */
-
-protected:
-	void _checkName(osg::Object* o) {
-		const auto& name = o->getName();
-
-		if(!name.size()) {
-			auto n = std::string(o->className()) + std::to_string(_i);
-
-			OSG_NOTICE << "Naming: " << n << std::endl;
-
-			o->setName(n);
-
-			_i++;
-		}
-	}
-
-	size_t _i = 0;
-};
-#endif
-
-// ------------------------------------------------------------------------------------------------
+// TODO: Can this be used with VisitorEventHandler?
 template<typename Node=osg::Node>
 class LambdaVisitor: public osg::NodeVisitor {
 public:
@@ -458,7 +310,7 @@ protected:
 
 			const auto& cn = n.className();
 
-			if(_options & Options::CLASS) name << cn << "_" << _cidmap[cn];
+			if(_options & Options::CLASS) name << "$" << cn << "_" << _cidmap[cn];
 
 			n.setName(name.str());
 
@@ -485,11 +337,9 @@ private:
 std::cout << '\u2500' << std::endl;
 */
 
-// TODO: Add terminal color output! :)
 // class DescribeSceneVisitor: public IndexedVisitor {
 class DescribeSceneVisitor: public NameVisitor {
 public:
-	// TODO: Create a osgViewer::EventHander for running this on a key press!
 	// TODO: Make the common/tedious viewer retrieval cleaner/reusable!
 	/* bool WindowSizeHandler::handle(const osgGA::GUIEventAdapter &ea, osgGA::GUIActionAdapter &aa) {
 		osgViewer::View* view = dynamic_cast<osgViewer::View*>(&aa);
@@ -532,8 +382,7 @@ public:
 
 		_path.push_back(n.getName());
 
-		// std::cout << _getIndent() << _getNameLibraryClass(n) << std::endl;
-		OSG_NOTICE << _getIndent() << _getNameLibraryClass(n) << std::endl;
+		std::cout << _getIndent() << _getNameLibraryClass(n) << std::endl;
 
 		/* std::cout << _getIndent() << _getNameLibraryClass(n);
 
@@ -549,6 +398,9 @@ public:
 
 		std::cout << std::endl; */
 
+		// TODO: Temporary!
+		n.setUserValue("path", _path.str());
+
 		itraverse(n);
 
 		_path.pop_back();
@@ -560,6 +412,9 @@ public:
 		_path.push_back(d.getName());
 
 		std::cout << _getIndent() << "+ " << _getNameLibraryClass(d) << std::endl;
+
+		// TODO: Temporary!
+		d.setUserValue("path", _path.str());
 
 		itraverse(d);
 
@@ -586,13 +441,16 @@ protected:
 		std::ostringstream oss;
 
 		oss
+			// << ascii::CYAN << t.getName() << ascii::RESET
 			<< t.getName()
 			<< " (" << t.libraryName()
 			<< "::" << t.className()
-			// << ") [" << _path.str()
-			// << "]"
-			<< ") @" << &t
+			// << ") [@" << &t << "]"
+			<< ")"
 		;
+
+		// TODO: When should this be included?
+		if(false) oss << " {" << _path.str() << "}";
 
 		return oss.str();
 	}
@@ -604,56 +462,9 @@ private:
 	std::string _separator;
 };
 
-#if 0
-	virtual void apply(osg::Geode& geode) {
-		geode.setUpdateCallback(new UpdateCallback());
-
-		/* for(unsigned int i=0;i<geode.getNumDrawables();++i) {
-			geode.getDrawable(i)->setUpdateCallback(new DrawableUpdateCallback());
-			geode.getDrawable(i)->setCullCallback(new DrawableCullCallback());
-			geode.getDrawable(i)->setDrawCallback(new DrawableDrawCallback());
-		} */
-	}
-
-	virtual void apply(osg::Transform& node) {
-		apply(static_cast<osg::Node&>(node));
-	}
-#endif
-
-using GridCallback = std::function<void(size_t row, size_t col, const osg::Vec3& pos)>;
-
-// TODO: Add different orientations to account for different view coordinate systems.
-enum class GridSettings {
-	ROWZ_COLX,
-	ROWZNEG_COLX
-};
-
-inline void grid(
-	size_t rows,
-	size_t cols,
-	GridCallback cb,
-	GridSettings gs=GridSettings::ROWZNEG_COLX
-) {
-	for(decltype(rows) row = 0; row < rows; row++) {
-		for(decltype(cols) col = 0; col < cols; col++) {
-			if(gs == GridSettings::ROWZ_COLX) cb(row, col, osg::Vec3(
-				static_cast<vec_t>(col),
-				0.0_v,
-				static_cast<vec_t>(row)
-			));
-
-			else cb(row, col, osg::Vec3(
-				static_cast<vec_t>(col),
-				0.0_v,
-				-static_cast<vec_t>(row)
-			));
-		}
-	}
-}
-
 namespace scene {
 	// TODO: More arguments.
-	inline auto sphereAt(const std::string& name, const osg::Vec3& pos, vec_t radius) {
+	auto sphereAt(const std::string& name, const osg::Vec3& pos, vec_t radius) {
 		auto m = new osg::MatrixTransform(osg::Matrix::translate(pos));
 		auto g = new osg::Geode();
 		auto t = new osg::TessellationHints();
@@ -674,25 +485,10 @@ namespace scene {
 
 		return m;
 	}
-
-	// TODO: More arguments.
-	inline auto sphereGrid(size_t rows, size_t cols) {
-		auto g = make_ref<osg::Group>();
-
-		grid(rows, cols, [&g](size_t row, size_t col, const osg::Vec3& pos) {
-			std::cout << row << "x" << col << " = " << (pos * 10.0) << std::endl;
-
-			std::ostringstream oss;
-
-			oss << "Sphere_" << row << "x" << col;
-
-			g->addChild(sphereAt(oss.str(), pos * 10.0, 2.5));
-		});
-
-		return g;
-	}
 }
 
+// Runs the passed-in Visitor on the scene when a specified key is pressed.
+//
 // TODO: More control over how and with what the visitor is called.
 // TODO: Figure out a better way than just hard-coding the osgViewer::Viewer assumption.
 template<typename Visitor, typename Viewer=osgViewer::Viewer>
@@ -744,5 +540,143 @@ protected:
 
 	osg::ref_ptr<Visitor> _visitor;
 };
+
+// #define osgx_callthis(eval) osgx::call([this]() { eval ; })
+
+class FilterNotifyHandler: public osg::NotifyHandler {
+public:
+	template<typename... Args>
+	FilterNotifyHandler(Args&&... args) {
+		(addFilter(std::forward<Args>(args)), ...);
+
+		// Define patterns to filter/exclude!
+		_filter.emplace_back("^draw()");
+		_filter.emplace_back("^cull()");
+		_filter.emplace_back("^end draw()");
+		_filter.emplace_back("^end cull()");
+		_filter.emplace_back(R"(^BufferObject::releaseGLObjects\(0)");
+		_filter.emplace_back(R"(^BufferData::releaseGLObjects\(0)");
+	}
+
+	void notify(osg::NotifySeverity severity, const char* message) override {
+		std::string msg(message);
+
+		for(const auto& f : _filter) {
+			if(std::regex_search(msg, f)) return;
+		}
+
+		std::cerr << msg;
+	}
+
+	void addFilter(const std::string& patternStr) {
+		try {
+			_filter.emplace_back(patternStr);
+		}
+
+		catch(const std::regex_error& e) {
+			std::cerr << "Invalid regex pattern: " << patternStr << " (" << e.what() << ")\n";
+		}
+	}
+
+private:
+	std::vector<std::regex> _filter;
+};
+
+template<typename T>
+concept OSGArray = requires {
+	typename T::ElementDataType;
+	requires std::derived_from<T, osg::Array>;
+};
+
+template<OSGArray BaseArray>
+class Array: public BaseArray {
+public:
+	// using BaseArray = BaseArray;
+	using ElementDataType = typename BaseArray::ElementDataType;
+
+	using BaseArray::size;
+	using BaseArray::resize;
+	using BaseArray::begin;
+	using BaseArray::end;
+	using BaseArray::assign;
+
+	META_Object(osgx, Array)
+
+	Array() = default;
+
+	Array(const Array& arr, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
+	BaseArray(arr, co) {
+	}
+
+	Array(std::initializer_list<ElementDataType> init) {
+		assign(init.begin(), init.end());
+	}
+
+	template<std::ranges::input_range R>
+	explicit Array(R&& r) {
+		resize(std::ranges::size(r));
+
+		std::ranges::copy(r, begin());
+	}
+
+	template<typename... Args>
+	requires(std::convertible_to<Args, ElementDataType> && ...)
+	explicit Array(Args&&... args) {
+		constexpr size_t N = sizeof...(Args);
+
+		resize(N);
+
+		// I really, REALLY love "code folding", even though I need LLM/AI help at times to get
+		// the syntax exactly right.
+		size_t i = 0;
+
+		(( (*this)[i++] = ElementDataType(std::forward<Args>(args)) ), ...);
+	}
+
+	// osg::Object* cloneType() const override { return new Array(); }
+	// osg::Object* clone(const osg::CopyOp&) const override { return new Array(*this); }
+
+	// --- Full-span access ----------------------------------------------------
+	auto span() { return std::span<ElementDataType>(&(*this)[0], size()); }
+	auto span() const { return std::span<const ElementDataType>(&(*this)[0], size()); }
+
+	// --- Partial-span access -------------------------------------------------
+	auto span(size_t start, size_t count) {
+		return std::span<ElementDataType>(&(*this)[start], count);
+	}
+
+	auto span(size_t start, size_t count) const {
+		return std::span<const ElementDataType>(&(*this)[start], count);
+	}
+
+	// --- Range-based views ---------------------------------------------------
+	auto view() { return std::ranges::subrange(begin(), end()); }
+	auto view() const { return std::ranges::subrange(begin(), end()); }
+
+	// --- Partial-range view --------------------------------------------------
+	auto view(size_t start, size_t count) {
+		return std::ranges::subrange(begin() + start, begin() + start + count);
+	}
+
+	auto view(size_t start, size_t count) const {
+		return std::ranges::subrange(begin() + start, begin() + start + count);
+	}
+
+	template<typename... Args>
+	// static osg::ref_ptr<Array> create(Args&&... args) {
+	static auto create(Args&&... args) {
+		return osg::ref_ptr<Array>(new Array(std::forward<Args>(args)...));
+	}
+
+	// static osg::ref_ptr<Array> create(std::initializer_list<ElementDataType> init) {
+	static auto create(std::initializer_list<ElementDataType> init) {
+		return osg::ref_ptr<Array>(new Array(init));
+	}
+};
+
+using Vec2Array = Array<osg::Vec2Array>;
+using Vec3Array = Array<osg::Vec3Array>;
+using Vec4Array = Array<osg::Vec4Array>;
+using FloatArray = Array<osg::FloatArray>;
 
 }

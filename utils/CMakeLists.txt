@@ -4,5 +4,5 @@ set(OSGDEBUG_UTILS
 )
 
 foreach(util IN LISTS OSGDEBUG_UTILS)
-	osgdebug_compile("${util}")
+	osgdebug_add_executable("${util}")
 endforeach()

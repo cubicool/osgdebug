@@ -10,7 +10,12 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-// TODO: Add notification mirroring of debug calls.
+// TODO: DELETE ME ASAP!
+#include <iostream>
+
+// TODO: Add notification mirroring of debug calls (to std::cout, osg::notify, etc).
+// TODO: Make some macro wrappers for pushGroup/insertMessage that use __FUNCTION__, __FILE__, etc.
+// TODO: pushGroup/insertMessage accept an "id", which we probably should manage automatically.
 
 namespace osgDebug {
 
@@ -23,6 +28,8 @@ enum class Severity: GLenum {
 	NOTIFICATION = 0x826B
 };
 
+// TODO: The default "source" (for pushGroup/messageInsert) is APPLICATION; does this make sense?
+// What are the others even FOR!?
 enum class Source: GLenum {
 	API = 0x8246,
 	APPLICATION = 0x824A,
@@ -37,7 +44,7 @@ enum class Type: GLenum {
 	ERROR = 0x824C,
 	MARKER = 0x8268,
 	OTHER = 0x8251,
-	PERFORMANCE= 0x8250,
+	PERFORMANCE = 0x8250,
 	POP_GROUP = 0x826A,
 	PORTABILITY = 0x824F,
 	PUSH_GROUP = 0x8269,
@@ -45,6 +52,10 @@ enum class Type: GLenum {
 };
 
 namespace internal {
+	inline constexpr void print(const auto&... args) {
+		((std::cout << args), ...) << std::endl;
+	}
+
 	// TODO: using = std::function<void(GLenum, GLuint, GLsizei, const char*)>;
 	//
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPushDebugGroup.xhtml
@@ -56,11 +67,11 @@ namespace internal {
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageInsert.xhtml
 	using glDebugMessageInsertFunc = void(*)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*);
 
-	static glPushDebugGroupFunc _pushGroup = nullptr;
-	static glDebugMessageInsertFunc _messageInsert = nullptr;
-	static glPopDebugGroupFunc _popGroup = nullptr;
+	glPushDebugGroupFunc _pushGroup = nullptr;
+	glPopDebugGroupFunc _popGroup = nullptr;
+	glDebugMessageInsertFunc _messageInsert = nullptr;
 
-	inline void pushGroup(Source source, GLuint id, const std::string& message) {
+	void pushGroup(Source source, GLuint id, const std::string& message) {
 		if(!_pushGroup) return;
 
 		_pushGroup(
@@ -69,15 +80,18 @@ namespace internal {
 			-1,
 			message.c_str()
 		);
+
+		// TODO: Temporary!
+		print("osgDebug::pushGroup | ", osgx::ascii::CYAN, message, osgx::ascii::RESET);
 	}
 
-	inline void popGroup() {
+	void popGroup() {
 		if(!_popGroup) return;
 
 		_popGroup();
 	}
 
-	inline void messageInsert(
+	void messageInsert(
 		GLenum source,
 		GLenum type,
 		GLuint id,
@@ -87,6 +101,9 @@ namespace internal {
 		if(!_messageInsert) return;
 
 		_messageInsert(source, type, id, severity, -1, message.c_str());
+
+		// TODO: Temporary!
+		print("osgDebug::messageInsert | ", osgx::ascii::YELLOW, message, osgx::ascii::RESET);
 	}
 
 	template<typename T>
@@ -96,10 +113,10 @@ namespace internal {
 		if(f) {
 			*func = reinterpret_cast<T>(f);
 
-			OSG_NOTICE << " >> Bound function '" << name << "' to @" << (void*)(*func) << std::endl;
+			std::cout << " >> Bound function '" << name << "' to @" << (void*)(*func) << std::endl;
 		}
 
-		else OSG_NOTICE << " >> FAILED to bind '" << name << "'" << std::endl;
+		else std::cout << " >> FAILED to bind '" << name << "'" << std::endl;
 	}
 }
 
@@ -116,23 +133,13 @@ inline void popGroup() {
 }
 
 inline void messageInsert(
-	GLenum source,
-	GLenum type,
-	GLuint id,
-	GLenum severity,
-	const std::string& message
-) {
-	internal::messageInsert(source, type, id, severity, message);
-}
-
-inline void messageInsert(
 	Source source,
 	Type type,
 	GLuint id,
 	Severity severity,
 	const std::string& message
 ) {
-	messageInsert(
+	internal::messageInsert(
 		static_cast<std::underlying_type_t<Source>>(source),
 		static_cast<std::underlying_type_t<Type>>(type),
 		id,
@@ -141,7 +148,19 @@ inline void messageInsert(
 	);
 }
 
-inline void initialize(osg::GraphicsContext* gc) {
+inline void messageInsert(
+	Type type,
+	GLuint id,
+	Severity severity,
+	const std::string& message
+) {
+	messageInsert(Source::APPLICATION, type, id, severity, message);
+}
+
+// TODO: More messageInsert() wrappers for Type/Severity.
+
+// TODO: Add a check for whether we're already initialized.
+void initialize(osg::GraphicsContext* gc) {
 	if(osg::isGLExtensionSupported(gc->getState()->getContextID(), "GL_KHR_debug")) {
 		internal::setupFunction("glPushDebugGroup", &internal::_pushGroup);
 		internal::setupFunction("glPopDebugGroup", &internal::_popGroup);
@@ -189,6 +208,8 @@ public:
 	}
 
 	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const {
+		// const_cast<osg::Drawable*>(drawable)->dirtyGLObjects();
+
 		auto start = osg::Timer::instance()->tick();
 
 		if(!_cb) drawable->drawImplementation(ri);
@@ -196,7 +217,7 @@ public:
 		else _cb->drawImplementation(ri, drawable);
 
 		auto stop = osg::Timer::instance()->tick();
-		const auto& name = _name.size() ? _name : drawable->getName();
+		// const auto& name = _name.size() ? _name : drawable->getName();
 		auto t = stop - start;
 
 		// TODO: THIS. FEELS. WRONG. Why is drawImplementation const? Perhaps OSG wants us to put
@@ -206,13 +227,20 @@ public:
 		// const_cast<Buffer&>(_buf).add(t);
 		_buf.add(t);
 
-		std::cout
+		std::string path;
+
+		drawable->getUserValue("path", path);
+
+		std::cout << " >> [" << path << "]: " << t << "us" << std::endl;
+
+		/* std::cout
 			<< "==============================================================" << std::endl
+			<< " > " << path << std::endl
 			<< " > " << name << ": " << t << "us; average: "
 			<< _buf.average() << "us, " << _buf.size() << " samples" << std::endl
 			<< " > start = " << start << "us, stop = " << stop << "us" << std::endl
 			<< "==============================================================" << std::endl
-		;
+		; */
 	}
 
 protected:
@@ -240,6 +268,7 @@ public:
 		std::cout << " >> Setting dcb on " << d.getName() << std::endl;
 
 		d.setDrawCallback(dcb);
+		d.dirtyGLObjects();
 
 		traverse(d);
 	}
@@ -301,6 +330,86 @@ public:
 #define GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR  0x824E
 #endif
 
+// template<typename V=osgViewer::Viewer>
+class Viewer: public osgViewer::Viewer {
+public:
+	virtual void frame(double st=USE_REFERENCE_TIME) override {
+		if(_done) return;
+
+		pushGroup(1, "osgDebug::Viewer::frame()");
+
+		if(_firstFrame) {
+			viewerInit();
+
+			if(!isRealized()) realize();
+
+			_firstFrame = false;
+		}
+
+		advance(st);
+		// eventTraversal();
+		// updateTraversal();
+
+		auto [_et, et] = osgx::call([this]() { eventTraversal(); });
+		auto [_ut, ut] = osgx::call([this]() { updateTraversal(); });
+		auto [_rt, rt] = osgx::call([this]() { renderingTraversals(); });
+
+		// TODO: Improve this (OR JUST USE libfmt, jeeze...)
+		std::ostringstream msg;
+
+		msg
+			// << "frame #" << _count << " ["
+			<< "frame #" << getFrameStamp()->getFrameNumber() << " ["
+			<< "event=" << et
+			<< ", update=" << ut
+			<< ", rendering=" << rt
+			<< "](us)"
+		;
+
+		// _count++;
+
+		messageInsert(Type::PERFORMANCE, 0, Severity::NOTIFICATION, msg.str());
+		popGroup();
+	}
+
+	virtual int run() override {
+		while(!done()) frame();
+
+		return 0;
+	}
+
+	virtual void renderingTraversals() override {
+		// - Calculate frame time/number.
+		// - Collect stats (if enabled).
+		// - Iterate over getScenes().
+		//   - Call scene.DatabasePager.signalBeginFrame().
+		//   - Call scene.ImagePager.signalBeginFrame().
+		//   - Compute bounds of scene.
+		// - Iterate over getCameras().
+		//   - Call camera.getRenderer().cull().
+		// - Iterate over getContexts(), defined in subclass (Viewer/CompositeViewer).
+		//   - Make context thread active.
+		//   - Call context.runOperations().
+		//     - Iterate over all context cameras.
+		//       - Call camera.getRenderer()(context).
+		//         - osgViewer::Renderer calls either cull_draw() or draw(), FINALLY
+		//           leading to our Drawable! The order of function call is:
+		//             - SceneView::draw()
+		//             - RenderBin::draw()
+		// - Iterate over getContexts().
+		//   - Make context thread active.
+		//   - Call context.swapBuffers().
+		// - Iterate over getScenes().
+		//   - Call scene.DatabasePager.signalEndFrame().
+		//   - Call scene.ImagePager.signalEndFrame().
+		// - Update stats (if enabled).
+		ViewerBase::renderingTraversals();
+	}
+
+private:
+	// size_t _count = 0;
+};
+
 // TODO: Create a new UpdateVisitor and set it on FrameByFrameViewer->setUpdateVisitor; our
 // UpdateVisitor should have an API for fetching top-level stuff.
 
@@ -309,7 +418,7 @@ public:
 // TODO: Should this inherit from a tempalted Viewer instead?
 // template<typename V=osgViewer::Viewer>
 // class FrameByFrameViewer: public Viewer {
-class FrameByFrameViewer: public osgViewer::Viewer {
+class FrameByFrameViewer: public Viewer {
 public:
 	class EventHandler: public osgGA::GUIEventHandler {
 	public:
@@ -336,7 +445,7 @@ public:
 		addEventHandler(_renderKeyHandler);
 	}
 
-	virtual void frame(double st=USE_REFERENCE_TIME) {
+	virtual void frame(double st=USE_REFERENCE_TIME) override {
 		if(_done) return;
 
 		if(_firstFrame) {
@@ -352,8 +461,9 @@ public:
 		updateTraversal();
 
 		if(_render) {
-			OSG_NOTICE
-				<< "FrameByFrameViewer frame #" << _count
+			std::cout
+				// << "FrameByFrameViewer frame #" << _count
+				<< "FrameByFrameViewer frame #" << getFrameStamp()->getFrameNumber()
 				<< " at simulated time " << st
 				<< std::endl
 			;
@@ -362,28 +472,14 @@ public:
 
 			_render = false;
 
-			_count++;
+			// _count++;
 		}
 	}
 
-	virtual int run() {
-		// TODO: Use a better mechanism (osg::Timer) to manage "simulation time."
-		// auto timer = osg::Timer::instance();
+	virtual int run() override {
 		double st = 0.0;
 
-		/* auto wrap = [this](auto str, auto func) {
-			OSG_NOTICE << " >> " << str << std::endl;
-
-			func();
-
-			OSG_NOTICE << " << " << str << std::endl;
-		}; */
-
 		while(!done()) {
-			// TODO: This is the frame() code!
-			// wrap("test", std::bind(&FrameByFrameViewer::test, this));
-			// wrap("test...", [this]() { OSG_NOTICE << "..." << std::endl; });
-
 			frame(st);
 
 			OpenThreads::Thread::microSleep(_sleep);
@@ -394,37 +490,11 @@ public:
 		return 0;
 	}
 
-	virtual void renderingTraversals() {
-		// - Calculate frame time/number.
-		// - Collect stats (if enabled).
-		// - Iterate over getScenes().
-		//   - Call scene.DatabasePager.signalBeginFrame().
-		//   - Call scene.ImagePager.signalBeingFrame().
-		//   - Compute bounds of scene.
-		// - Iterate over getCameras().
-		//   - Call camera.getRenderer().cull().
-		// - Iterate over getContexts(), defined in subclass (Viewer/CompositeViewer).
-		//   - Make context thread active.
-		//   - Call context.runOperations().
-		//     - Iterate over all context cameras.
-		//       - Call camera.getRenderer()(context).
-		//         - osgViewer::Renderer calls either cull_draw() or draw(), FINALLY
-		//           leading to our Drawable!
-		// - Iterate over getContexts().
-		//   - Make context thread active.
-		//   - Call context.swapBuffers().
-		// - Iterate over getScenes().
-		//   - Call scene.DatabasePager.signalEndFrame().
-		//   - Call scene.ImagePager.signalEndFrame().
-		// - Update stats (if enabled).
-		ViewerBase::renderingTraversals();
-	}
-
 private:
 	osg::ref_ptr<EventHandler> _renderKeyHandler;
 
 	bool _render = true;
-	size_t _count = 0;
+	// size_t _count = 0;
 
 	// The value to sleep between each render frame check; same as the value that would
 	// be passed to the Unix microsleep() function.

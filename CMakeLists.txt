@@ -50,13 +50,10 @@ set(CMAKE_SHARED_LINKER_FLAGS_ASAN
 	"Linker lags to be used to create shared libraries for Asan build type." FORCE
 )
 
-function(OSGDEBUG_COMPILE _target)
-	add_executable("osgdebug-${_target}" "osgdebug-${_target}.cpp" "../osgDebug.hpp")
-
-	# target_compile_features(osgDebug INTERFACE cxx_std_20 REQUIRED)
-	target_compile_features("osgdebug-${_target}" PUBLIC cxx_std_20)
-	target_link_libraries("osgdebug-${_target}" PUBLIC ${OPENSCENEGRAPH_LIBRARIES})
-	target_include_directories("osgdebug-${_target}" PUBLIC ${OPENSCENEGRAPH_INCLUDE_DIRS})
+function(OSGDEBUG_COMPILE_OPTIONS _target)
+	target_compile_features("${_target}" PUBLIC cxx_std_20)
+	target_link_libraries("${_target}" PUBLIC ${OPENSCENEGRAPH_LIBRARIES})
+	target_include_directories("${_target}" PUBLIC ${OPENSCENEGRAPH_INCLUDE_DIRS})
 
 	if(WIN32)
 		# target_compile_options(osgDebug PRIVATE /W4 /wd4100)
@@ -77,7 +74,7 @@ function(OSGDEBUG_COMPILE _target)
 		# target_compile_options(_target PRIVATE -DCHRONODE_ENABLED)
 
 	else(WIN32)
-		target_compile_options("osgdebug-${_target}" PRIVATE
+		target_compile_options("${_target}" PRIVATE
 			-W
 			-Wall
 			-Wshadow
@@ -88,5 +85,16 @@ function(OSGDEBUG_COMPILE _target)
 	endif()
 endfunction()
 
+function(OSGDEBUG_ADD_EXECUTABLE _target)
+	add_executable("osgdebug-${_target}"
+		"osgdebug-${_target}.cpp"
+		"../osgx.hpp"
+		"../osgDebug.hpp"
+	)
+
+	osgdebug_compile_options("osgdebug-${_target}")
+endfunction()
+
 add_subdirectory("examples")
 add_subdirectory("utils")
+add_subdirectory("plugins")
