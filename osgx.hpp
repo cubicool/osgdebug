@@ -15,7 +15,7 @@
 
 OSGX_DISABLE_WARNINGS
 
-// TODO: Do I need these?
+// TODO: Trim these down to only the essential when this header settles.
 #include <osg/io_utils>
 #include <osg/MatrixTransform>
 
@@ -25,6 +25,7 @@ OSGX_DISABLE_WARNINGS
 
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
+#include <osgDB/WriteFile>
 
 #include <osgViewer/View>
 // #include <osgViewer/ViewerBase>
@@ -38,44 +39,15 @@ OSGX_ENABLE_WARNINGS
 #include <concepts>
 #include <ranges>
 #include <span>
-
-// TODO: Colored/custom OSG_NOTIFY (output as JSON)
-// TODO: Name Visitor
-// TODO: osgDebug; set "indent" based on pushed group
-// TODO: A generic VisitorKeyHandler<Visitor>(key) that will run ANY visitor on the scene
-// TODO: A visitor/traversal that will determine what is or is NOT culled
+#include <atomic>
 
 namespace osgx {
 // ------------------------------------------------------------------------------------------------
 
-// TODO: Add an ascii::esc() function that wraps a string in a color.
-// TODO: Add support for foreground/background/bold/etc.
-namespace ascii {
-	// const std::string ESC = "\033[..m";
-
-	/* constexpr std::string esc(std::string_view val) {
-		return std::string("\033[") + std::string(val) + "m";
-	} */
-
-	const std::string BLACK = "\033[30m";
-	const std::string RED = "\033[31m";
-	const std::string GREEN = "\033[32m";
-	const std::string YELLOW = "\033[33m";
-	const std::string BLUE = "\033[34m";
-	const std::string MAGENTA = "\033[35m";
-	const std::string CYAN = "\033[36m";
-	const std::string WHITE = "\033[37m";
-
-	// BACKGROUND: 4*
-	// BRIGHT FG: 9*
-
-	const std::string RESET = "\033[0m";
-}
-
-// TODO: Support std::string&/*.
-// TODO: Make separator configurable.
+// TODO: Support std::string&/* and string_view?
 using path_t = std::list<std::string>;
 
+template<char Separator='/'>
 struct Path: public path_t {
 public:
 	// using path_t::path_t;
@@ -89,10 +61,21 @@ public:
 			const auto& l,
 			const auto& r
 		) {
-			return l + "/" + r;
+			return l + Separator + r;
 		});
 	}
 };
+
+using LinuxPath = Path<'/'>;
+using WindowsPath = Path<'\\'>; // note the double-backslash escape
+using DotPath = Path<'.'>; // bonus: useful for OSG node name hierarchies
+
+#ifdef _WIN32
+	using FilePath = WindowsPath;
+
+#else
+	using FilePath = LinuxPath;
+#endif
 
 // ------------------------------------------------------------------------------------------------
 using vec_t = osg::Vec3::value_type;
@@ -111,15 +94,19 @@ namespace literals {
 using namespace literals;
 // using namespace std::literals;
 
+template<typename T>
+concept OSGReferenced = std::derived_from<T, osg::Referenced>;
+
 // Handles the standard case, where you really DO want to create an instance; for example:
 //
 //	auto g0 = osgx::make_ref<osg::Geode>();
 //	auto g1 = osgx::make_ref<osg::Geode>(geometry);
 //
 // No matter the arguments--even if NONE are passed--you will end up with an INSTANCE.
-template<typename T, typename... Args>
-auto make_ref(const Args&... args) {
-	return osg::ref_ptr<T>(new T(args...));
+
+template<OSGReferenced T, typename... Args>
+auto make_ref(Args&&... args) {
+	return osg::ref_ptr<T>(new T(std::forward<Args>(args)...));
 }
 
 // This is a special version that allows you to create a typed `osg::ref_ptr`, but one that is
@@ -129,15 +116,15 @@ auto make_ref(const Args&... args) {
 //	auto g0 = osgx::make_ref<osg::Geode>(nullptr);
 //
 // After the above call, you'll have an empty `osg::ref_ptr`, ready to hold something later on.
-template<typename T, typename... Args>
-auto make_ref(std::nullptr_t, const Args&... args) {
+template<OSGReferenced T>
+auto make_ref(std::nullptr_t) {
 	return osg::ref_ptr<T>();
 }
 
 // NAMING objects is so common, it's worth having a helper for it!
-template<typename T, typename... Args>
-auto make_nref(const std::string& name, const Args&... args) {
-	auto ref = osg::ref_ptr<T>(new T(args...));
+template<OSGReferenced T, typename... Args>
+auto make_nref(const std::string& name, Args&&... args) {
+	auto ref = osg::ref_ptr<T>(new T(std::forward<Args>(args)...));
 
 	ref->setName(name);
 
@@ -146,7 +133,9 @@ auto make_nref(const std::string& name, const Args&... args) {
 
 constexpr auto tick = [](){ return osg::Timer::instance()->tick(); };
 
-template<typename Func, typename... Args>
+// osgx::call() with the decltype(func(args...)) doubling is a bit fragile (the return type is
+// evaluated twice). In C++20 you'd use std::invoke_result_t. Not broken, just dated.
+/* template<typename Func, typename... Args>
 auto call(Func&& func, Args&&... args) -> decltype(auto) {
 	if constexpr(!std::is_void_v<decltype(func(args...))>) {
 		auto start = tick();
@@ -159,6 +148,25 @@ auto call(Func&& func, Args&&... args) -> decltype(auto) {
 		auto start = tick();
 
 		func(std::forward<Args>(args)...);
+
+		return std::make_pair(std::nullopt, tick() - start);
+	}
+} */
+template<typename Func, typename... Args>
+auto call(Func&& func, Args&&... args) -> decltype(auto) {
+	using Result = std::invoke_result_t<Func, Args...>;
+
+	if constexpr(!std::is_void_v<Result>) {
+		auto start = tick();
+		auto result = std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
+
+		return std::make_pair(std::optional<Result>(std::move(result)), tick() - start);
+	}
+
+	else {
+		auto start = tick();
+
+		std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
 
 		return std::make_pair(std::nullopt, tick() - start);
 	}
@@ -184,6 +192,9 @@ public:
 
 		// If we roll over, make sure on the second iteration we begin at a value that won't
 		// make the buffer look "underfull."
+		//
+		// Logic is correct but _i being size_t means wrapping is technically UB if you somehow hit
+		// max... though practically never a real concern.
 		if(_i == std::numeric_limits<size_t>::max()) _i = N;
 	}
 
@@ -201,6 +212,10 @@ protected:
 	size_t _i = 0;
 };
 
+// AI had this to say about this macro:
+//
+// The RING_BUFFER_T macro exposing protected members via using is a bit gnarly. A friend or just
+// making ring_buffer's members protected-by-default would be cleaner.
 #define RING_BUFFER_T(_T, _N) \
 	using ring_buffer_t = ring_buffer<_T, _N>; \
 	using ring_buffer_t::_i; \
@@ -326,17 +341,6 @@ private:
 	ClassIDMap _cidmap;
 };
 
-/*
-│ - U+2500 (vertical bar)
-─ - U+2500 (horizontal bar) can also be U+2550 (horizontal bar medium)
-└ - U+2514
-┌ - U+250C
-┘ - U+2518
-├ - U+251C
-┬ - U+252C
-std::cout << '\u2500' << std::endl;
-*/
-
 // class DescribeSceneVisitor: public IndexedVisitor {
 class DescribeSceneVisitor: public NameVisitor {
 public:
@@ -441,7 +445,6 @@ protected:
 		std::ostringstream oss;
 
 		oss
-			// << ascii::CYAN << t.getName() << ascii::RESET
 			<< t.getName()
 			<< " (" << t.libraryName()
 			<< "::" << t.className()
@@ -456,7 +459,7 @@ protected:
 	}
 
 private:
-	Path _path;
+	DotPath _path;
 
 	std::string _indent;
 	std::string _separator;
@@ -540,8 +543,6 @@ protected:
 
 	osg::ref_ptr<Visitor> _visitor;
 };
-
-// #define osgx_callthis(eval) osgx::call([this]() { eval ; })
 
 class FilterNotifyHandler: public osg::NotifyHandler {
 public:
@@ -678,5 +679,165 @@ using Vec2Array = Array<osg::Vec2Array>;
 using Vec3Array = Array<osg::Vec3Array>;
 using Vec4Array = Array<osg::Vec4Array>;
 using FloatArray = Array<osg::FloatArray>;
+
+class LambdaKeyHandler: public osgGA::GUIEventHandler {
+public:
+	// TODO: OSG needs to make this less ghettofied, and EXPOSE THE TYPE (int) somehow!
+	using Key = int;
+	using Function = std::function<bool(
+		const osgGA::GUIEventAdapter&,
+		osgGA::GUIActionAdapter&
+	)>;
+
+	LambdaKeyHandler(Key key, Function fn): _key(key), _fn(std::move(fn)) {}
+
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		if(ea.getHandled()) return false;
+
+		if(ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN && ea.getKey() == _key) {
+			OSG_NOTICE << "In LambdaKeyHandler(_key=" << _key << ")" << std::endl;
+
+			return _fn(ea, aa);
+		}
+
+		return false;
+	}
+
+private:
+	Key _key;
+	Function _fn;
+};
+
+class WriteTextureCallback: public osg::Camera::DrawCallback {
+public:
+	WriteTextureCallback(osg::Texture* t): _tex(t) {}
+
+	virtual void operator()(osg::RenderInfo& ri) const {
+		if(_write.exchange(false, std::memory_order_acq_rel)) {
+			auto* state = ri.getState();
+
+			_tex->apply(*state);
+
+			auto img = make_ref<osg::Image>();
+
+			img->readImageFromCurrentTexture(ri.getContextID(), false);
+
+			osgDB::writeImageFile(*img, _name);
+
+			OSG_NOTICE << "Writing: " << _name << std::endl;
+		}
+	}
+
+	void write(const std::string& name) {
+		_name = name;
+
+		_write.store(true, std::memory_order_release);
+	}
+
+protected:
+	osg::ref_ptr<osg::Texture> _tex;
+
+	// NOTE: Using atomic flag with exchange() to safely trigger once from event thread.
+	// I'm not going to lie, this bit was totally written by a LLM/AI. :) You MIGHT be able to
+	// get away with JUST the `bool`, but it's bad form.
+	mutable std::atomic<bool> _write{false};
+
+	std::string _name;
+};
+
+template<typename Callback>
+requires std::derived_from<Callback, osg::Referenced>
+class CallbacksGroup: public Callback {
+public:
+	using Callbacks = std::vector<osg::ref_ptr<Callback>>;
+
+	CallbacksGroup() = default;
+
+	CallbacksGroup(std::initializer_list<Callback*> cbs) {
+		for(auto* cb : cbs) add(cb);
+	}
+
+	void add(Callback* cb) {
+		_callbacks.emplace_back(cb);
+	}
+
+	void remove(Callback* cb) {
+		std::erase_if(_callbacks, [&](auto& p){ return p.get() == cb; });
+	}
+
+protected:
+	Callbacks _callbacks;
+};
+
+class CameraDrawCallbacksGroup: public CallbacksGroup<osg::Camera::DrawCallback> {
+public:
+	using CallbacksGroup<osg::Camera::DrawCallback>::CallbacksGroup;
+
+	void operator()(osg::RenderInfo& ri) const override {
+		for(const auto& cb : _callbacks) (*cb)(ri);
+	}
+};
+
+class NodeCallbacksGroup: public CallbacksGroup<osg::NodeCallback> {
+public:
+	using CallbacksGroup<osg::NodeCallback>::CallbacksGroup;
+
+	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
+		for(const auto& cb : _callbacks) (*cb)(node, nv);
+	}
+};
+
+class DrawableDrawCallbacksGroup: public CallbacksGroup<osg::Drawable::DrawCallback> {
+public:
+	using CallbacksGroup<osg::Drawable::DrawCallback>::CallbacksGroup;
+
+	void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* d) const override {
+		for(const auto& cb : _callbacks) cb->drawImplementation(ri, d);
+	}
+};
+
+template<typename Callback, typename Fn>
+requires std::derived_from<Callback, osg::Referenced>
+class LambdaCallbackBase: public Callback {
+public:
+	explicit LambdaCallbackBase(Fn fn): _fn(std::move(fn)) {}
+
+protected:
+	Fn _fn;
+};
+
+class CameraDrawLambdaCallback: public LambdaCallbackBase<
+	osg::Camera::DrawCallback,
+	std::function<void(osg::RenderInfo&)>
+> {
+public:
+	using Base = LambdaCallbackBase<
+		osg::Camera::DrawCallback,
+		std::function<void(osg::RenderInfo&)>
+	>;
+
+	using Base::Base;
+
+	void operator()(osg::RenderInfo& ri) const override {
+		_fn(ri);
+	}
+};
+
+class NodeLambdaCallback: public LambdaCallbackBase<
+	osg::NodeCallback,
+	std::function<void(osg::Node*, osg::NodeVisitor*)>
+> {
+public:
+	using Base = LambdaCallbackBase<
+		osg::NodeCallback,
+		std::function<void(osg::Node*, osg::NodeVisitor*)>
+	>;
+
+	using Base::Base;
+
+	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
+		_fn(node, nv);
+	}
+};
 
 }
