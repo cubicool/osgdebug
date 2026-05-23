@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
 
 	auto r = viewer.run();
 
-	root->accept(dsv);
+	// root->accept(dsv);
 
 	return r;
 }

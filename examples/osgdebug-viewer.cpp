@@ -39,9 +39,9 @@ auto createSphereAt(const osg::Vec3& pos, osgx::vec_t radius, osgx::vec_t pSize=
 int main(int argc, char** argv) {
 	osgDebug::FrameByFrameViewer viewer;
 
-	// auto debugSupported = osgx::make_ref<osgDebug::GraphicsOperation>();
+	auto debugSupported = osgx::make_ref<osgDebug::GraphicsOperation>();
 
-	// viewer.setRealizeOperation(debugSupported);
+	viewer.setRealizeOperation(debugSupported);
 	viewer.realize();
 
 	auto root = osgx::make_ref<osg::Geode>();

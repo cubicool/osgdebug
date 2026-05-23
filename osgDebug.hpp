@@ -48,10 +48,10 @@ enum class Type: GLenum {
 	UNDEFINED_BEHAVIOR = 0x824E
 };
 
-// TODO: Call this `detail` instead, since everyone else does.
-namespace internal {
+namespace detail {
 	inline constexpr void print(const auto&... args) {
-		((std::cout << args), ...) << std::endl;
+		// ((std::cout << args), ...) << std::endl;
+		((osg::notify(osg::NOTICE) << args), ...) << std::endl;
 	}
 
 	// TODO: using = std::function<void(GLenum, GLuint, GLsizei, const char*)>;
@@ -65,9 +65,9 @@ namespace internal {
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageInsert.xhtml
 	using glDebugMessageInsertFunc = void(*)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*);
 
-	glPushDebugGroupFunc _pushGroup = nullptr;
-	glPopDebugGroupFunc _popGroup = nullptr;
-	glDebugMessageInsertFunc _messageInsert = nullptr;
+	inline glPushDebugGroupFunc _pushGroup = nullptr;
+	inline glPopDebugGroupFunc _popGroup = nullptr;
+	inline glDebugMessageInsertFunc _messageInsert = nullptr;
 
 	inline void pushGroup(Source source, GLuint id, const std::string& message) {
 		if(!_pushGroup) return;
@@ -119,7 +119,7 @@ namespace internal {
 }
 
 inline void pushGroup(Source source, GLuint id, const std::string& message) {
-	internal::pushGroup(source, id, message);
+	detail::pushGroup(source, id, message);
 }
 
 inline void pushGroup(GLuint id, const std::string& message) {
@@ -127,7 +127,7 @@ inline void pushGroup(GLuint id, const std::string& message) {
 }
 
 inline void popGroup() {
-	internal::popGroup();
+	detail::popGroup();
 }
 
 inline void messageInsert(
@@ -137,7 +137,7 @@ inline void messageInsert(
 	Severity severity,
 	const std::string& message
 ) {
-	internal::messageInsert(
+	detail::messageInsert(
 		static_cast<std::underlying_type_t<Source>>(source),
 		static_cast<std::underlying_type_t<Type>>(type),
 		id,
@@ -160,24 +160,25 @@ inline void messageInsert(
 // TODO: Add a check for whether we're already initialized.
 inline void initialize(osg::GraphicsContext* gc) {
 	if(osg::isGLExtensionSupported(gc->getState()->getContextID(), "GL_KHR_debug")) {
-		internal::setupFunction("glPushDebugGroup", &internal::_pushGroup);
-		internal::setupFunction("glPopDebugGroup", &internal::_popGroup);
-		internal::setupFunction("glDebugMessageInsert", &internal::_messageInsert);
+		detail::setupFunction("glPushDebugGroup", &detail::_pushGroup);
+		detail::setupFunction("glPopDebugGroup", &detail::_popGroup);
+		detail::setupFunction("glDebugMessageInsert", &detail::_messageInsert);
 	}
 }
 
 class Scoped {
 public:
 	Scoped(
-		GLuint id, std::string_view message,
-		Source source = Source::APPLICATION,
-		bool measureTime = false
+		GLuint id,
+		std::string_view message,
+		Source source=Source::APPLICATION,
+		bool measureTime=false
 	):
 	_id(id),
 	_source(source),
 	_message(message),
 	_measureTime(measureTime) {
-		_active = internal::_pushGroup != nullptr;
+		_active = detail::_pushGroup != nullptr;
 
 		if(_active) pushGroup(_source, _id, std::string(_message));
 
@@ -215,27 +216,6 @@ private:
 
 	osg::Timer_t _start{};
 };
-
-#if 0
-// TODO: osg::Drawable::DrawCallback
-// TODO: osg::DrawableUpdateCallback
-// TODO: osg::DrawableCullCallback
-template<typename Node>
-class NodeCallback: public osg::NodeCallback {
-public:
-	virtual void operator()(osg::Node* node, osg::NodeVisitor* nv) {
-		// TODO: Helpers to ensure cast.
-		Node* n = dynamic_cast<Node*>(node);
-
-		// TODO: Helpers to ensure what KIND of Visitor.
-		// osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(nv);
-
-		// TODO: Pre-actions...
-		traverse(node, nv);
-		// TODO: Post-actions...
-	}
-};
-#endif
 
 #if 0
 // TODO: Make the Buffer size ALSO be a template argument!
@@ -301,8 +281,7 @@ protected:
 };
 #endif
 
-// TODO: Make the Buffer size ALSO be a template argument!
-template<size_t N=120>
+template<size_t N=120, size_t C=N>
 class DrawCallback: public osg::Drawable::DrawCallback {
 public:
 	using CPUBuffer = osgx::aring_buffer<decltype(osg::Timer::instance()->tick()), N>;
@@ -333,8 +312,14 @@ public:
 	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const {
 		auto* ext = ri.getState()->get<osg::GLExtensions>();
 
-		std::string path;
-		drawable->getUserValue("path", path);
+		// TODO: Implement this instead, BUT! I need to UNDERSTAND the implications of doing so (for
+		// example, does it mean EVERY OBJECT gets a `DefaultUserDataContainer`? If so, that's not a
+		// TERRIBLE tradeoff, but still worth considering.
+		//
+		// TODO: Make using `path` a toggle between the above TODO and, potentially, falling back to
+		// simply using `getName` (below).
+		// auto path = drawable->getUserValue("path", path);
+		auto path = drawable->getName();
 
 		// --- Harvest last frame's GPU query (non-blocking) ---
 		if(_pending && ext && ext->glGetQueryObjectui64v) {
@@ -352,14 +337,22 @@ public:
 
 				_gpuBuffer.add(gpuNs);
 
-				internal::print(
-					" >> [", path, "] GPU: ", gpuNs / 1000u, "us",
-					" | avg: ", _gpuBuffer.average() / 1000u, "us",
-					" (", _gpuBuffer.size(), " samples)"
-				);
+				_samplesSincePrint++;
+
+				if(_samplesSincePrint >= C) {
+					_samplesSincePrint = 0;
+
+					detail::print(
+						" >> [", path, "] GPU: ", gpuNs / 1000u, "us",
+						" | avg: ", _gpuBuffer.average(C) / 1000u, "us",
+						" (", _gpuBuffer.size(), " samples / ", C, " averaged) Frame: ",
+						ri.getState()->getFrameStamp()->getFrameNumber()
+					);
+				}
 			}
 
 			_freeList.push_back(*_pending);
+
 			_pending.reset();
 		}
 
@@ -369,6 +362,7 @@ public:
 
 			if(!_freeList.empty()) {
 				q = _freeList.back();
+
 				_freeList.pop_back();
 			}
 
@@ -391,17 +385,19 @@ public:
 			_pending = q;
 
 			const auto cpuT = stop - start;
+
 			_cpuBuffer.add(cpuT);
 
-			internal::print(
+			/* detail::print(
 				" >> [", path, "] CPU: ", cpuT, "us",
 				" | avg: ", _cpuBuffer.average(), "us",
 				" (", _cpuBuffer.size(), " samples)"
-			);
+			); */
 		}
 
+#if 0
 		else {
-			// No GL_TIMESTAMP support — CPU timing only
+			// No GL_TIMESTAMP support; CPU timing only
 			const auto start = osg::Timer::instance()->tick();
 
 			if(!_cb) drawable->drawImplementation(ri);
@@ -412,27 +408,31 @@ public:
 
 			_cpuBuffer.add(cpuT);
 
-			internal::print(
+			detail::print(
 				" >> [", path, "] CPU (no GPU query): ", cpuT, "us",
 				" | avg: ", _cpuBuffer.average(), "us",
 				" (", _cpuBuffer.size(), " samples)"
 			);
 		}
+#endif
 	}
 
 protected:
 	std::string _name;
 
+	osg::ref_ptr<osg::Drawable::DrawCallback> _cb;
+
 	mutable CPUBuffer _cpuBuffer;
 	mutable GPUBuffer _gpuBuffer;
 
-	osg::ref_ptr<osg::Drawable::DrawCallback> _cb;
-
 	mutable std::optional<PendingQuery> _pending;
 	mutable std::vector<PendingQuery> _freeList;
+
+	mutable size_t _samplesSincePrint = 0;
 };
 
 // TODO: This should keep track of the parented "path" and include it with debug output!
+template<size_t N=120, size_t C=N>
 class DrawVisitor: public osg::NodeVisitor {
 public:
 	DrawVisitor():
@@ -444,12 +444,12 @@ public:
 	}
 
 	virtual void apply(osg::Drawable& d) {
-		auto dcb = new DrawCallback(d.getName(), d.getDrawCallback());
+		auto dcb = new DrawCallback<N, C>(d.getName(), d.getDrawCallback());
 
-		internal::print(" >> Setting dcb on ", d.getName());
+		detail::print(" >> Setting dcb on ", d.getName());
 
 		d.setDrawCallback(dcb);
-		d.dirtyGLObjects();
+		// d.dirtyGLObjects();
 
 		traverse(d);
 	}
@@ -511,7 +511,6 @@ public:
 #define GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR  0x824E
 #endif
 
-// template<typename V=osgViewer::Viewer>
 class Viewer: public osgViewer::Viewer {
 public:
 	void frame(double st=USE_REFERENCE_TIME) override {
@@ -519,37 +518,12 @@ public:
 
 		pushGroup(1, "osgDebug::Viewer::frame()");
 
-		if(_firstFrame) {
-			viewerInit();
-
-			if(!isRealized()) realize();
-
-			_firstFrame = false;
-		}
+		ensureInitialized();
 
 		advance(st);
-		// eventTraversal();
-		// updateTraversal();
 
-		auto [_et, et] = osgx::call([this]() { eventTraversal(); });
-		auto [_ut, ut] = osgx::call([this]() { updateTraversal(); });
-		auto [_rt, rt] = osgx::call([this]() { renderingTraversals(); });
+		renderFrame();
 
-		// TODO: Improve this (OR JUST USE libfmt, jeeze...)
-		std::ostringstream msg;
-
-		msg
-			// << "frame #" << _count << " ["
-			<< "frame #" << getFrameStamp()->getFrameNumber() << " ["
-			<< "event=" << et
-			<< ", update=" << ut
-			<< ", rendering=" << rt
-			<< "](us)"
-		;
-
-		// _count++;
-
-		messageInsert(Type::PERFORMANCE, 0, Severity::NOTIFICATION, msg.str());
 		popGroup();
 	}
 
@@ -559,6 +533,8 @@ public:
 		return 0;
 	}
 
+	// This method is provided simply for the documentation below; the steps indicated below are
+	// exactly what the typical `osgViewer::Viewer::renderingTraversals()` method does.
 	void renderingTraversals() override {
 		// - Calculate frame time/number.
 		// - Collect stats (if enabled).
@@ -587,28 +563,46 @@ public:
 		ViewerBase::renderingTraversals();
 	}
 
-private:
-	// size_t _count = 0;
+protected:
+	void ensureInitialized() {
+		if(_firstFrame) {
+			viewerInit();
+
+			if(!isRealized()) realize();
+
+			_firstFrame = false;
+		}
+	}
+
+	virtual void renderFrame() {
+		auto [_et, et] = osgx::call([this]() { eventTraversal(); });
+		auto [_ut, ut] = osgx::call([this]() { updateTraversal(); });
+		auto [_rt, rt] = osgx::call([this]() { renderingTraversals(); });
+
+		std::ostringstream msg;
+
+		msg
+			<< "frame #" << getFrameStamp()->getFrameNumber() << " ["
+			<< "event=" << et
+			<< ", update=" << ut
+			<< ", rendering=" << rt
+			<< "](us)"
+		;
+
+		messageInsert(Type::PERFORMANCE, 0, Severity::NOTIFICATION, msg.str());
+	}
 };
 
-// TODO: Create a new UpdateVisitor and set it on FrameByFrameViewer->setUpdateVisitor; our
-// UpdateVisitor should have an API for fetching top-level stuff.
-
-// TODO: Create a custom object for "rederingTraversal."
-
-// TODO: Should this inherit from a tempalted Viewer instead?
-// template<typename V=osgViewer::Viewer>
-// class FrameByFrameViewer: public Viewer {
 class FrameByFrameViewer: public Viewer {
 public:
 	class EventHandler: public osgGA::GUIEventHandler {
 	public:
 		bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
-			FrameByFrameViewer* viewer = dynamic_cast<FrameByFrameViewer*>(&aa);
+			auto* viewer = dynamic_cast<FrameByFrameViewer*>(&aa);
 
 			if(viewer && ea.getEventType() == osgGA::GUIEventAdapter::KEYUP) {
 				if(ea.getKey() == 'n') {
-					viewer->_render = true;
+					viewer->requestRender();
 
 					return true;
 				}
@@ -618,53 +612,56 @@ public:
 		}
 	};
 
-	friend class EventHandler;
-
 	FrameByFrameViewer(unsigned int sleep=100000):
 	_renderKeyHandler(new EventHandler()),
 	_sleep(sleep) {
 		addEventHandler(_renderKeyHandler);
 	}
 
-	void frame(double st=USE_REFERENCE_TIME) override {
-		if(_done) return;
-
-		if(_firstFrame) {
-			viewerInit();
-
-			if(!isRealized()) realize();
-
-			_firstFrame = false;
-		}
-
-		advance(st);
-		eventTraversal();
-		updateTraversal();
-
-		if(_render) {
-			internal::print(
-				// "FrameByFrameViewer frame #" << _count
-				"FrameByFrameViewer frame #", getFrameStamp()->getFrameNumber(),
-				" at simulated time ", st
-			);
-
-			renderingTraversals();
-
-			_render = false;
-
-			// _count++;
-		}
+	void requestRender() {
+		_render.store(true, std::memory_order_release);
 	}
 
 	int run() override {
-		double st = 0.0;
-
 		while(!done()) {
-			frame(st);
+			ensureInitialized();
+
+			advance();
+			eventTraversal();
+
+			if(_render.load(std::memory_order_acquire)) {
+				_count++;
+
+				getFrameStamp()->setFrameNumber(_count);
+
+				double wallTime = osg::Timer::instance()->delta_s(
+					_startTick,
+					osg::Timer::instance()->tick()
+				);
+
+				detail::print(
+					"FrameByFrameViewer render #", _count,
+					" (wall-clock ", wallTime, "s)"
+				);
+
+				{
+					Scoped scoped(0, "Frame", Source::APPLICATION, true);
+
+					{
+						Scoped update(1, "Update", Source::APPLICATION, true);
+						updateTraversal();
+					}
+
+					{
+						Scoped render(2, "Render", Source::APPLICATION, true);
+						renderingTraversals();
+					}
+				}
+
+				_render.store(false, std::memory_order_release);
+			}
 
 			OpenThreads::Thread::microSleep(_sleep);
-
-			st += static_cast<double>(_sleep) / 1000000.0;
 		}
 
 		return 0;
@@ -673,12 +670,14 @@ public:
 private:
 	osg::ref_ptr<EventHandler> _renderKeyHandler;
 
-	bool _render = true;
-	// size_t _count = 0;
+	std::atomic<bool> _render{true};
+
+	osg::Timer_t _startTick = osg::Timer::instance()->tick();
 
 	// The value to sleep between each render frame check; same as the value that would
 	// be passed to the Unix microsleep() function.
 	unsigned int _sleep;
+	unsigned int _count = 0;
 };
 
 }

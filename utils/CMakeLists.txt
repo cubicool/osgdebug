@@ -1,6 +1,6 @@
 set(OSGDEBUG_UTILS
-	"describe"
-	"drawables"
+	## "describe"
+	## "drawables"
 )
 
 foreach(util IN LISTS OSGDEBUG_UTILS)

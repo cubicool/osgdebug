@@ -1,7 +1,9 @@
 set(OSGDEBUG_EXAMPLES
+	"eventhandler"
+	# "array"
 	# "callback"
 	# "culling"
-	"notifyfilter"
+	## "notifyfilter"
 	"viewer"
 	# "visitor"
 )

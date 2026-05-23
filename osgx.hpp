@@ -21,7 +21,7 @@ OSGX_DISABLE_WARNINGS
 
 #include <osg/Geode>
 #include <osg/ShapeDrawable>
-#include <osg/Point>
+#include <osg/PrimitiveSet>
 
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
@@ -32,6 +32,9 @@ OSGX_DISABLE_WARNINGS
 #include <osgViewer/Viewer>
 
 OSGX_ENABLE_WARNINGS
+
+#include <limits>
+#include <utility>
 
 #include <optional>
 #include <numeric>
@@ -84,6 +87,10 @@ namespace literals {
 	// using namespace std::literals;
 
 	inline constexpr vec_t operator""_v(long double value) {
+		return static_cast<vec_t>(value);
+	}
+
+	inline constexpr vec_t operator""_v(unsigned long long value) {
 		return static_cast<vec_t>(value);
 	}
 
@@ -241,6 +248,18 @@ public:
 			_data.begin() + size(),
 			T(0)
 		) / static_cast<T>(size());
+	}
+
+	constexpr auto average(size_t count) const {
+		count = std::min(count, size());
+
+		if(!count) return T(0);
+
+		T sum = T(0);
+
+		for(size_t j = 0; j < count; j++) sum += _data[(_i - 1 - j) % N];
+
+		return sum / static_cast<T>(count);
 	}
 };
 
@@ -467,7 +486,7 @@ private:
 
 namespace scene {
 	// TODO: More arguments.
-	auto sphereAt(const std::string& name, const osg::Vec3& pos, vec_t radius) {
+	inline auto sphereAt(const std::string& name, const osg::Vec3& pos, vec_t radius) {
 		auto m = new osg::MatrixTransform(osg::Matrix::translate(pos));
 		auto g = new osg::Geode();
 		auto t = new osg::TessellationHints();
@@ -586,7 +605,9 @@ private:
 template<typename T>
 concept OSGArray = requires {
 	typename T::ElementDataType;
+
 	requires std::derived_from<T, osg::Array>;
+	// requires std::derived_from<T, osg::MixinVector<typename T::ElementDataType>>;
 };
 
 template<OSGArray BaseArray>
@@ -637,6 +658,46 @@ public:
 	// osg::Object* cloneType() const override { return new Array(); }
 	// osg::Object* clone(const osg::CopyOp&) const override { return new Array(*this); }
 
+	template<std::ranges::input_range R>
+	void append_range(R&& r) {
+		if constexpr(std::ranges::sized_range<R>) {
+			auto _size = size();
+
+			resize(_size + std::ranges::size(r));
+
+			std::ranges::copy(r, begin() + static_cast<
+				typename std::iterator_traits<decltype(begin())>::difference_type
+			>(_size));
+		}
+
+		else {
+			for(auto&& v : r) push_back(ElementDataType(v));
+		}
+	}
+
+	void append_range(std::initializer_list<ElementDataType> il) {
+		append_range(std::ranges::subrange(il.begin(), il.end()));
+	}
+
+	// TODO: In C++23, we could use `std::views::repeat`!
+	// void append_n(const ElementDataType& value, size_t n) {
+	// 	append_range(std::views::repeat(value, n));
+	// }
+
+	template<std::size_t N>
+	constexpr void append_n(const ElementDataType& value) {
+		append_range(std::views::iota(0_sz, N) | std::views::transform([&](auto) {
+			return value;
+		}));
+	}
+
+	// Runetime version of the above...
+	void append_n(const ElementDataType& value, size_t n) {
+		append_range(std::views::iota(0_sz, n) | std::views::transform([&](auto) {
+			return value;
+		}));
+	}
+
 	// --- Full-span access ----------------------------------------------------
 	auto span() { return std::span<ElementDataType>(&(*this)[0], size()); }
 	auto span() const { return std::span<const ElementDataType>(&(*this)[0], size()); }
@@ -680,32 +741,250 @@ using Vec3Array = Array<osg::Vec3Array>;
 using Vec4Array = Array<osg::Vec4Array>;
 using FloatArray = Array<osg::FloatArray>;
 
+// ================================================================================================
+// Concepts
+// ================================================================================================
+
+template<typename T>
+concept OSGDrawElements =
+requires {
+	typename T::value_type;
+
+	requires std::derived_from<T, osg::DrawElements>;
+};
+
+// ================================================================================================
+// Generic wrapper
+// ================================================================================================
+
+template<OSGDrawElements BaseElements>
+class DrawElements: public BaseElements {
+public:
+	using value_type = typename BaseElements::value_type;
+	using index_type = value_type;
+
+	using BaseElements::size;
+	using BaseElements::resize;
+	using BaseElements::begin;
+	using BaseElements::end;
+	using BaseElements::assign;
+	using BaseElements::push_back;
+	using BaseElements::reserve;
+
+	META_Object(osgx, DrawElements)
+
+	// --------------------------------------------------------------------------------------------
+	// Constructors
+	// --------------------------------------------------------------------------------------------
+
+	DrawElements():
+	BaseElements(osg::PrimitiveSet::TRIANGLES) {
+	}
+
+	explicit DrawElements(GLenum mode):
+	BaseElements(mode) {
+	}
+
+	DrawElements(const DrawElements& rhs,
+		const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
+	BaseElements(rhs, co) {
+	}
+
+	DrawElements(GLenum mode,
+		std::initializer_list<value_type> init):
+	BaseElements(mode) {
+		assign(init.begin(), init.end());
+	}
+
+	template<std::ranges::input_range R>
+	DrawElements(GLenum mode, R&& r):
+	BaseElements(mode) {
+		append_range(std::forward<R>(r));
+	}
+
+	template<typename... Args>
+	requires(std::convertible_to<Args, value_type> && ...)
+	DrawElements(GLenum mode, Args&&... args):
+	BaseElements(mode) {
+		append(std::forward<Args>(args)...);
+	}
+
+	// --------------------------------------------------------------------------------------------
+	// Append helpers
+	// --------------------------------------------------------------------------------------------
+
+	template<typename... Args>
+	requires(std::convertible_to<Args, value_type> && ...)
+	void append(Args&&... args) {
+		(push_back(static_cast<value_type>(args)), ...);
+	}
+
+	template<std::ranges::input_range R>
+	void append_range(R&& r) {
+		if constexpr(std::ranges::sized_range<R>) {
+			reserve(size() + std::ranges::size(r));
+		}
+
+		for(auto&& v : r) {
+			push_back(static_cast<value_type>(v));
+		}
+	}
+
+	void append_range(std::initializer_list<value_type> il) {
+		append_range(std::views::all(il));
+	}
+
+	// --------------------------------------------------------------------------------------------
+	// Triangle helpers
+	// --------------------------------------------------------------------------------------------
+
+	template<typename... Args>
+	requires(sizeof...(Args) % 3 == 0)
+	static auto triangles(Args&&... args) {
+		return osg::ref_ptr<DrawElements>(
+			new DrawElements(
+				osg::PrimitiveSet::TRIANGLES,
+				std::forward<Args>(args)...));
+	}
+
+	template<typename... Args>
+	requires(sizeof...(Args) % 2 == 0)
+	static auto lines(Args&&... args) {
+		return osg::ref_ptr<DrawElements>(
+			new DrawElements(
+				osg::PrimitiveSet::LINES,
+				std::forward<Args>(args)...));
+	}
+
+	template<typename... Args>
+	static auto strip(Args&&... args) {
+		return osg::ref_ptr<DrawElements>(
+			new DrawElements(
+				osg::PrimitiveSet::TRIANGLE_STRIP,
+				std::forward<Args>(args)...));
+	}
+
+	template<typename... Args>
+	static auto fan(Args&&... args) {
+		return osg::ref_ptr<DrawElements>(
+			new DrawElements(
+				osg::PrimitiveSet::TRIANGLE_FAN,
+				std::forward<Args>(args)...));
+	}
+
+	// --------------------------------------------------------------------------------------------
+	// Safe push helpers
+	// --------------------------------------------------------------------------------------------
+
+	void checked_push(unsigned int v) {
+		if(v > std::numeric_limits<value_type>::max()) {
+			throw std::out_of_range("DrawElements index overflow");
+		}
+
+		push_back(static_cast<value_type>(v));
+	}
+
+	// --------------------------------------------------------------------------------------------
+	// Views
+	// --------------------------------------------------------------------------------------------
+
+	auto span() {
+		return std::span<value_type>(&(*this)[0], size());
+	}
+
+	auto span() const {
+		return std::span<const value_type>(&(*this)[0], size());
+	}
+
+	auto view() {
+		return std::ranges::subrange(begin(), end());
+	}
+
+	auto view() const {
+		return std::ranges::subrange(begin(), end());
+	}
+
+	// --------------------------------------------------------------------------------------------
+	// Factories
+	// --------------------------------------------------------------------------------------------
+
+	template<typename... Args>
+	static auto create(Args&&... args) {
+		return osg::ref_ptr<DrawElements>(
+			new DrawElements(std::forward<Args>(args)...));
+	}
+};
+
+// ================================================================================================
+// Aliases
+// ================================================================================================
+
+using DrawElementsUByte = DrawElements<osg::DrawElementsUByte>;
+using DrawElementsUShort = DrawElements<osg::DrawElementsUShort>;
+using DrawElementsUInt = DrawElements<osg::DrawElementsUInt>;
+
 class LambdaKeyHandler: public osgGA::GUIEventHandler {
 public:
 	// TODO: OSG needs to make this less ghettofied, and EXPOSE THE TYPE (int) somehow!
 	using Key = int;
+	using Keys = std::vector<Key>;
 	using Function = std::function<bool(
 		const osgGA::GUIEventAdapter&,
-		osgGA::GUIActionAdapter&
+		osgGA::GUIActionAdapter&,
+		Key
 	)>;
 
-	LambdaKeyHandler(Key key, Function fn): _key(key), _fn(std::move(fn)) {}
+	template<typename Fn>
+	LambdaKeyHandler(Key key, Fn fn): _keys{key}, _fn(_wrap(std::move(fn))) {}
+
+	template<typename Fn>
+	LambdaKeyHandler(std::initializer_list<Key> keys, Fn fn):
+	_keys(keys), _fn(_wrap(std::move(fn))) {}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
-		if(ea.getHandled()) return false;
+		// if(ea.getHandled()) return false;
 
-		if(ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN && ea.getKey() == _key) {
-			OSG_NOTICE << "In LambdaKeyHandler(_key=" << _key << ")" << std::endl;
+		if(ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN) {
+			auto key = ea.getKey();
 
-			return _fn(ea, aa);
+			if(std::ranges::find(_keys, key) != _keys.end()) {
+				OSG_NOTICE << "In LambdaKeyHandler(key=" << key << ")" << std::endl;
+
+				return _fn(ea, aa, key);
+			}
 		}
 
 		return false;
 	}
 
 private:
-	Key _key;
+	Keys _keys;
 	Function _fn;
+
+	template<typename Fn>
+	static Function _wrap(Fn fn) {
+		static_assert(
+			std::is_invocable_v<Fn, const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter&> ||
+			std::is_invocable_v<Fn, const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter&, Key>,
+			"LambdaKeyHandler: function must accept (ea, aa) or (ea, aa, key)"
+		);
+
+		if constexpr(std::is_invocable_v<Fn,
+			const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter&, Key>
+		) {
+			return fn;
+		}
+
+		else {
+			return [fn = std::move(fn)](
+				const osgGA::GUIEventAdapter& ea,
+				osgGA::GUIActionAdapter& aa,
+				Key
+			) -> bool {
+				return fn(ea, aa);
+			};
+		}
+	}
 };
 
 class WriteTextureCallback: public osg::Camera::DrawCallback {
