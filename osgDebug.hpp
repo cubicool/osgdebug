@@ -48,6 +48,11 @@ enum class Type: GLenum {
 	UNDEFINED_BEHAVIOR = 0x824E
 };
 
+enum class QueryMode {
+	ASYNC, // Default: non-blocking, harvest previous frame's results.
+	SYNC   // Frame-by-frame: blocking read of this frame's results.
+};
+
 namespace detail {
 	inline constexpr void print(const auto&... args) {
 		// ((std::cout << args), ...) << std::endl;
@@ -217,70 +222,6 @@ private:
 	osg::Timer_t _start{};
 };
 
-#if 0
-// TODO: Make the Buffer size ALSO be a template argument!
-class DrawCallback: public osg::Drawable::DrawCallback {
-public:
-	using Buffer = osgx::aring_buffer<decltype(osg::Timer::instance()->tick()), 60>;
-
-	DrawCallback(const std::string& name="", osg::Drawable::DrawCallback* cb=nullptr):
-	_name(name),
-	_cb(cb) {
-	}
-
-	DrawCallback(const std::string& name):
-	DrawCallback(name, nullptr) {
-	}
-
-	DrawCallback(osg::Drawable::DrawCallback* cb):
-	DrawCallback("", cb) {
-	}
-
-	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const {
-		// const_cast<osg::Drawable*>(drawable)->dirtyGLObjects();
-
-		auto start = osg::Timer::instance()->tick();
-
-		if(!_cb) drawable->drawImplementation(ri);
-
-		else _cb->drawImplementation(ri, drawable);
-
-		auto stop = osg::Timer::instance()->tick();
-		// const auto& name = _name.size() ? _name : drawable->getName();
-		auto t = stop - start;
-
-		// TODO: THIS. FEELS. WRONG. Why is drawImplementation const? Perhaps OSG wants us to put
-		// this data somewhere else, but... we're already storing potentially unique, per-instance
-		// Drawable data (like a PREVIOUS callback), so there IS a need for each instance having its
-		// own callback/data.
-		// const_cast<Buffer&>(_buf).add(t);
-		_buf.add(t);
-
-		std::string path;
-
-		drawable->getUserValue("path", path);
-
-		std::cout << " >> [" << path << "]: " << t << "us" << std::endl;
-
-		/* std::cout
-			<< "==============================================================" << std::endl
-			<< " > " << path << std::endl
-			<< " > " << name << ": " << t << "us; average: "
-			<< _buf.average() << "us, " << _buf.size() << " samples" << std::endl
-			<< " > start = " << start << "us, stop = " << stop << "us" << std::endl
-			<< "==============================================================" << std::endl
-		; */
-	}
-
-protected:
-	std::string _name;
-
-	mutable Buffer _buf;
-
-	osg::ref_ptr<osg::Drawable::DrawCallback> _cb;
-};
-#endif
-
 template<size_t N=120, size_t C=N>
 class DrawCallback: public osg::Drawable::DrawCallback {
 public:
@@ -305,24 +246,26 @@ public:
 	DrawCallback("", cb) {
 	}
 
+	DrawCallback(QueryMode m, const std::string& name="", osg::Drawable::DrawCallback* cb=nullptr):
+	_name(name),
+	_cb(cb),
+	_queryMode(m) {
+	}
+
 	// Accessors for external consumers (e.g. stats overlays, logging)
 	const CPUBuffer& cpuBuffer() const { return _cpuBuffer; }
 	const GPUBuffer& gpuBuffer() const { return _gpuBuffer; }
 
+	void setQueryMode(QueryMode m) { _queryMode = m; }
+
 	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const {
 		auto* ext = ri.getState()->get<osg::GLExtensions>();
 
-		// TODO: Implement this instead, BUT! I need to UNDERSTAND the implications of doing so (for
-		// example, does it mean EVERY OBJECT gets a `DefaultUserDataContainer`? If so, that's not a
-		// TERRIBLE tradeoff, but still worth considering.
-		//
-		// TODO: Make using `path` a toggle between the above TODO and, potentially, falling back to
-		// simply using `getName` (below).
-		// auto path = drawable->getUserValue("path", path);
+		// TODO: Make using `path` a toggle between getUserValue("path") and getName().
 		auto path = drawable->getName();
 
-		// --- Harvest last frame's GPU query (non-blocking) ---
-		if(_pending && ext && ext->glGetQueryObjectui64v) {
+		// --- Harvest last frame's GPU query (non-blocking, ASYNC only) ---
+		if(_queryMode == QueryMode::ASYNC && _pending && ext && ext->glGetQueryObjectui64v) {
 			GLint available = 0;
 
 			ext->glGetQueryObjectiv(_pending->begin, GL_QUERY_RESULT_AVAILABLE, &available);
@@ -356,7 +299,7 @@ public:
 			_pending.reset();
 		}
 
-		// --- Issue new GPU timestamp queries + CPU timing ---
+		// --- Issue GPU timestamp queries + draw ---
 		if(ext && ext->glQueryCounter) {
 			PendingQuery q;
 
@@ -382,45 +325,40 @@ public:
 
 			ext->glQueryCounter(q.end, GL_TIMESTAMP);
 
-			_pending = q;
+			// SYNC: blocking read — caller ensures glFinish() before the next frame.
+			if(_queryMode == QueryMode::SYNC && ext->glGetQueryObjectui64v) {
+				GLuint64 t0 = 0, t1 = 0;
 
-			const auto cpuT = stop - start;
+				ext->glGetQueryObjectui64v(q.begin, GL_QUERY_RESULT, &t0);
+				ext->glGetQueryObjectui64v(q.end, GL_QUERY_RESULT, &t1);
 
-			_cpuBuffer.add(cpuT);
+				const GLuint64 gpuNs = t1 - t0;
 
-			/* detail::print(
-				" >> [", path, "] CPU: ", cpuT, "us",
-				" | avg: ", _cpuBuffer.average(), "us",
-				" (", _cpuBuffer.size(), " samples)"
-			); */
+				_gpuBuffer.add(gpuNs);
+
+				detail::print(
+					" >> [", path, "] GPU: ", gpuNs / 1000u, "us",
+					" Frame: ", ri.getState()->getFrameStamp()->getFrameNumber()
+				);
+
+				_freeList.push_back(q);
+			}
+
+			// ASYNC: defer harvest to the next frame.
+			else {
+				_pending = q;
+			}
+
+			_cpuBuffer.add(stop - start);
 		}
-
-#if 0
-		else {
-			// No GL_TIMESTAMP support; CPU timing only
-			const auto start = osg::Timer::instance()->tick();
-
-			if(!_cb) drawable->drawImplementation(ri);
-			else _cb->drawImplementation(ri, drawable);
-
-			const auto stop = osg::Timer::instance()->tick();
-			const auto cpuT = stop - start;
-
-			_cpuBuffer.add(cpuT);
-
-			detail::print(
-				" >> [", path, "] CPU (no GPU query): ", cpuT, "us",
-				" | avg: ", _cpuBuffer.average(), "us",
-				" (", _cpuBuffer.size(), " samples)"
-			);
-		}
-#endif
 	}
 
 protected:
 	std::string _name;
 
 	osg::ref_ptr<osg::Drawable::DrawCallback> _cb;
+
+	QueryMode _queryMode = QueryMode::ASYNC;
 
 	mutable CPUBuffer _cpuBuffer;
 	mutable GPUBuffer _gpuBuffer;
@@ -435,9 +373,12 @@ protected:
 template<size_t N=120, size_t C=N>
 class DrawVisitor: public osg::NodeVisitor {
 public:
-	DrawVisitor():
-	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN) {
+	DrawVisitor(QueryMode m = QueryMode::ASYNC):
+	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
+	_queryMode(m) {
 	}
+
+	void setQueryMode(QueryMode m) { _queryMode = m; }
 
 	virtual void apply(osg::Geode& g) {
 		traverse(g);
@@ -446,13 +387,17 @@ public:
 	virtual void apply(osg::Drawable& d) {
 		auto dcb = new DrawCallback<N, C>(d.getName(), d.getDrawCallback());
 
+		dcb->setQueryMode(_queryMode);
+
 		detail::print(" >> Setting dcb on ", d.getName());
 
 		d.setDrawCallback(dcb);
-		// d.dirtyGLObjects();
 
 		traverse(d);
 	}
+
+private:
+	QueryMode _queryMode = QueryMode::ASYNC;
 };
 
 /* static const auto DEBUG_EXTENSIONS = std::vector<std::string>{

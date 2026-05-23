@@ -44,12 +44,30 @@ int main(int argc, char** argv) {
 	viewer.setRealizeOperation(debugSupported);
 	viewer.realize();
 
-	auto root = osgx::make_ref<osg::Geode>();
-	auto draw = createSphere(10.0);
+	auto root = osgx::make_ref<osg::Node>(nullptr);
 
-	// draw->setDrawCallback(new osgDebug::DrawCallback());
+	if(argc >= 2) {
+		auto dsv = osgx::DescribeSceneVisitor();
+		auto dv = osgDebug::DrawVisitor(osgDebug::QueryMode::SYNC);
 
-	root->addDrawable(draw);
+		root = osgDB::readRefNodeFile(argv[1]);
+
+		if(!root) return 0;
+
+		root->accept(dsv);
+		root->accept(dv);
+	}
+
+	else {
+		auto geode = osgx::make_ref<osg::Geode>();
+		auto draw = createSphere(10.0);
+
+		draw->setDrawCallback(new osgDebug::DrawCallback(osgDebug::QueryMode::SYNC));
+
+		geode->addDrawable(draw);
+
+		root = geode;
+	}
 
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
