@@ -97,4 +97,4 @@ endfunction()
 
 add_subdirectory("examples")
 add_subdirectory("utils")
-add_subdirectory("plugins")
+# add_subdirectory("plugins") # TODO: Disabled — plugin can install phase 1 (DrawVisitor) but has no camera access for FinalDrawCallback (phase 2); see TODO.md.

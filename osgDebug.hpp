@@ -20,6 +20,8 @@ namespace osgDebug {
 
 using namespace osgx::literals;
 
+inline constexpr size_t DEFAULT_BUFFER_SIZE = 60;
+
 enum class Severity: GLenum {
 	HIGH = 0x9146,
 	LOW = 0x9148,
@@ -121,7 +123,7 @@ namespace detail {
 	// syncs once and drains all results after the full camera has rendered.
 	//
 	// Keyed by contextID via osg::buffered_object so each GL context has its own
-	// isolated accumulator — GL query objects are context-local.
+	// isolated accumulator; GL query objects are context-local.
 	struct FrameAccumulator {
 		struct Entry {
 			std::string path;
@@ -130,11 +132,12 @@ namespace detail {
 		};
 
 		struct PathStats {
-			osgx::aring_buffer<GLuint64, 120> gpuBuffer;
+			osgx::aring_buffer<GLuint64, DEFAULT_BUFFER_SIZE> gpuBuffer;
 			size_t samplesSincePrint = 0;
 		};
 
 		std::vector<Entry> pending;
+		std::vector<Entry> ready;
 		std::vector<Entry> freeList;
 		std::unordered_map<std::string, PathStats> stats;
 
@@ -159,8 +162,22 @@ namespace detail {
 			pending.push_back(std::move(e));
 		}
 
+		// SYNC: drain current frame's pending queries, blocking per-query.
 		void drain(osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
-			for(auto& e : pending) {
+			_drain(pending, ext, printEvery, frameNum);
+		}
+
+		// ASYNC: drain the previous frame's results (should already be ready),
+		// then advance the double-buffer so this frame's pending becomes next
+		// frame's ready. One-frame lag; ring-buffer averaging makes it irrelevant.
+		void swap_and_drain(osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
+			_drain(ready, ext, printEvery, frameNum);
+			std::swap(pending, ready);
+		}
+
+	private:
+		void _drain(std::vector<Entry>& source, osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
+			for(auto& e : source) {
 				GLuint64 t0 = 0, t1 = 0;
 
 				ext->glGetQueryObjectui64v(e.begin, GL_QUERY_RESULT, &t0);
@@ -185,7 +202,7 @@ namespace detail {
 				freeList.push_back(std::move(e));
 			}
 
-			pending.clear();
+			source.clear();
 		}
 	};
 
@@ -292,9 +309,9 @@ private:
 };
 
 // Phase 1: issues GL timestamp queries around the draw call and pushes the result
-// into the per-context FrameAccumulator. Never blocks — the GPU pipeline is never
+// into the per-context FrameAccumulator. Never blocks; the GPU pipeline is never
 // stalled mid-submission. Pair with FinalDrawCallback on the camera for phase 2.
-template<size_t N=120>
+template<size_t N=DEFAULT_BUFFER_SIZE>
 class DrawCallback: public osg::Drawable::DrawCallback {
 public:
 	using CPUBuffer = osgx::aring_buffer<decltype(osg::Timer::instance()->tick()), N>;
@@ -351,42 +368,54 @@ protected:
 	mutable CPUBuffer _cpuBuffer;
 };
 
+enum class QueryMode { SYNC, ASYNC };
+
 // Phase 2: install on a camera via setFinalDrawCallback(). After all drawables for
-// that camera have submitted their timestamp queries, syncs the pipeline once and
-// drains the accumulator. Accurate per-drawable GPU times with no cascading stalls.
+// that camera have submitted their timestamp queries, drains the accumulator.
+// Accurate per-drawable GPU times with no cascading stalls.
 //
-// Profiling is scoped to the camera — in a multipass/RTT setup each camera gets its
+// QueryMode::SYNC (default): blocks per-query on GL_QUERY_RESULT for the current
+// frame. Fine for step-by-step viewers; may stall continuous rendering.
+//
+// QueryMode::ASYNC: drains the *previous* frame's results (already retired by the
+// GPU) then swaps buffers. Zero meaningful stall; one-frame lag on results that the
+// ring-buffer averaging makes irrelevant.
+//
+// Profiling is scoped to the camera; in a multipass/RTT setup each camera gets its
 // own FinalDrawCallback and its own independent accumulator drain.
-template<size_t N=120>
+template<size_t N=DEFAULT_BUFFER_SIZE>
 class FinalDrawCallback: public osg::Camera::DrawCallback {
 public:
-	explicit FinalDrawCallback(size_t printEvery=N): _printEvery(printEvery) {}
+	explicit FinalDrawCallback(size_t printEvery=N, QueryMode mode=QueryMode::SYNC):
+	_printEvery(printEvery),
+	_mode(mode) {}
 
 	void operator()(osg::RenderInfo& ri) const override {
 		auto* ext = ri.getState()->get<osg::GLExtensions>();
 
 		if(!ext || !ext->glGetQueryObjectui64v) return;
 
-		// GL_QUERY_RESULT blocks implicitly per-query — no glFinish needed.
-		// Queries execute in submission order, so each subsequent read is
-		// progressively closer to done; only the last stalls meaningfully.
 		const unsigned int frameNum = ri.getState()->getFrameStamp()
 			? ri.getState()->getFrameStamp()->getFrameNumber()
-			: 0u;
+			: 0u
+		;
 
-		detail::_accumulators[ri.getState()->getContextID()].drain(
-			ext, _printEvery, frameNum
-		);
+		auto& acc = detail::_accumulators[ri.getState()->getContextID()];
+
+		if(_mode == QueryMode::ASYNC) acc.swap_and_drain(ext, _printEvery, frameNum);
+
+		else acc.drain(ext, _printEvery, frameNum);
 	}
 
 private:
 	size_t _printEvery;
+	QueryMode _mode;
 };
 
 // Walks the scene graph and installs a DrawCallback on every Drawable, building a
 // full scene-path string from NodeVisitor::getNodePath() for identification.
 // Install FinalDrawCallback on the camera separately to complete the two-phase setup.
-template<size_t N=120>
+template<size_t N=DEFAULT_BUFFER_SIZE>
 class DrawVisitor: public osg::NodeVisitor {
 public:
 	DrawVisitor():

@@ -47,38 +47,16 @@ OSGX_ENABLE_WARNINGS
 namespace osgx {
 // ------------------------------------------------------------------------------------------------
 
-// TODO: Support std::string&/* and string_view?
-using path_t = std::list<std::string>;
-
-template<char Separator='/'>
-struct Path: public path_t {
-public:
-	// using path_t::path_t;
-	// using path_t::push_back;
-	// using path_t::pop_back;
-	// using path_t::begin;
-	// using path_t::end;
-
+struct ObjectPath: public std::list<std::string> {
 	auto str() const {
 		return std::accumulate(begin(), end(), std::string(), [](
 			const auto& l,
 			const auto& r
 		) {
-			return l + Separator + r;
+			return l + '.' + r;
 		});
 	}
 };
-
-using LinuxPath = Path<'/'>;
-using WindowsPath = Path<'\\'>; // note the double-backslash escape
-using DotPath = Path<'.'>; // bonus: useful for OSG node name hierarchies
-
-#ifdef _WIN32
-	using FilePath = WindowsPath;
-
-#else
-	using FilePath = LinuxPath;
-#endif
 
 // ------------------------------------------------------------------------------------------------
 using vec_t = osg::Vec3::value_type;
@@ -478,7 +456,7 @@ protected:
 	}
 
 private:
-	DotPath _path;
+	ObjectPath _path;
 
 	std::string _indent;
 	std::string _separator;
