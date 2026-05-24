@@ -127,12 +127,14 @@ namespace detail {
 	struct FrameAccumulator {
 		struct Entry {
 			std::string path;
+
 			GLuint begin = 0;
 			GLuint end = 0;
 		};
 
 		struct PathStats {
 			osgx::aring_buffer<GLuint64, DEFAULT_BUFFER_SIZE> gpuBuffer;
+
 			size_t samplesSincePrint = 0;
 		};
 
@@ -172,6 +174,7 @@ namespace detail {
 		// frame's ready. One-frame lag; ring-buffer averaging makes it irrelevant.
 		void swap_and_drain(osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
 			_drain(ready, ext, printEvery, frameNum);
+
 			std::swap(pending, ready);
 		}
 
@@ -192,6 +195,7 @@ namespace detail {
 				if(s.samplesSincePrint >= printEvery) {
 					s.samplesSincePrint = 0;
 
+					// TODO: This is annoyingly AWFUL and should be fixed; SOON!
 					print(
 						" >> [", e.path, "] GPU: ", gpuNs / 1000u, "us",
 						" | avg: ", s.gpuBuffer.average(printEvery) / 1000u, "us",
@@ -607,9 +611,8 @@ public:
 		}
 	};
 
-	FrameByFrameViewer(unsigned int sleep=100000):
-	_renderKeyHandler(new EventHandler()),
-	_sleep(sleep) {
+	FrameByFrameViewer():
+	_renderKeyHandler(new EventHandler()) {
 		addEventHandler(_renderKeyHandler);
 	}
 
@@ -656,22 +659,20 @@ public:
 				_render.store(false, std::memory_order_release);
 			}
 
-			OpenThreads::Thread::microSleep(_sleep);
+			OpenThreads::Thread::microSleep(_POLL_INTERVAL_US);
 		}
 
 		return 0;
 	}
 
 private:
+	static constexpr unsigned int _POLL_INTERVAL_US = 100000;
+
 	osg::ref_ptr<EventHandler> _renderKeyHandler;
 
 	std::atomic<bool> _render{true};
 
 	osg::Timer_t _startTick = osg::Timer::instance()->tick();
-
-	// The value to sleep between each render frame check; same as the value that would
-	// be passed to the Unix microsleep() function.
-	unsigned int _sleep;
 	unsigned int _count = 0;
 };
 

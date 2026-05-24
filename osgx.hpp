@@ -1,17 +1,36 @@
 #pragma once
 
-#define OSGX_DISABLE_WARNINGS \
-	_Pragma("GCC diagnostic push") \
-	_Pragma("GCC diagnostic ignored \"-Wconversion\"") \
-	_Pragma("GCC diagnostic ignored \"-Wdeprecated-copy\"") \
-	_Pragma("GCC diagnostic ignored \"-Wfloat-conversion\"") \
-	_Pragma("GCC diagnostic ignored \"-Wsign-compare\"") \
-	_Pragma("GCC diagnostic ignored \"-Woverloaded-virtual\"") \
-	_Pragma("GCC diagnostic ignored \"-Wshadow\"") \
-	_Pragma("GCC diagnostic ignored \"-Wunused-but-set-variable\"")
+#if defined(__clang__)
+	#define OSGX_DISABLE_WARNINGS \
+		_Pragma("clang diagnostic push") \
+		_Pragma("clang diagnostic ignored \"-Wconversion\"") \
+		_Pragma("clang diagnostic ignored \"-Wdeprecated-copy\"") \
+		_Pragma("clang diagnostic ignored \"-Wfloat-conversion\"") \
+		_Pragma("clang diagnostic ignored \"-Wsign-compare\"") \
+		_Pragma("clang diagnostic ignored \"-Woverloaded-virtual\"") \
+		_Pragma("clang diagnostic ignored \"-Wshadow\"")
 
-#define OSGX_ENABLE_WARNINGS \
-	_Pragma("GCC diagnostic pop")
+	#define OSGX_ENABLE_WARNINGS \
+		_Pragma("clang diagnostic pop")
+
+#elif defined(__GNUC__)
+	#define OSGX_DISABLE_WARNINGS \
+		_Pragma("GCC diagnostic push") \
+		_Pragma("GCC diagnostic ignored \"-Wconversion\"") \
+		_Pragma("GCC diagnostic ignored \"-Wdeprecated-copy\"") \
+		_Pragma("GCC diagnostic ignored \"-Wfloat-conversion\"") \
+		_Pragma("GCC diagnostic ignored \"-Wsign-compare\"") \
+		_Pragma("GCC diagnostic ignored \"-Woverloaded-virtual\"") \
+		_Pragma("GCC diagnostic ignored \"-Wshadow\"") \
+		_Pragma("GCC diagnostic ignored \"-Wunused-but-set-variable\"")
+
+	#define OSGX_ENABLE_WARNINGS \
+		_Pragma("GCC diagnostic pop")
+
+#else
+	#define OSGX_DISABLE_WARNINGS
+	#define OSGX_ENABLE_WARNINGS
+#endif
 
 OSGX_DISABLE_WARNINGS
 
@@ -118,25 +137,7 @@ auto make_nref(const std::string& name, Args&&... args) {
 
 constexpr auto tick = [](){ return osg::Timer::instance()->tick(); };
 
-// osgx::call() with the decltype(func(args...)) doubling is a bit fragile (the return type is
-// evaluated twice). In C++20 you'd use std::invoke_result_t. Not broken, just dated.
-/* template<typename Func, typename... Args>
-auto call(Func&& func, Args&&... args) -> decltype(auto) {
-	if constexpr(!std::is_void_v<decltype(func(args...))>) {
-		auto start = tick();
-		auto result = func(std::forward<Args>(args)...);
-
-		return std::make_pair(std::optional<decltype(func(args...))>(result), tick() - start);
-	}
-
-	else {
-		auto start = tick();
-
-		func(std::forward<Args>(args)...);
-
-		return std::make_pair(std::nullopt, tick() - start);
-	}
-} */
+// Returns simple `tick`-based timing for the wrapped callable; nothing fancy.
 template<typename Func, typename... Args>
 auto call(Func&& func, Args&&... args) -> decltype(auto) {
 	using Result = std::invoke_result_t<Func, Args...>;
