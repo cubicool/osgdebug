@@ -10,6 +10,8 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include <unordered_map>
+
 // TODO: Add notification mirroring of debug calls (to std::cout, osg::notify, etc).
 // TODO: Make some macro wrappers for pushGroup/insertMessage that use __FUNCTION__, __FILE__, etc.
 // TODO: pushGroup/insertMessage accept an "id", which we probably should manage automatically.
@@ -48,19 +50,11 @@ enum class Type: GLenum {
 	UNDEFINED_BEHAVIOR = 0x824E
 };
 
-enum class QueryMode {
-	ASYNC, // Default: non-blocking, harvest previous frame's results.
-	SYNC   // Frame-by-frame: blocking read of this frame's results.
-};
-
 namespace detail {
 	inline constexpr void print(const auto&... args) {
-		// ((std::cout << args), ...) << std::endl;
 		((osg::notify(osg::NOTICE) << args), ...) << std::endl;
 	}
 
-	// TODO: using = std::function<void(GLenum, GLuint, GLsizei, const char*)>;
-	//
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPushDebugGroup.xhtml
 	using glPushDebugGroupFunc = void(*)(GLenum, GLuint, GLsizei, const char*);
 
@@ -121,6 +115,81 @@ namespace detail {
 
 		else print(" >> FAILED to bind '", name, "'");
 	}
+
+	// Per-context accumulator for two-phase GPU timing. DrawCallback (phase 1) pushes
+	// pending timestamp query pairs here without blocking. FinalDrawCallback (phase 2)
+	// syncs once and drains all results after the full camera has rendered.
+	//
+	// Keyed by contextID via osg::buffered_object so each GL context has its own
+	// isolated accumulator — GL query objects are context-local.
+	struct FrameAccumulator {
+		struct Entry {
+			std::string path;
+			GLuint begin = 0;
+			GLuint end = 0;
+		};
+
+		struct PathStats {
+			osgx::aring_buffer<GLuint64, 120> gpuBuffer;
+			size_t samplesSincePrint = 0;
+		};
+
+		std::vector<Entry> pending;
+		std::vector<Entry> freeList;
+		std::unordered_map<std::string, PathStats> stats;
+
+		Entry alloc(osg::GLExtensions* ext) {
+			if(!freeList.empty()) {
+				auto e = std::move(freeList.back());
+
+				freeList.pop_back();
+
+				return e;
+			}
+
+			Entry e;
+
+			ext->glGenQueries(1, &e.begin);
+			ext->glGenQueries(1, &e.end);
+
+			return e;
+		}
+
+		void push(Entry e) {
+			pending.push_back(std::move(e));
+		}
+
+		void drain(osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
+			for(auto& e : pending) {
+				GLuint64 t0 = 0, t1 = 0;
+
+				ext->glGetQueryObjectui64v(e.begin, GL_QUERY_RESULT, &t0);
+				ext->glGetQueryObjectui64v(e.end, GL_QUERY_RESULT, &t1);
+
+				const GLuint64 gpuNs = t1 - t0;
+				auto& s = stats[e.path];
+
+				s.gpuBuffer.add(gpuNs);
+				s.samplesSincePrint++;
+
+				if(s.samplesSincePrint >= printEvery) {
+					s.samplesSincePrint = 0;
+
+					print(
+						" >> [", e.path, "] GPU: ", gpuNs / 1000u, "us",
+						" | avg: ", s.gpuBuffer.average(printEvery) / 1000u, "us",
+						" Frame: ", frameNum
+					);
+				}
+
+				freeList.push_back(std::move(e));
+			}
+
+			pending.clear();
+		}
+	};
+
+	inline osg::buffered_object<FrameAccumulator> _accumulators;
 }
 
 inline void pushGroup(Source source, GLuint id, const std::string& message) {
@@ -222,16 +291,13 @@ private:
 	osg::Timer_t _start{};
 };
 
-template<size_t N=120, size_t C=N>
+// Phase 1: issues GL timestamp queries around the draw call and pushes the result
+// into the per-context FrameAccumulator. Never blocks — the GPU pipeline is never
+// stalled mid-submission. Pair with FinalDrawCallback on the camera for phase 2.
+template<size_t N=120>
 class DrawCallback: public osg::Drawable::DrawCallback {
 public:
 	using CPUBuffer = osgx::aring_buffer<decltype(osg::Timer::instance()->tick()), N>;
-	using GPUBuffer = osgx::aring_buffer<GLuint64, N>;
-
-	struct PendingQuery {
-		GLuint begin = 0;
-		GLuint end = 0;
-	};
 
 	DrawCallback(const std::string& name="", osg::Drawable::DrawCallback* cb=nullptr):
 	_name(name),
@@ -246,158 +312,113 @@ public:
 	DrawCallback("", cb) {
 	}
 
-	DrawCallback(QueryMode m, const std::string& name="", osg::Drawable::DrawCallback* cb=nullptr):
-	_name(name),
-	_cb(cb),
-	_queryMode(m) {
-	}
-
-	// Accessors for external consumers (e.g. stats overlays, logging)
 	const CPUBuffer& cpuBuffer() const { return _cpuBuffer; }
-	const GPUBuffer& gpuBuffer() const { return _gpuBuffer; }
 
-	void setQueryMode(QueryMode m) { _queryMode = m; }
-
-	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const {
+	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const override {
 		auto* ext = ri.getState()->get<osg::GLExtensions>();
+		const auto& path = _name.empty() ? drawable->getName() : _name;
+		const auto contextID = ri.getState()->getContextID();
 
-		// TODO: Make using `path` a toggle between getUserValue("path") and getName().
-		auto path = drawable->getName();
+		const auto start = osg::Timer::instance()->tick();
 
-		// --- Harvest last frame's GPU query (non-blocking, ASYNC only) ---
-		if(_queryMode == QueryMode::ASYNC && _pending && ext && ext->glGetQueryObjectui64v) {
-			GLint available = 0;
-
-			ext->glGetQueryObjectiv(_pending->begin, GL_QUERY_RESULT_AVAILABLE, &available);
-
-			if(available) {
-				GLuint64 t0 = 0, t1 = 0;
-
-				ext->glGetQueryObjectui64v(_pending->begin, GL_QUERY_RESULT, &t0);
-				ext->glGetQueryObjectui64v(_pending->end, GL_QUERY_RESULT, &t1);
-
-				const GLuint64 gpuNs = t1 - t0;
-
-				_gpuBuffer.add(gpuNs);
-
-				_samplesSincePrint++;
-
-				if(_samplesSincePrint >= C) {
-					_samplesSincePrint = 0;
-
-					detail::print(
-						" >> [", path, "] GPU: ", gpuNs / 1000u, "us",
-						" | avg: ", _gpuBuffer.average(C) / 1000u, "us",
-						" (", _gpuBuffer.size(), " samples / ", C, " averaged) Frame: ",
-						ri.getState()->getFrameStamp()->getFrameNumber()
-					);
-				}
-			}
-
-			_freeList.push_back(*_pending);
-
-			_pending.reset();
-		}
-
-		// --- Issue GPU timestamp queries + draw ---
 		if(ext && ext->glQueryCounter) {
-			PendingQuery q;
+			auto& acc = detail::_accumulators[contextID];
+			auto e = acc.alloc(ext);
 
-			if(!_freeList.empty()) {
-				q = _freeList.back();
+			e.path = path;
 
-				_freeList.pop_back();
-			}
-
-			else {
-				ext->glGenQueries(1, &q.begin);
-				ext->glGenQueries(1, &q.end);
-			}
-
-			ext->glQueryCounter(q.begin, GL_TIMESTAMP);
-
-			const auto start = osg::Timer::instance()->tick();
+			ext->glQueryCounter(e.begin, GL_TIMESTAMP);
 
 			if(!_cb) drawable->drawImplementation(ri);
 			else _cb->drawImplementation(ri, drawable);
 
-			const auto stop = osg::Timer::instance()->tick();
+			ext->glQueryCounter(e.end, GL_TIMESTAMP);
 
-			ext->glQueryCounter(q.end, GL_TIMESTAMP);
-
-			// SYNC: blocking read — caller ensures glFinish() before the next frame.
-			if(_queryMode == QueryMode::SYNC && ext->glGetQueryObjectui64v) {
-				GLuint64 t0 = 0, t1 = 0;
-
-				ext->glGetQueryObjectui64v(q.begin, GL_QUERY_RESULT, &t0);
-				ext->glGetQueryObjectui64v(q.end, GL_QUERY_RESULT, &t1);
-
-				const GLuint64 gpuNs = t1 - t0;
-
-				_gpuBuffer.add(gpuNs);
-
-				detail::print(
-					" >> [", path, "] GPU: ", gpuNs / 1000u, "us",
-					" Frame: ", ri.getState()->getFrameStamp()->getFrameNumber()
-				);
-
-				_freeList.push_back(q);
-			}
-
-			// ASYNC: defer harvest to the next frame.
-			else {
-				_pending = q;
-			}
-
-			_cpuBuffer.add(stop - start);
+			acc.push(std::move(e));
 		}
+
+		else {
+			if(!_cb) drawable->drawImplementation(ri);
+			else _cb->drawImplementation(ri, drawable);
+		}
+
+		_cpuBuffer.add(osg::Timer::instance()->tick() - start);
 	}
 
 protected:
 	std::string _name;
-
 	osg::ref_ptr<osg::Drawable::DrawCallback> _cb;
-
-	QueryMode _queryMode = QueryMode::ASYNC;
-
 	mutable CPUBuffer _cpuBuffer;
-	mutable GPUBuffer _gpuBuffer;
-
-	mutable std::optional<PendingQuery> _pending;
-	mutable std::vector<PendingQuery> _freeList;
-
-	mutable size_t _samplesSincePrint = 0;
 };
 
-// TODO: This should keep track of the parented "path" and include it with debug output!
-template<size_t N=120, size_t C=N>
-class DrawVisitor: public osg::NodeVisitor {
+// Phase 2: install on a camera via setFinalDrawCallback(). After all drawables for
+// that camera have submitted their timestamp queries, syncs the pipeline once and
+// drains the accumulator. Accurate per-drawable GPU times with no cascading stalls.
+//
+// Profiling is scoped to the camera — in a multipass/RTT setup each camera gets its
+// own FinalDrawCallback and its own independent accumulator drain.
+template<size_t N=120>
+class FinalDrawCallback: public osg::Camera::DrawCallback {
 public:
-	DrawVisitor(QueryMode m = QueryMode::ASYNC):
-	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
-	_queryMode(m) {
+	explicit FinalDrawCallback(size_t printEvery=N): _printEvery(printEvery) {}
+
+	void operator()(osg::RenderInfo& ri) const override {
+		auto* ext = ri.getState()->get<osg::GLExtensions>();
+
+		if(!ext || !ext->glGetQueryObjectui64v) return;
+
+		// GL_QUERY_RESULT blocks implicitly per-query — no glFinish needed.
+		// Queries execute in submission order, so each subsequent read is
+		// progressively closer to done; only the last stalls meaningfully.
+		const unsigned int frameNum = ri.getState()->getFrameStamp()
+			? ri.getState()->getFrameStamp()->getFrameNumber()
+			: 0u;
+
+		detail::_accumulators[ri.getState()->getContextID()].drain(
+			ext, _printEvery, frameNum
+		);
 	}
 
-	void setQueryMode(QueryMode m) { _queryMode = m; }
+private:
+	size_t _printEvery;
+};
+
+// Walks the scene graph and installs a DrawCallback on every Drawable, building a
+// full scene-path string from NodeVisitor::getNodePath() for identification.
+// Install FinalDrawCallback on the camera separately to complete the two-phase setup.
+template<size_t N=120>
+class DrawVisitor: public osg::NodeVisitor {
+public:
+	DrawVisitor():
+	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN) {
+	}
 
 	virtual void apply(osg::Geode& g) {
 		traverse(g);
 	}
 
 	virtual void apply(osg::Drawable& d) {
-		auto dcb = new DrawCallback<N, C>(d.getName(), d.getDrawCallback());
+		std::string path;
 
-		dcb->setQueryMode(_queryMode);
+		for(auto* n : getNodePath()) {
+			path += "/";
+			path += n->getName().empty() ? n->className() : n->getName();
+		}
 
-		detail::print(" >> Setting dcb on ", d.getName());
+		// In pre-Node-Drawable OSG, the drawable isn't pushed onto the NodePath.
+		if(getNodePath().empty() || getNodePath().back() != &d) {
+			path += "/";
+			path += d.getName().empty() ? d.className() : d.getName();
+		}
+
+		auto dcb = new DrawCallback<N>(path, d.getDrawCallback());
+
+		detail::print(" >> Setting dcb on ", path);
 
 		d.setDrawCallback(dcb);
 
 		traverse(d);
 	}
-
-private:
-	QueryMode _queryMode = QueryMode::ASYNC;
 };
 
 /* static const auto DEBUG_EXTENSIONS = std::vector<std::string>{

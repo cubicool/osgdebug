@@ -17,7 +17,7 @@ OSGX_ENABLE_WARNINGS
 #include <sstream>
 
 auto createSphere(osgx::vec_t radius, osgx::vec_t pSize=1.0) {
-	auto s = new osg::ShapeDrawable(new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), radius));
+	auto s = osgx::make_ref<osg::ShapeDrawable>(new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), radius));
 
 	// s->getOrCreateStateSet()->setAttribute(new osg::Point(pSize));
 	s->setName("SPHERE");
@@ -26,8 +26,8 @@ auto createSphere(osgx::vec_t radius, osgx::vec_t pSize=1.0) {
 }
 
 auto createSphereAt(const osg::Vec3& pos, osgx::vec_t radius, osgx::vec_t pSize=1.0) {
-	auto m = new osg::MatrixTransform(osg::Matrix::translate(pos));
-	auto g = new osg::Geode();
+	auto m = osgx::make_ref<osg::MatrixTransform>(osg::Matrix::translate(pos));
+	auto g = osgx::make_ref<osg::Geode>();
 
 	g->addDrawable(createSphere(radius, pSize));
 
@@ -47,31 +47,30 @@ int main(int argc, char** argv) {
 	auto root = osgx::make_ref<osg::Node>(nullptr);
 
 	if(argc >= 2) {
-		auto dsv = osgx::DescribeSceneVisitor();
-		auto dv = osgDebug::DrawVisitor(osgDebug::QueryMode::SYNC);
-
 		root = osgDB::readRefNodeFile(argv[1]);
 
 		if(!root) return 0;
-
-		root->accept(dsv);
-		root->accept(dv);
 	}
 
 	else {
 		auto geode = osgx::make_ref<osg::Geode>();
 		auto draw = createSphere(10.0);
 
-		draw->setDrawCallback(new osgDebug::DrawCallback(osgDebug::QueryMode::SYNC));
-
 		geode->addDrawable(draw);
 
 		root = geode;
 	}
 
+	auto dsv = osgx::DescribeSceneVisitor();
+	auto dv = osgDebug::DrawVisitor();
+
+	root->accept(dsv);
+	root->accept(dv);
+
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 	viewer.addEventHandler(new osgViewer::StatsHandler());
+	viewer.getCamera()->setFinalDrawCallback(new osgDebug::FinalDrawCallback());
 
 	osgDebug::pushGroup(0, __FUNCTION__);
 
