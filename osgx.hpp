@@ -46,6 +46,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Camera>
 #include <osg/Program>
 #include <osg/Shader>
+#include <osg/Texture2D>
 
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
@@ -1160,16 +1161,20 @@ inline constexpr const char* PICK_FRAG_HOOK_UNIFORM = "uniform uint pickID; uint
 // of where it sits in the scene graph -- without it the cull frustum is wrong and all
 // geometry is silently clipped.
 //
+// image=nullptr (ASYNC mode): attach a renderbuffer instead of an osg::Image so the
+// camera renders into an FBO without triggering OSG's internal glReadPixels. The caller
+// installs a postDrawCallback (e.g. AsyncReadback) to issue its own PBO-based readback.
+//
 // The caller is responsible for:
 //
 // - addChild(scene) on the returned camera
 // - syncing view/projection from the main camera each update traversal
-// - installing PickReadback as an update callback on the returned camera
+// - installing a readback callback (update NodeCallback for SYNC; postDrawCallback for ASYNC)
 inline osg::ref_ptr<osg::Camera> makePickCamera(
 	int w, int h,
-	osg::Image* image,
-	osg::Shader* vertHook=nullptr,
-	osg::Shader* fragHook=nullptr
+	osg::Image* image = nullptr,
+	osg::Shader* vertHook = nullptr,
+	osg::Shader* fragHook = nullptr
 ) {
 	auto cam = make_ref<osg::Camera>();
 
@@ -1182,7 +1187,9 @@ inline osg::ref_ptr<osg::Camera> makePickCamera(
 	// Without ABSOLUTE_RF the camera composes view/projection with the parent
 	// transform stack, producing a wrong cull frustum that clips all geometry.
 	cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
-	cam->attach(osg::Camera::COLOR_BUFFER, image);
+
+	if(image) cam->attach(osg::Camera::COLOR_BUFFER, image);
+	else       cam->attach(osg::Camera::COLOR_BUFFER, GL_RGBA);
 
 	auto prog = make_ref<osg::Program>();
 
@@ -1203,6 +1210,57 @@ inline osg::ref_ptr<osg::Camera> makePickCamera(
 
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 	ss->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+	ss->setMode(GL_DITHER, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+
+	return cam;
+}
+
+// ASYNC variant: attach a Texture2D for FBO rendering. OSG uses glFramebufferTexture2D
+// (renders directly into the texture) with no automatic CPU readback. The caller installs
+// a postDrawCallback that uses glGetTexImage + PBO for zero-stall async readback -- valid
+// after FBO unbind since glGetTexImage reads from the texture object, not the framebuffer.
+// makePickCamera configures the texture's size, format, and NEAREST filters.
+inline osg::ref_ptr<osg::Camera> makePickCamera(
+	int w, int h,
+	osg::Texture2D* tex,
+	osg::Shader* vertHook = nullptr,
+	osg::Shader* fragHook = nullptr
+) {
+	tex->setTextureSize(w, h);
+	tex->setInternalFormat(GL_RGBA);
+	tex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::NEAREST);
+	tex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::NEAREST);
+
+	auto cam = make_ref<osg::Camera>();
+
+	cam->setName("PickCamera");
+	cam->setRenderOrder(osg::Camera::POST_RENDER);
+	cam->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+	cam->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	cam->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+	cam->setViewport(0, 0, w, h);
+	cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+	cam->attach(osg::Camera::COLOR_BUFFER, tex);
+
+	auto prog = make_ref<osg::Program>();
+
+	prog->setName("pickProgram");
+
+	auto* vc = new osg::Shader(osg::Shader::VERTEX,   PICK_VERT_CORE);
+	auto* vh = vertHook ? vertHook : new osg::Shader(osg::Shader::VERTEX,   PICK_VERT_HOOK_NOOP);
+	auto* fc = new osg::Shader(osg::Shader::FRAGMENT, PICK_FRAG_CORE);
+	auto* fh = fragHook ? fragHook : new osg::Shader(osg::Shader::FRAGMENT, PICK_FRAG_HOOK_UNIFORM);
+
+	vc->setName("pickVertCore"); vh->setName("pickVertHook");
+	fc->setName("pickFragCore"); fh->setName("pickFragHook");
+
+	prog->addShader(vc); prog->addShader(vh);
+	prog->addShader(fc); prog->addShader(fh);
+
+	auto* ss = cam->getOrCreateStateSet();
+
+	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+	ss->setMode(GL_BLEND,  osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 	ss->setMode(GL_DITHER, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 
 	return cam;
@@ -1263,12 +1321,37 @@ inline uint32_t pickNearestToCenter(const uint8_t* px, int n) {
 	return bestID;
 }
 
-// Update NodeCallback that reads pick results from an osg::Image attached to the pick camera.
+// Shared atomic state for SYNC and ASYNC pick readback variants.
+// Plain struct — not osg::Referenced. Concrete classes inherit from this alongside
+// a callback base (NodeCallback or Camera::DrawCallback) that provides ref-counting.
+struct PickReadbackBase {
+	void requestPick(int x, int y) {
+		_x.store(x, std::memory_order_relaxed);
+		_y.store(y, std::memory_order_relaxed);
+		_requested.store(true, std::memory_order_release);
+	}
+
+	void updateMouse(int x, int y) {
+		_x.store(x, std::memory_order_relaxed);
+		_y.store(y, std::memory_order_relaxed);
+	}
+
+	int mouseX() const { return _x.load(std::memory_order_relaxed); }
+	int mouseY() const { return _y.load(std::memory_order_relaxed); }
+	uint32_t lastID() const { return _lastID.load(std::memory_order_acquire); }
+
+protected:
+	mutable std::atomic<int>      _x{0}, _y{0};
+	mutable std::atomic<bool>     _requested{false};
+	mutable std::atomic<uint32_t> _lastID{0};
+};
+
+// SYNC readback: NodeCallback that reads from an osg::Image attached to the pick camera.
 //
 // OSG reads the FBO into the image inside RenderStage::drawImplementation while the FBO is
 // still bound. We sample image->data() one frame later in the update traversal -- invisible
 // latency for click-only or continuous hover picking.
-class PickReadback: public osg::NodeCallback {
+class PickReadback: public PickReadbackBase, public osg::NodeCallback {
 public:
 	enum class Mode { CLICK, CONTINUOUS };
 
@@ -1288,24 +1371,6 @@ public:
 	_winH(winH),
 	_mode(mode),
 	_image(image) {}
-
-	// CLICK mode: trigger a one-shot read on the next update traversal.
-	void requestPick(int x, int y) {
-		_x.store(x, std::memory_order_relaxed);
-		_y.store(y, std::memory_order_relaxed);
-		_requested.store(true, std::memory_order_release);
-	}
-
-	// CONTINUOUS mode: keep the cursor position current so the matrix sync callback
-	// can build the correct sub-frustum projection each frame.
-	void updateMouse(int x, int y) {
-		_x.store(x, std::memory_order_relaxed);
-		_y.store(y, std::memory_order_relaxed);
-	}
-
-	int mouseX() const { return _x.load(std::memory_order_relaxed); }
-	int mouseY() const { return _y.load(std::memory_order_relaxed); }
-	uint32_t lastID() const { return _lastID.load(std::memory_order_acquire); }
 
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
 		bool doRead =
@@ -1370,20 +1435,17 @@ private:
 	PickRule _rule;
 	int _winW, _winH;
 	Mode _mode;
-
 	osg::ref_ptr<osg::Image> _image;
-	mutable std::atomic<int> _x{0}, _y{0};
-	mutable std::atomic<bool> _requested{false};
-	mutable std::atomic<uint32_t> _lastID{0};
 };
 
-// GUIEventHandler that forwards click/move events to PickReadback.
+// GUIEventHandler that forwards click/move events to any PickReadbackBase variant.
 // continuous=false -- left-click calls requestPick(x, y); use with CLICK mode.
 // continuous=true -- MOVE events update cursor position; left-click queries lastID().
 // Use with CONTINUOUS mode (1x1 sub-frustum picking).
 class PickHandler: public osgGA::GUIEventHandler {
 public:
-	explicit PickHandler(PickReadback* rb, bool continuous = false):
+	// rb is non-owning; kept alive by the camera's callback ref for its lifetime.
+	explicit PickHandler(PickReadbackBase* rb, bool continuous = false):
 	_rb(rb),
 	_continuous(continuous) {}
 
@@ -1419,8 +1481,7 @@ public:
 	}
 
 private:
-	osg::ref_ptr<PickReadback> _rb;
-
+	PickReadbackBase* _rb;
 	bool _continuous;
 };
 
