@@ -1,29 +1,22 @@
 // vimrun! ./examples/osgdebug-picking
 //
-// Texture-based (object ID) picking with two readback modes and a variable pick region:
+// Texture-based (object ID) picking via RTT FBO + osg::Image readback.
 //
-//   SYNC  (default): glReadPixels immediately in the postDrawCallback — simplest,
-//                    stalls the pipeline for the one pixel read. Fine for click-only picking.
+// Readback: OSG reads the pick FBO into an osg::Image inside RenderStage::drawImplementation
+// while the FBO is still bound. PickReadback (an update NodeCallback) samples image->data()
+// one frame later — invisible latency for click-only picking.
 //
-//   ASYNC (--async): double-buffered PBO readback — issues DMA on frame N, maps the
-//                    OTHER PBO on frame N+1. Zero meaningful stall; one-frame lag that
-//                    ring-buffer averaging (or hover semantics) makes irrelevant.
-//
-//   --pick-size N (default 1): read an NxN region centered on the cursor from the full W×H
-//                    pick FBO. N=1 is pixel-perfect and identical to the original single-pixel
-//                    read. N=3/5/… adds a tolerance zone for thin geometry.
-//                    A PickRule callback selects one ID from the NxN buffer (pickCenter by
-//                    default; pickMostCoverage and pickNearestToCenter also provided).
+// --pick-size N (default 1): sample an NxN region centered on the cursor.
+//   N=1 is pixel-perfect. N=3/5/… adds a tolerance zone for thin geometry.
+//   PickRule selects one ID from the NxN buffer (pickCenter by default;
+//   pickMostCoverage and pickNearestToCenter also provided).
 //
 // TODO(optimization): replace the full W×H pick FBO with a tiny NxN FBO + sub-frustum
-//   projection matrix ("pick matrix", a la gluPickMatrix) so the GPU only rasterizes the
-//   region under the cursor. This was attempted but the postDrawCallback fired with the
-//   wrong framebuffer bound (read the background color instead of the pick FBO). Needs
-//   investigation: check GL_FRAMEBUFFER_BINDING in the callback, try setFinalDrawCallback,
-//   test minimum viable FBO size, consider explicit FBO rebind in the callback.
-//   See memory: picking_subfrust_todo.md for full root-cause notes.
+//   projection matrix ("pick matrix", a la gluPickMatrix) so the GPU only rasterizes
+//   the region under the cursor. See memory: picking_subfrust_todo.md.
 //
-// The pattern mirrors the SYNC/ASYNC split in osgDebug::FinalDrawCallback (timer queries).
+// TODO(hover): forward MOVE events in PickHandler to enable continuous per-frame picking.
+//   The NodeCallback already runs every update traversal; just keep _requested=true.
 //
 // Scene: five spheres, each with a pickID uniform (1–5). ID 0 = background.
 // Left-click anywhere to print the picked object ID.
@@ -33,11 +26,12 @@
 OSGX_DISABLE_WARNINGS
 
 #include <osg/Camera>
-#include <osg/Texture2D>
+#include <osg/Image>
 #include <osg/Program>
 #include <osg/Shader>
 #include <osg/Uniform>
 
+#include <osgDB/WriteFile>
 #include <osgGA/TrackballManipulator>
 #include <osgViewer/ViewerEventHandlers>
 
@@ -51,15 +45,12 @@ OSGX_ENABLE_WARNINGS
 #include <vector>
 
 // ------------------------------------------------------------------------------------------------
-// Pick shaders — hook-based design
+// Pick shaders — hook-based design, multi-shader-object linking
 //
-// Each stage is built by concatenating a "core" source string with a "hook" source string into
-// a single osg::Shader. This is intentional: some drivers silently fail to link two shader
-// objects of the same stage in one program, which would cause the pick program to be skipped
-// entirely and the scene to render with its actual colors (wrong). Concatenation into one
-// compilation unit per stage is universally compatible.
-//
-// Hook strings must NOT include a #version directive — the core already provides it.
+// Two separate osg::Shader objects per stage are linked into one osg::Program (spec-legal
+// GLSL separate compilation, same pattern as osgSlug). The core shader declares the hook
+// function prototype; the hook shader provides the definition. Callers can swap hook shaders
+// without recompiling the core. No string concatenation needed.
 //
 //   pickVertexHook() — called at the end of the vertex stage; forward per-vertex attributes
 //                      (e.g. a flat uint aPickID) to the fragment stage here.
@@ -163,13 +154,22 @@ inline uint32_t pickNearestToCenter(const uint8_t* px, int n) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Shared base: atomic cursor coords + result storage, pick-region size, and selection rule
+// Readback: osg::NodeCallback that reads from OSG's built-in image attachment
+//
+// The pick FBO is always unbound before any postDrawCallback or finalDrawCallback fires,
+// so glReadPixels/glGetTexImage can't be used there reliably. OSG's cam->attach(image)
+// mechanism reads the FBO into the image during RenderStage::draw() while the FBO is
+// still bound — before the draw callbacks fire. We then read from image->data() in the
+// UPDATE traversal (one frame stale), which is invisible for click-only picking on a
+// static scene.
+//
+// No raw GL code needed here at all.
 // ------------------------------------------------------------------------------------------------
 
-class PickReadbackBase : public osg::Camera::DrawCallback {
+class PickReadback : public osg::NodeCallback {
 public:
-    explicit PickReadbackBase(int pickSize = 1, PickRule rule = pickCenter)
-        : _pickSize(pickSize), _rule(std::move(rule)) {}
+    PickReadback(int pickSize, PickRule rule, osg::Image* image)
+        : _pickSize(pickSize), _rule(std::move(rule)), _image(image) {}
 
     void requestPick(int x, int y) {
         _x.store(x, std::memory_order_relaxed);
@@ -179,120 +179,69 @@ public:
 
     uint32_t lastID() const { return _lastID.load(std::memory_order_acquire); }
 
-protected:
-    int      _pickSize;
-    PickRule _rule;
-
-    mutable std::atomic<int>      _x{0}, _y{0};
-    mutable std::atomic<bool>     _requested{false};
-    mutable std::atomic<uint32_t> _lastID{0};
-};
-
-// ------------------------------------------------------------------------------------------------
-// SYNC readback
-// ------------------------------------------------------------------------------------------------
-
-class SyncReadback : public PickReadbackBase {
-public:
-    using PickReadbackBase::PickReadbackBase;
-
-    void operator()(osg::RenderInfo&) const override {
-        if(!_requested.exchange(false, std::memory_order_acq_rel)) return;
-
-        int x = _x.load(std::memory_order_relaxed);
-        int y = _y.load(std::memory_order_relaxed);
-        int N = _pickSize;
-
-        // The pick camera's FBO is still bound here. Read the NxN region centered on the
-        // cursor. For N=1 this is identical to the original glReadPixels(x, y, 1, 1, ...).
-        // Y=0 is bottom-left in both OSG events and OpenGL; no flip needed for a standard
-        // OSG viewer. If your window system inverts Y, flip: y = viewportH - 1 - y.
-        std::vector<uint8_t> buf(static_cast<std::size_t>(N * N * 4));
-        glReadPixels(x - N / 2, y - N / 2, N, N, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-
-        uint32_t id = _rule(buf.data(), N);
-        _lastID.store(id, std::memory_order_release);
-
-        OSG_NOTICE << "SYNC pick (" << x << ", " << y << ") -> ID " << id << std::endl;
-    }
-};
-
-// ------------------------------------------------------------------------------------------------
-// ASYNC readback: double-buffered PBO, one-frame lag
-//
-// Every frame while _inFlight:
-//   1. Map PBO[1-idx] (written last frame) → read result (GPU already done)
-//   2. Issue glReadPixels into PBO[idx] → DMA starts, returns immediately
-//   3. Flip idx
-//
-// A new requestPick() updates the stored coordinates; the readback continues running
-// at the stored position until you request again (suitable for hover picking too).
-// ------------------------------------------------------------------------------------------------
-
-class AsyncReadback : public PickReadbackBase {
-public:
-    using PickReadbackBase::PickReadbackBase;
-
-    void operator()(osg::RenderInfo& ri) const override {
-        auto* ext   = ri.getState()->get<osg::GLExtensions>();
-        int   N     = _pickSize;
-        int   bufSz = N * N * 4;
-
-        if(!_init) {
-            ext->glGenBuffers(2, _pbos);
-
-            for(int i = 0; i < 2; i++) {
-                ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, _pbos[i]);
-                ext->glBufferData(GL_PIXEL_PACK_BUFFER, bufSz, nullptr, GL_STREAM_READ);
-            }
-
-            ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-            _init = true;
-        }
-
-        // --- Phase 1: map PBO written last frame, apply pick rule ---
-        if(_inFlight) {
-            ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, _pbos[1 - _idx]);
-
-            auto* ptr = static_cast<uint8_t*>(
-                ext->glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY)
-            );
-
-            if(ptr) {
-                uint32_t id = _rule(ptr, N);
-                _lastID.store(id, std::memory_order_release);
-                ext->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
-
-                OSG_NOTICE
-                    << "ASYNC pick (" << _pickX << ", " << _pickY << ") -> ID " << id
-                    << std::endl;
-            }
-
-            ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-        }
-
-        // --- Accept a new pick request ---
+    void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
         if(_requested.exchange(false, std::memory_order_acq_rel)) {
-            _pickX    = _x.load(std::memory_order_relaxed);
-            _pickY    = _y.load(std::memory_order_relaxed);
-            _inFlight = true;
+            int x = _x.load(std::memory_order_relaxed);
+            int y = _y.load(std::memory_order_relaxed);
+            int N = _pickSize;
+            int W = _image->s();
+            int H = _image->t();
+
+            const uint8_t* data = _image->data();
+
+            if(data) {
+                // Sample key pixels to diagnose what the pick camera actually rendered.
+                // Alpha tells us whether the FBO rendered at all (clear alpha=1 → 255;
+                // alpha=0 means the image was never written to).
+                auto sample = [&](const char* label, int sx, int sy) {
+                    int i = (std::clamp(sy, 0, H-1) * W + std::clamp(sx, 0, W-1)) * 4;
+                    OSG_NOTICE << "  " << label
+                        << " RGBA(" << (int)data[i+0] << ","
+                                    << (int)data[i+1] << ","
+                                    << (int)data[i+2] << ","
+                                    << (int)data[i+3] << ")\n";
+                };
+
+                OSG_NOTICE << "[PICK] image samples:\n";
+                sample("click pos",  x,   y);
+                sample("[0,0]",      0,   0);
+                sample("[center]",   W/2, H/2);
+                sample("[W-1,H-1]",  W-1, H-1);
+
+                osgDB::writeImageFile(*_image, "pick_debug.png");
+                OSG_NOTICE << "[PICK] wrote pick_debug.png\n";
+
+                int cx = std::clamp(x, N/2, W - (N+1)/2);
+                int cy = std::clamp(y, N/2, H - (N+1)/2);
+
+                std::vector<uint8_t> region(static_cast<std::size_t>(N * N * 4));
+
+                for(int row = 0; row < N; row++) {
+                    for(int col = 0; col < N; col++) {
+                        int srcIdx = ((cy - N/2 + row) * W + (cx - N/2 + col)) * 4;
+                        int dstIdx = (row * N + col) * 4;
+                        std::copy_n(data + srcIdx, 4, region.data() + dstIdx);
+                    }
+                }
+
+                uint32_t id = _rule(region.data(), N);
+                _lastID.store(id, std::memory_order_release);
+
+                OSG_NOTICE << "Pick (" << x << ", " << y << ") -> ID " << id << std::endl;
+            }
         }
 
-        // --- Phase 2: DMA the NxN region centered on cursor into this frame's PBO ---
-        if(_inFlight) {
-            ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, _pbos[_idx]);
-            glReadPixels(_pickX - N / 2, _pickY - N / 2, N, N, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-            _idx ^= 1;
-        }
+        traverse(node, nv);
     }
 
 private:
-    mutable GLuint _pbos[2]{0, 0};
-    mutable int    _idx{0};
-    mutable bool   _init{false};
-    mutable bool   _inFlight{false};
-    mutable int    _pickX{0}, _pickY{0};
+    int      _pickSize;
+    PickRule _rule;
+
+    osg::ref_ptr<osg::Image>      _image;
+    mutable std::atomic<int>      _x{0}, _y{0};
+    mutable std::atomic<bool>     _requested{false};
+    mutable std::atomic<uint32_t> _lastID{0};
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -301,7 +250,7 @@ private:
 
 class PickHandler : public osgGA::GUIEventHandler {
 public:
-    explicit PickHandler(PickReadbackBase* rb) : _rb(rb) {}
+    explicit PickHandler(PickReadback* rb) : _rb(rb) {}
 
     bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override {
         if(
@@ -320,7 +269,7 @@ public:
     }
 
 private:
-    osg::ref_ptr<PickReadbackBase> _rb;
+    osg::ref_ptr<PickReadback> _rb;
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -373,36 +322,39 @@ osg::ref_ptr<osg::Group> createScene() {
 
 osg::ref_ptr<osg::Camera> createPickCamera(
     int w, int h,
+    osg::Image* image,
     osg::Shader* vertHook = nullptr,
     osg::Shader* fragHook = nullptr
 ) {
     auto cam = osgx::make_ref<osg::Camera>();
     cam->setName("PickCamera");
-    cam->setRenderOrder(osg::Camera::PRE_RENDER);
+    cam->setRenderOrder(osg::Camera::POST_RENDER);
     cam->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
     cam->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     cam->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 1.0f));   // black = ID 0 = no pick
     cam->setViewport(0, 0, w, h);
+    // Without ABSOLUTE_RF the camera composes view/projection with the parent
+    // transform stack, producing a wrong cull frustum that clips all geometry.
+    cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+    cam->attach(osg::Camera::COLOR_BUFFER, image);
 
-    // NEAREST filter: no interpolation between IDs, which would corrupt the encoding
-    auto tex = osgx::make_ref<osg::Texture2D>();
-    tex->setTextureSize(w, h);
-    tex->setInternalFormat(GL_RGBA);
-    tex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::NEAREST);
-    tex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::NEAREST);
-    cam->attach(osg::Camera::COLOR_BUFFER, tex);
-
-    // Concatenate core + hook into one shader object per stage.  Linking two vertex (or
-    // fragment) objects in a single program is spec-legal but silently broken on some drivers.
-    std::string vertSrc = std::string(PICK_VERT_CORE) +
-        (vertHook ? vertHook->getShaderSource() : std::string(PICK_VERT_NOOP));
-    std::string fragSrc = std::string(PICK_FRAG_CORE) +
-        (fragHook ? fragHook->getShaderSource() : std::string(PICK_FRAG_DEFAULT));
-
+    // Two separate osg::Shader objects per stage — spec-legal GLSL separate compilation.
+    // Core declares the hook prototype; hook provides the definition. Previously done via
+    // string concatenation as a workaround, but the real breakage was the missing
+    // setReferenceFrame(ABSOLUTE_RF), now fixed.
     auto prog = osgx::make_ref<osg::Program>();
     prog->setName("pickProgram");
-    prog->addShader(new osg::Shader(osg::Shader::VERTEX,   vertSrc));
-    prog->addShader(new osg::Shader(osg::Shader::FRAGMENT, fragSrc));
+
+    auto* vc = new osg::Shader(osg::Shader::VERTEX,   PICK_VERT_CORE);
+    auto* vh = vertHook ? vertHook : new osg::Shader(osg::Shader::VERTEX,   PICK_VERT_NOOP);
+    auto* fc = new osg::Shader(osg::Shader::FRAGMENT, PICK_FRAG_CORE);
+    auto* fh = fragHook ? fragHook : new osg::Shader(osg::Shader::FRAGMENT, PICK_FRAG_DEFAULT);
+
+    vc->setName("pickVertCore");  vh->setName("pickVertHook");
+    fc->setName("pickFragCore");  fh->setName("pickFragHook");
+
+    prog->addShader(vc);  prog->addShader(vh);
+    prog->addShader(fc);  prog->addShader(fh);
 
     auto* ss = cam->getOrCreateStateSet();
 
@@ -422,15 +374,12 @@ osg::ref_ptr<osg::Camera> createPickCamera(
 int main(int argc, char** argv) {
     osg::ArgumentParser args(&argc, argv);
 
-    bool useAsync = args.read("--async");
-
     int pickSize = 1;
     args.read("--pick-size", pickSize);
     if(pickSize < 1) pickSize = 1;
 
     OSG_NOTICE
-        << "Pick mode: "
-        << (useAsync ? "ASYNC (PBO, 1-frame lag)" : "SYNC (glReadPixels, immediate)")
+        << "Pick mode: image readback (osg::Image, 1-frame lag)"
         << "  region: " << pickSize << "x" << pickSize
         << " (rule: pickCenter)"
         << " — left-click to pick"
@@ -449,14 +398,16 @@ int main(int argc, char** argv) {
 
     OSG_NOTICE << "Viewport: " << W << "x" << H << std::endl;
 
-    auto scene    = createScene();
-    auto pickCam  = createPickCamera(W, H);
+    auto pickImage = osgx::make_ref<osg::Image>();
+    pickImage->allocateImage(W, H, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+
+    auto scene   = createScene();
+    auto pickCam = createPickCamera(W, H, pickImage.get());
 
     // Pick camera renders the same scene node (shared ref_ptr)
     pickCam->addChild(scene);
 
     // Sync pick camera's view/projection to the viewer's main camera every update traversal.
-    // The pick camera is PRE_RENDER, so it uses whatever matrices we set here before it draws.
     auto root = osgx::make_ref<osg::Group>();
     root->setName("root");
 
@@ -471,13 +422,10 @@ int main(int argc, char** argv) {
     root->addChild(pickCam);
     root->addChild(scene);
 
-    // Build and wire up the readback callback
-    osg::ref_ptr<PickReadbackBase> rb;
-
-    if(useAsync) rb = osgx::make_ref<AsyncReadback>(pickSize);
-    else         rb = osgx::make_ref<SyncReadback>(pickSize);
-
-    pickCam->setPostDrawCallback(rb);
+    // Install the readback as an update callback on the pick camera so it runs each
+    // update traversal and reads from the image OSG populated during the previous render.
+    auto rb = osgx::make_ref<PickReadback>(pickSize, pickCenter, pickImage.get());
+    pickCam->setUpdateCallback(rb);
 
     viewer.addEventHandler(new PickHandler(rb));
     viewer.setSceneData(root);
