@@ -4,6 +4,7 @@ set(OSGDEBUG_EXAMPLES
 	# "callback"
 	# "culling"
 	## "notifyfilter"
+	"hover"
 	"picking"
 	"rtt-image"
 	"viewer"
@@ -15,4 +16,5 @@ foreach(example IN LISTS OSGDEBUG_EXAMPLES)
 endforeach()
 
 find_package(OpenGL REQUIRED)
+target_link_libraries(osgdebug-hover   PRIVATE OpenGL::GL)
 target_link_libraries(osgdebug-picking PRIVATE OpenGL::GL)

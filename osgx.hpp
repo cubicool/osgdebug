@@ -48,6 +48,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Program>
 #include <osg/Shader>
 #include <osg/Texture2D>
+#include <osg/GLExtensions>
 
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
@@ -1098,7 +1099,7 @@ public:
 //
 // 1. Creating a pick camera (RTT FBO, ABSOLUTE_RF, pick shader with OVERRIDE).
 // 2. Sharing the scene node as a child of both the pick camera and the main scene root.
-// 3. Syncing the pick camera's view/projection to the main camera each update traversal.
+// 3. Syncing the pick camera's view/projection to the main camera each update traversal (PickCameraSync).
 // 4. Adding PickHandler as a viewer event handler.
 //
 // See examples/osgdebug-picking.cpp for a complete worked example including all three FBO
@@ -1384,18 +1385,22 @@ inline uint32_t spiralPick(const uint8_t* px, int n) {
 
 enum class ActionType { HOVER, CLICK };
 
-// Shared atomic state for SYNC and ASYNC pick readback variants.
+// Shared state for SYNC and ASYNC pick readback variants.
 // Plain struct - not osg::Referenced. Concrete classes inherit from this alongside
 // a callback base (NodeCallback or Camera::DrawCallback) that provides ref-counting.
 //
-// onPick(id, ActionType) - set by the caller to receive pick events:
-// HOVER: fired when the hovered ID changes (including transitions to 0 = background).
-// CLICK: fired when a click request resolves to an ID.
-//
-// reportClick() - call from PickHandler in CONTINUOUS mode to fire onPick(CLICK) with
-// the currently hovered ID (already up-to-date from the last _fireHover call).
-struct PickReadbackBase {
+// onPick(id, ActionType) -- HOVER fires when hovered ID changes (including to 0=background);
+//                           CLICK fires when a click resolves.
+//                           May fire on any thread depending on readback mode -- safe for
+//                           logging/audio/non-scene-graph reactions only.
+// onEnter(id)            -- non-zero id entered. Always fired from the update thread via
+// onLeave(id)               PickHoverCallback -- safe for scene graph modifications.
+// reportClick()          -- call from PickHandler in CONTINUOUS mode to fire CLICK with the
+//                           currently hovered ID.
+struct PickReadback {
 	std::function<void(uint32_t, ActionType)> onPick;
+	std::function<void(uint32_t)> onEnter;
+	std::function<void(uint32_t)> onLeave;
 
 	void requestPick(int x, int y) {
 		_x.store(x, std::memory_order_relaxed);
@@ -1420,11 +1425,10 @@ protected:
 	void _fireHover(uint32_t id) const {
 		_lastID.store(id, std::memory_order_release);
 
-		if(id != _prevID) {
-			_prevID = id;
+		if(id == _prevID) return;
+		_prevID = id;
 
-			if(onPick) onPick(id, ActionType::HOVER);
-		}
+		if(onPick) onPick(id, ActionType::HOVER);
 	}
 
 	void _fireClick(uint32_t id) const {
@@ -1444,13 +1448,13 @@ protected:
 // OSG reads the FBO into the image inside RenderStage::drawImplementation while the FBO is
 // still bound. We sample image->data() one frame later in the update traversal -- invisible
 // latency for click-only or continuous hover picking.
-class PickReadback: public PickReadbackBase, public osg::NodeCallback {
+class PickReadbackSync: public PickReadback, public osg::NodeCallback {
 public:
 	enum class Mode { CLICK, CONTINUOUS };
 
 	// winW / winH -- actual window dimensions; used to scale mouse coords when the pick
 	// image is smaller than the window (small-pick mode).
-	PickReadback(
+	PickReadbackSync(
 		int pickSize,
 		PickRule rule,
 		osg::Image* image,
@@ -1525,7 +1529,163 @@ private:
 	osg::ref_ptr<osg::Image> _image;
 };
 
-// GUIEventHandler that forwards click/move events to any PickReadbackBase variant.
+// ASYNC readback: Camera::DrawCallback using a Texture2D attachment + PBO glGetTexImage.
+// Install as postDrawCallback on the pick camera.
+//
+// The pick camera must attach a Texture2D (not osg::Image) so OSG renders directly into
+// the texture with no automatic CPU readback. glGetTexImage reads from the texture object --
+// FBO binding is irrelevant after unbind -- so the postDrawCallback timing is correct.
+//
+// CLICK mode: one async download per requestPick() call.
+// CONTINUOUS mode: download every frame (negligible for a 1x1 texture).
+class PickReadbackAsync: public PickReadback, public osg::Camera::DrawCallback {
+public:
+	enum class Mode { CLICK, CONTINUOUS };
+
+	PickReadbackAsync(osg::Texture2D* tex, int imgW, int imgH, Mode mode = Mode::CLICK):
+	_tex(tex), _imgW(imgW), _imgH(imgH), _mode(mode) {}
+
+	void operator()(osg::RenderInfo& ri) const override {
+		auto& state = *ri.getState();
+		auto* ext = state.get<osg::GLExtensions>();
+		std::size_t bufSize = static_cast<std::size_t>(_imgW * _imgH * 4);
+
+		if(!_init) {
+			ext->glGenBuffers(1, &_pbo);
+			ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, _pbo);
+			ext->glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(bufSize), nullptr, GL_STREAM_READ);
+			ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+			_init = true;
+		}
+
+		if(_inFlight) {
+			ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, _pbo);
+			auto* ptr = static_cast<const uint8_t*>(
+				ext->glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY)
+			);
+			if(ptr) {
+				int px = std::clamp(_pickX, 0, _imgW - 1);
+				int py = std::clamp(_pickY, 0, _imgH - 1);
+				uint32_t id = decodePickID(ptr + (py * _imgW + px) * 4);
+				if(_mode == Mode::CLICK) _fireClick(id);
+				else _fireHover(id);
+				ext->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+			}
+			ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+			_inFlight = false;
+		}
+
+		bool doDownload =
+			(_mode == Mode::CONTINUOUS) ||
+			_requested.exchange(false, std::memory_order_acq_rel);
+
+		if(doDownload) {
+			_pickX = _x.load(std::memory_order_relaxed);
+			_pickY = _y.load(std::memory_order_relaxed);
+			_tex->apply(state);
+			ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, _pbo);
+			glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+			ext->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			_inFlight = true;
+		}
+	}
+
+private:
+	osg::ref_ptr<osg::Texture2D> _tex;
+	int _imgW, _imgH;
+	Mode _mode;
+
+	mutable GLuint _pbo{0};
+	mutable bool _init{false};
+	mutable bool _inFlight{false};
+	mutable int _pickX{0}, _pickY{0};
+};
+
+// NodeCallback that syncs a pick camera's view/projection from the viewer camera each
+// update traversal. Install directly on the pick camera via setUpdateCallback(); chain
+// other pick callbacks (e.g. PickReadbackSync) via setNestedCallback().
+//
+// pick1x1=true: also builds a sub-frustum projection centered on the cursor each frame
+// (gluPickMatrix equivalent). Requires rb for the current mouse position.
+class PickCameraSync: public osg::NodeCallback {
+public:
+	PickCameraSync(
+		osg::Camera* viewerCam,
+		bool pick1x1 = false,
+		int W = 0,
+		int H = 0,
+		PickReadback* rb = nullptr
+	):
+	_viewerCam(viewerCam),
+	_pick1x1(pick1x1),
+	_W(W),
+	_H(H),
+	_rb(rb) {}
+
+	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
+		if(auto* vc = _viewerCam.get()) {
+			auto* cam = static_cast<osg::Camera*>(node);
+
+			cam->setViewMatrix(vc->getViewMatrix());
+
+			if(_pick1x1 && _rb) {
+				double cx = _rb->mouseX() + 0.5;
+				double cy = _rb->mouseY() + 0.5;
+				double W  = static_cast<double>(_W);
+				double H  = static_cast<double>(_H);
+
+				osg::Matrix sub(W, 0, 0, 0, 0, H, 0, 0, 0, 0, 1, 0, W - 2.0*cx, H - 2.0*cy, 0, 1);
+
+				cam->setProjectionMatrix(vc->getProjectionMatrix() * sub);
+			} else {
+				cam->setProjectionMatrix(vc->getProjectionMatrix());
+			}
+		}
+
+		traverse(node, nv);
+	}
+
+private:
+	osg::observer_ptr<osg::Camera> _viewerCam;
+	bool _pick1x1;
+	int _W, _H;
+	PickReadback* _rb;
+};
+
+// NodeCallback that fires onEnter/onLeave on the update thread by polling lastID().
+//
+// Install on any node in the update traversal alongside or instead of PickReadbackSync.
+// The readback (SYNC or ASYNC) updates _lastID atomically; this callback detects transitions
+// and fires callbacks safely regardless of which thread the readback runs on.
+//
+// This is the correct way to trigger scene graph modifications (setMatrix, setColor, etc.)
+// in response to hover events -- onEnter/onLeave fired directly from PickReadbackAsync's
+// draw callback would race with the cull thread.
+class PickHoverCallback: public osg::NodeCallback {
+public:
+	explicit PickHoverCallback(PickReadback* rb): _rb(rb) {}
+
+	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
+		uint32_t id = _rb->lastID();
+
+		if(id != _prevID) {
+			uint32_t prev = _prevID;
+			_prevID = id;
+
+			if(prev != 0 && _rb->onLeave) _rb->onLeave(prev);
+			if(id   != 0 && _rb->onEnter) _rb->onEnter(id);
+		}
+
+		traverse(node, nv);
+	}
+
+private:
+	PickReadback* _rb;
+	uint32_t      _prevID{0};
+};
+
+// GUIEventHandler that forwards click/move events to any PickReadback variant.
 // continuous=false -- left-click calls requestPick(x, y); use with CLICK mode.
 // continuous=true -- MOVE events update cursor position; left-click queries lastID().
 // Use with CONTINUOUS mode (1x1 sub-frustum picking).
@@ -1537,7 +1697,7 @@ private:
 class PickHandler: public osgGA::GUIEventHandler {
 public:
 	// rb is non-owning; kept alive by the camera's callback ref for its lifetime.
-	explicit PickHandler(PickReadbackBase* rb, bool continuous=false, bool consumeEvents=false):
+	explicit PickHandler(PickReadback* rb, bool continuous=false, bool consumeEvents=false):
 	_rb(rb),
 	_continuous(continuous),
 	_consume(consumeEvents) {}
@@ -1566,7 +1726,7 @@ public:
 	}
 
 private:
-	PickReadbackBase* _rb;
+	PickReadback* _rb;
 
 	bool _continuous;
 	bool _consume;
