@@ -43,6 +43,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/ShapeDrawable>
 #include <osg/PrimitiveSet>
 
+#include <osg/BlendFunc>
 #include <osg/Camera>
 #include <osg/Program>
 #include <osg/Shader>
@@ -1146,7 +1147,7 @@ void main() {
 		float( id & 0xFFu) / 255.0,
 		float((id >> 8u) & 0xFFu) / 255.0,
 		float((id >> 16u) & 0xFFu) / 255.0,
-		1.0
+		float((id >> 24u) & 0xFFu) / 255.0
 	);
 }
 )GLSL";
@@ -1182,14 +1183,15 @@ inline osg::ref_ptr<osg::Camera> makePickCamera(
 	cam->setRenderOrder(osg::Camera::POST_RENDER);
 	cam->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
 	cam->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	cam->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 1.0f)); // black = ID 0 = no pick
+	cam->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 0.0f)); // all-zero RGBA = ID 0 = no pick
 	cam->setViewport(0, 0, w, h);
 	// Without ABSOLUTE_RF the camera composes view/projection with the parent
 	// transform stack, producing a wrong cull frustum that clips all geometry.
 	cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+	cam->setSmallFeatureCullingPixelSize(-1.0f);
 
 	if(image) cam->attach(osg::Camera::COLOR_BUFFER, image);
-	else       cam->attach(osg::Camera::COLOR_BUFFER, GL_RGBA);
+	else cam->attach(osg::Camera::COLOR_BUFFER, GL_RGBA);
 
 	auto prog = make_ref<osg::Program>();
 
@@ -1208,9 +1210,19 @@ inline osg::ref_ptr<osg::Camera> makePickCamera(
 
 	auto* ss = cam->getOrCreateStateSet();
 
-	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-	ss->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+	// BlendFunc(ONE,ZERO) with PROTECTED: osg::Text re-enables blend without
+	// respecting OVERRIDE alone; PROTECTED prevents any child from overriding it.
+	auto* bf = new osg::BlendFunc(
+		osg::BlendFunc::ONE, osg::BlendFunc::ZERO,
+		osg::BlendFunc::ONE, osg::BlendFunc::ZERO
+	);
+
 	ss->setMode(GL_DITHER, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+	ss->setAttributeAndModes(
+		bf,
+		osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED
+	);
 
 	return cam;
 }
@@ -1237,17 +1249,18 @@ inline osg::ref_ptr<osg::Camera> makePickCamera(
 	cam->setRenderOrder(osg::Camera::POST_RENDER);
 	cam->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
 	cam->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	cam->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+	cam->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 0.0f)); // all-zero RGBA = ID 0 = no pick
 	cam->setViewport(0, 0, w, h);
 	cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+	cam->setSmallFeatureCullingPixelSize(-1.0f);
 	cam->attach(osg::Camera::COLOR_BUFFER, tex);
 
 	auto prog = make_ref<osg::Program>();
 
 	prog->setName("pickProgram");
 
-	auto* vc = new osg::Shader(osg::Shader::VERTEX,   PICK_VERT_CORE);
-	auto* vh = vertHook ? vertHook : new osg::Shader(osg::Shader::VERTEX,   PICK_VERT_HOOK_NOOP);
+	auto* vc = new osg::Shader(osg::Shader::VERTEX, PICK_VERT_CORE);
+	auto* vh = vertHook ? vertHook : new osg::Shader(osg::Shader::VERTEX, PICK_VERT_HOOK_NOOP);
 	auto* fc = new osg::Shader(osg::Shader::FRAGMENT, PICK_FRAG_CORE);
 	auto* fh = fragHook ? fragHook : new osg::Shader(osg::Shader::FRAGMENT, PICK_FRAG_HOOK_UNIFORM);
 
@@ -1259,16 +1272,21 @@ inline osg::ref_ptr<osg::Camera> makePickCamera(
 
 	auto* ss = cam->getOrCreateStateSet();
 
+	auto* bf = new osg::BlendFunc(
+		osg::BlendFunc::ONE, osg::BlendFunc::ZERO,
+		osg::BlendFunc::ONE, osg::BlendFunc::ZERO
+	);
+
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-	ss->setMode(GL_BLEND,  osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+	ss->setAttributeAndModes(bf, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
 	ss->setMode(GL_DITHER, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 
 	return cam;
 }
 
-// Decode a 24-bit pick ID from the first 4 bytes of an RGBA pixel (R=low byte, B=high byte).
+// Decode a 32-bit pick ID from an RGBA pixel: R=bits[7:0], G=bits[15:8], B=bits[23:16], A=bits[31:24].
 inline uint32_t decodePickID(const uint8_t* px) {
-	return uint32_t(px[0]) | (uint32_t(px[1]) << 8) | (uint32_t(px[2]) << 16);
+	return uint32_t(px[0]) | (uint32_t(px[1]) << 8) | (uint32_t(px[2]) << 16) | (uint32_t(px[3]) << 24);
 }
 
 // Selects one pick ID from a flat NxN RGBA pixel buffer.
@@ -1295,8 +1313,9 @@ inline uint32_t pickMostCoverage(const uint8_t* px, int n) {
 
 	if(counts.empty()) return 0;
 
-	return std::max_element(counts.begin(), counts.end(),
-		[](const auto& a, const auto& b){ return a.second < b.second; })->first;
+	return std::max_element(counts.begin(), counts.end(), [](const auto& a, const auto& b) {
+		return a.second < b.second;
+	})->first;
 }
 
 // Non-zero ID nearest to center wins -- good for snap-to-object / hover picking.
@@ -1321,10 +1340,63 @@ inline uint32_t pickNearestToCenter(const uint8_t* px, int n) {
 	return bestID;
 }
 
+// Spirals outward from center ring by ring (Chebyshev distance), returning the first
+// non-zero ID found. Equivalent result to pickNearestToCenter but exits on the first
+// hit instead of scanning all N*N pixels -- preferred default for all pick modes.
+inline uint32_t spiralPick(const uint8_t* px, int n) {
+	int half = n / 2;
+	uint32_t id = decodePickID(px + (half * n + half) * 4);
+
+	if(id) return id;
+
+	for(int r = 1; r <= half; r++) {
+		// Top edge: row = half+r, col = half-r .. half+r
+		for(int c = -r; c <= r; c++) {
+			id = decodePickID(px + ((half + r) * n + (half + c)) * 4);
+
+			if(id) return id;
+		}
+
+		// Right edge: col = half+r, row = half+r-1 .. half-r
+		for(int rr = r - 1; rr >= -r; rr--) {
+			id = decodePickID(px + ((half + rr) * n + (half + r)) * 4);
+
+			if(id) return id;
+		}
+
+		// Bottom edge: row = half-r, col = half+r-1 .. half-r
+		for(int c = r - 1; c >= -r; c--) {
+			id = decodePickID(px + ((half - r) * n + (half + c)) * 4);
+
+			if(id) return id;
+		}
+
+		// Left edge: col = half-r, row = half-r+1 .. half+r-1
+		for(int rr = -r + 1; rr <= r - 1; rr++) {
+			id = decodePickID(px + ((half + rr) * n + (half - r)) * 4);
+
+			if(id) return id;
+		}
+	}
+
+	return 0;
+}
+
+enum class ActionType { HOVER, CLICK };
+
 // Shared atomic state for SYNC and ASYNC pick readback variants.
-// Plain struct — not osg::Referenced. Concrete classes inherit from this alongside
+// Plain struct - not osg::Referenced. Concrete classes inherit from this alongside
 // a callback base (NodeCallback or Camera::DrawCallback) that provides ref-counting.
+//
+// onPick(id, ActionType) - set by the caller to receive pick events:
+// HOVER: fired when the hovered ID changes (including transitions to 0 = background).
+// CLICK: fired when a click request resolves to an ID.
+//
+// reportClick() - call from PickHandler in CONTINUOUS mode to fire onPick(CLICK) with
+// the currently hovered ID (already up-to-date from the last _fireHover call).
 struct PickReadbackBase {
+	std::function<void(uint32_t, ActionType)> onPick;
+
 	void requestPick(int x, int y) {
 		_x.store(x, std::memory_order_relaxed);
 		_y.store(y, std::memory_order_relaxed);
@@ -1336,14 +1408,35 @@ struct PickReadbackBase {
 		_y.store(y, std::memory_order_relaxed);
 	}
 
+	void reportClick() {
+		if(onPick) onPick(_lastID.load(std::memory_order_acquire), ActionType::CLICK);
+	}
+
 	int mouseX() const { return _x.load(std::memory_order_relaxed); }
 	int mouseY() const { return _y.load(std::memory_order_relaxed); }
 	uint32_t lastID() const { return _lastID.load(std::memory_order_acquire); }
 
 protected:
-	mutable std::atomic<int>      _x{0}, _y{0};
-	mutable std::atomic<bool>     _requested{false};
+	void _fireHover(uint32_t id) const {
+		_lastID.store(id, std::memory_order_release);
+
+		if(id != _prevID) {
+			_prevID = id;
+
+			if(onPick) onPick(id, ActionType::HOVER);
+		}
+	}
+
+	void _fireClick(uint32_t id) const {
+		_lastID.store(id, std::memory_order_release);
+
+		if(onPick) onPick(id, ActionType::CLICK);
+	}
+
+	mutable std::atomic<int> _x{0}, _y{0};
+	mutable std::atomic<bool> _requested{false};
 	mutable std::atomic<uint32_t> _lastID{0};
+	mutable uint32_t _prevID{0};
 };
 
 // SYNC readback: NodeCallback that reads from an osg::Image attached to the pick camera.
@@ -1416,14 +1509,8 @@ public:
 
 				uint32_t id = _rule(region.data(), N);
 
-				_lastID.store(id, std::memory_order_release);
-
-				if(_mode != Mode::CONTINUOUS) {
-					int wx = _x.load(std::memory_order_relaxed);
-					int wy = _y.load(std::memory_order_relaxed);
-
-					OSG_NOTICE << "Pick (" << wx << ", " << wy << ") -> ID " << id << std::endl;
-				}
+				if(_mode == Mode::CONTINUOUS) _fireHover(id);
+				else _fireClick(id);
 			}
 		}
 
@@ -1442,12 +1529,18 @@ private:
 // continuous=false -- left-click calls requestPick(x, y); use with CLICK mode.
 // continuous=true -- MOVE events update cursor position; left-click queries lastID().
 // Use with CONTINUOUS mode (1x1 sub-frustum picking).
+//
+// consumeEvents=true -- returns true on left-click, stopping OSG's handler chain.
+// Use when picking should be exclusive (e.g. object selection that must not also
+// rotate the camera). Default false (additive -- pick and camera manipulator both
+// receive the click).
 class PickHandler: public osgGA::GUIEventHandler {
 public:
 	// rb is non-owning; kept alive by the camera's callback ref for its lifetime.
-	explicit PickHandler(PickReadbackBase* rb, bool continuous = false):
+	explicit PickHandler(PickReadbackBase* rb, bool continuous=false, bool consumeEvents=false):
 	_rb(rb),
-	_continuous(continuous) {}
+	_continuous(continuous),
+	_consume(consumeEvents) {}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override {
 		int x = static_cast<int>(ea.getX());
@@ -1463,18 +1556,10 @@ public:
 			ea.getEventType() == osgGA::GUIEventAdapter::PUSH &&
 			ea.getButton() == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON
 		) {
-			if(_continuous) {
-				OSG_NOTICE
-					<< "Pick (" << x << ", " << y
-					<< ") -> ID " << _rb->lastID() << std::endl
-				;
-			}
+			if(_continuous) _rb->reportClick();
+			else _rb->requestPick(x, y);
 
-			else {
-				OSG_NOTICE << "Click (" << x << ", " << y << ")" << std::endl;
-
-				_rb->requestPick(x, y);
-			}
+			if(_consume) return true;
 		}
 
 		return false;
@@ -1482,7 +1567,9 @@ public:
 
 private:
 	PickReadbackBase* _rb;
+
 	bool _continuous;
+	bool _consume;
 };
 
 }
