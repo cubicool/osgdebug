@@ -8,7 +8,8 @@
 		_Pragma("clang diagnostic ignored \"-Wfloat-conversion\"") \
 		_Pragma("clang diagnostic ignored \"-Wsign-compare\"") \
 		_Pragma("clang diagnostic ignored \"-Woverloaded-virtual\"") \
-		_Pragma("clang diagnostic ignored \"-Wshadow\"")
+		_Pragma("clang diagnostic ignored \"-Wshadow\"") \
+		_Pragma("clang diagnostic ignored \"-Wunused-but-set-variable\"")
 
 	#define OSGX_ENABLE_WARNINGS \
 		_Pragma("clang diagnostic pop")
@@ -251,8 +252,7 @@ public:
 
 	LambdaVisitor(Function function):
 	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
-	_function(function) {
-	}
+	_function(function) {}
 
 	virtual void apply(Node& n) override {
 		_function(n);
@@ -304,8 +304,7 @@ public:
 
 	NameVisitor(unsigned int options=Options::CLASS):
 	// osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
-	_options(options) {
-	}
+	_options(options) {}
 
 	// TODO: See below.
 	virtual void apply(osg::Node& n) override {
@@ -376,8 +375,7 @@ public:
 
 	DescribeSceneVisitor(const std::string& indent="   ", const std::string& separator="/"):
 	_indent(indent),
-	_separator(separator) {
-	}
+	_separator(separator) {}
 
 	virtual void apply(osg::Node& n) override {
 		_setName(n);
@@ -500,8 +498,7 @@ public:
 
 	VisitorEventHandler(key_t key, Visitor* visitor=nullptr):
 	_key(key),
-	_visitor(visitor) {
-	}
+	_visitor(visitor) {}
 
 	virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
 		// TODO: Is this really necessary?
@@ -606,8 +603,7 @@ public:
 	Array() = default;
 
 	Array(const Array& arr, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
-	BaseArray(arr, co) {
-	}
+	BaseArray(arr, co) {}
 
 	Array(std::initializer_list<ElementDataType> init) {
 		assign(init.begin(), init.end());
@@ -757,20 +753,15 @@ public:
 	// --------------------------------------------------------------------------------------------
 
 	DrawElements():
-	BaseElements(osg::PrimitiveSet::TRIANGLES) {
-	}
+	BaseElements(osg::PrimitiveSet::TRIANGLES) {}
 
 	explicit DrawElements(GLenum mode):
-	BaseElements(mode) {
-	}
+	BaseElements(mode) {}
 
-	DrawElements(const DrawElements& rhs,
-		const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
-	BaseElements(rhs, co) {
-	}
+	DrawElements(const DrawElements& rhs, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
+	BaseElements(rhs, co) {}
 
-	DrawElements(GLenum mode,
-		std::initializer_list<value_type> init):
+	DrawElements(GLenum mode, std::initializer_list<value_type> init):
 	BaseElements(mode) {
 		assign(init.begin(), init.end());
 	}
@@ -804,9 +795,7 @@ public:
 			reserve(size() + std::ranges::size(r));
 		}
 
-		for(auto&& v : r) {
-			push_back(static_cast<value_type>(v));
-		}
+		for(auto&& v : r) push_back(static_cast<value_type>(v));
 	}
 
 	void append_range(std::initializer_list<value_type> il) {
@@ -820,35 +809,35 @@ public:
 	template<typename... Args>
 	requires(sizeof...(Args) % 3 == 0)
 	static auto triangles(Args&&... args) {
-		return osg::ref_ptr<DrawElements>(
-			new DrawElements(
-				osg::PrimitiveSet::TRIANGLES,
-				std::forward<Args>(args)...));
+		return osg::ref_ptr<DrawElements>(new DrawElements(
+			osg::PrimitiveSet::TRIANGLES,
+			std::forward<Args>(args)...)
+		);
 	}
 
 	template<typename... Args>
 	requires(sizeof...(Args) % 2 == 0)
 	static auto lines(Args&&... args) {
-		return osg::ref_ptr<DrawElements>(
-			new DrawElements(
-				osg::PrimitiveSet::LINES,
-				std::forward<Args>(args)...));
+		return osg::ref_ptr<DrawElements>(new DrawElements(
+			osg::PrimitiveSet::LINES,
+			std::forward<Args>(args)...)
+		);
 	}
 
 	template<typename... Args>
 	static auto strip(Args&&... args) {
-		return osg::ref_ptr<DrawElements>(
-			new DrawElements(
-				osg::PrimitiveSet::TRIANGLE_STRIP,
-				std::forward<Args>(args)...));
+		return osg::ref_ptr<DrawElements>(new DrawElements(
+			osg::PrimitiveSet::TRIANGLE_STRIP,
+			std::forward<Args>(args)...)
+		);
 	}
 
 	template<typename... Args>
 	static auto fan(Args&&... args) {
-		return osg::ref_ptr<DrawElements>(
-			new DrawElements(
-				osg::PrimitiveSet::TRIANGLE_FAN,
-				std::forward<Args>(args)...));
+		return osg::ref_ptr<DrawElements>(new DrawElements(
+			osg::PrimitiveSet::TRIANGLE_FAN,
+			std::forward<Args>(args)...)
+		);
 	}
 
 	// --------------------------------------------------------------------------------------------
@@ -889,8 +878,7 @@ public:
 
 	template<typename... Args>
 	static auto create(Args&&... args) {
-		return osg::ref_ptr<DrawElements>(
-			new DrawElements(std::forward<Args>(args)...));
+		return osg::ref_ptr<DrawElements>(new DrawElements(std::forward<Args>(args)...));
 	}
 };
 

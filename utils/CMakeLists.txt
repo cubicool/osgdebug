@@ -1,5 +1,5 @@
 set(OSGDEBUG_UTILS
-	## "describe"
+	"describe"
 	## "drawables"
 )
 

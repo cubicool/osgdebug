@@ -16,6 +16,9 @@ find_package(OpenSceneGraph REQUIRED
 	osgAnimation
 )
 
+find_package(Python3 COMPONENTS Interpreter Development OPTIONAL)
+add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
+
 if(isMultiConfig)
 	if(NOT "Asan" IN_LIST CMAKE_CONFIGURATION_TYPES)
 		list(APPEND CMAKE_CONFIGURATION_TYPES Asan)
@@ -97,4 +100,23 @@ endfunction()
 
 add_subdirectory("examples")
 add_subdirectory("utils")
-# add_subdirectory("plugins") # TODO: Disabled — plugin can install phase 1 (DrawVisitor) but has no camera access for FinalDrawCallback (phase 2); see TODO.md.
+# add_subdirectory("plugins") # TODO: Disabled
+
+if(Python3_Development_FOUND)
+	pybind11_add_module(osgDebug_python "ext/osgDebug-python.cpp")
+
+	set_target_properties(osgDebug_python PROPERTIES OUTPUT_NAME "osgDebug")
+	target_include_directories(osgDebug_python PRIVATE
+		"${CMAKE_CURRENT_SOURCE_DIR}"
+		${OPENSCENEGRAPH_INCLUDE_DIRS}
+		"/home/cubicool/dev/OpenSceneGraph.py"
+		"/home/cubicool/dev/OpenSceneGraph.py/etc"
+	)
+	target_link_libraries(osgDebug_python PRIVATE
+		pybind11::module
+		${OPENSCENEGRAPH_LIBRARIES}
+	)
+	target_compile_features(osgDebug_python PUBLIC cxx_std_20)
+	# target_compile_options(osgDebug_python PRIVATE ${SLUGHORN_COMPILE_OPTIONS})
+	set_target_properties(osgDebug_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()

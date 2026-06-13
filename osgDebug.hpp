@@ -322,16 +322,13 @@ public:
 
 	DrawCallback(const std::string& name="", osg::Drawable::DrawCallback* cb=nullptr):
 	_name(name),
-	_cb(cb) {
-	}
+	_cb(cb) {}
 
 	DrawCallback(const std::string& name):
-	DrawCallback(name, nullptr) {
-	}
+	DrawCallback(name, nullptr) {}
 
 	DrawCallback(osg::Drawable::DrawCallback* cb):
-	DrawCallback("", cb) {
-	}
+	DrawCallback("", cb) {}
 
 	const CPUBuffer& cpuBuffer() const { return _cpuBuffer; }
 
@@ -423,8 +420,7 @@ template<size_t N=DEFAULT_BUFFER_SIZE>
 class DrawVisitor: public osg::NodeVisitor {
 public:
 	DrawVisitor():
-	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN) {
-	}
+	osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN) {}
 
 	virtual void apply(osg::Geode& g) {
 		traverse(g);
@@ -466,8 +462,7 @@ class GraphicsOperation: public osg::GraphicsOperation {
 public:
 	GraphicsOperation():
 	osg::Referenced(true),
-	osg::GraphicsOperation("GraphicsOperation", false) {
-	}
+	osg::GraphicsOperation("osgDebug::initialize Operation", false) {}
 
 	virtual void operator()(osg::GraphicsContext* gc) {
 		initialize(gc);

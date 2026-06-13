@@ -156,69 +156,80 @@ inline uint32_t pickNearestToCenter(const uint8_t* px, int n) {
 // ------------------------------------------------------------------------------------------------
 // Readback: osg::NodeCallback that reads from OSG's built-in image attachment
 //
-// The pick FBO is always unbound before any postDrawCallback or finalDrawCallback fires,
-// so glReadPixels/glGetTexImage can't be used there reliably. OSG's cam->attach(image)
-// mechanism reads the FBO into the image during RenderStage::draw() while the FBO is
-// still bound — before the draw callbacks fire. We then read from image->data() in the
-// UPDATE traversal (one frame stale), which is invisible for click-only picking on a
-// static scene.
+// OSG's cam->attach(image) reads the FBO into the image inside RenderStage::drawImplementation
+// while the FBO is still bound. We sample image->data() one frame later in the update
+// traversal — invisible latency for click-only picking.
 //
-// No raw GL code needed here at all.
+// Two modes:
+//   CLICK      — reads only when requestPick() is called; for full and small-pick FBOs.
+//   CONTINUOUS — reads every frame from pixel [0,0]; for the 1×1 sub-frustum FBO where
+//                the projection tracks the cursor continuously.
+//
+// winW / winH are the actual window dimensions. When the pick image is smaller (small-pick),
+// mouse coords are scaled from window space to image space before sampling.
 // ------------------------------------------------------------------------------------------------
 
 class PickReadback : public osg::NodeCallback {
 public:
-    PickReadback(int pickSize, PickRule rule, osg::Image* image)
-        : _pickSize(pickSize), _rule(std::move(rule)), _image(image) {}
+    enum class Mode { CLICK, CONTINUOUS };
 
+    PickReadback(int pickSize, PickRule rule, osg::Image* image, int winW, int winH,
+                 Mode mode = Mode::CLICK)
+        : _pickSize(pickSize), _rule(std::move(rule)),
+          _winW(winW), _winH(winH), _mode(mode), _image(image) {}
+
+    // Called from the event thread — safe from any thread.
     void requestPick(int x, int y) {
         _x.store(x, std::memory_order_relaxed);
         _y.store(y, std::memory_order_relaxed);
         _requested.store(true, std::memory_order_release);
     }
 
+    // Continuous mode: update the cursor position every MOVE event so the matrix
+    // sync callback can build the sub-frustum projection.
+    void updateMouse(int x, int y) {
+        _x.store(x, std::memory_order_relaxed);
+        _y.store(y, std::memory_order_relaxed);
+    }
+
+    int      mouseX() const { return _x.load(std::memory_order_relaxed); }
+    int      mouseY() const { return _y.load(std::memory_order_relaxed); }
     uint32_t lastID() const { return _lastID.load(std::memory_order_acquire); }
 
     void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
-        if(_requested.exchange(false, std::memory_order_acq_rel)) {
-            int x = _x.load(std::memory_order_relaxed);
-            int y = _y.load(std::memory_order_relaxed);
-            int N = _pickSize;
-            int W = _image->s();
-            int H = _image->t();
+        bool doRead = (_mode == Mode::CONTINUOUS) ||
+                      _requested.exchange(false, std::memory_order_acq_rel);
 
+        if(doRead) {
+            int imgW = _image->s();
+            int imgH = _image->t();
             const uint8_t* data = _image->data();
 
             if(data) {
-                // Sample key pixels to diagnose what the pick camera actually rendered.
-                // Alpha tells us whether the FBO rendered at all (clear alpha=1 → 255;
-                // alpha=0 means the image was never written to).
-                auto sample = [&](const char* label, int sx, int sy) {
-                    int i = (std::clamp(sy, 0, H-1) * W + std::clamp(sx, 0, W-1)) * 4;
-                    OSG_NOTICE << "  " << label
-                        << " RGBA(" << (int)data[i+0] << ","
-                                    << (int)data[i+1] << ","
-                                    << (int)data[i+2] << ","
-                                    << (int)data[i+3] << ")\n";
-                };
+                int imgX, imgY;
 
-                OSG_NOTICE << "[PICK] image samples:\n";
-                sample("click pos",  x,   y);
-                sample("[0,0]",      0,   0);
-                sample("[center]",   W/2, H/2);
-                sample("[W-1,H-1]",  W-1, H-1);
+                if(_mode == Mode::CONTINUOUS) {
+                    // 1×1 FBO: the single pixel is always at [0,0].
+                    imgX = imgY = 0;
+                } else {
+                    // Scale window coords → image coords (no-op when sizes match).
+                    int wx = _x.load(std::memory_order_relaxed);
+                    int wy = _y.load(std::memory_order_relaxed);
+                    imgX = (imgW == _winW) ? wx : wx * imgW / _winW;
+                    imgY = (imgH == _winH) ? wy : wy * imgH / _winH;
+                    imgX = std::clamp(imgX, 0, imgW - 1);
+                    imgY = std::clamp(imgY, 0, imgH - 1);
+                }
 
-                osgDB::writeImageFile(*_image, "pick_debug.png");
-                OSG_NOTICE << "[PICK] wrote pick_debug.png\n";
-
-                int cx = std::clamp(x, N/2, W - (N+1)/2);
-                int cy = std::clamp(y, N/2, H - (N+1)/2);
+                int N  = _pickSize;
+                int cx = std::clamp(imgX, N/2, imgW - (N+1)/2);
+                int cy = std::clamp(imgY, N/2, imgH - (N+1)/2);
 
                 std::vector<uint8_t> region(static_cast<std::size_t>(N * N * 4));
 
                 for(int row = 0; row < N; row++) {
                     for(int col = 0; col < N; col++) {
-                        int srcIdx = ((cy - N/2 + row) * W + (cx - N/2 + col)) * 4;
+                        int srcIdx = ((cy - N/2 + row) * imgW + (cx - N/2 + col)) * 4;
                         int dstIdx = (row * N + col) * 4;
                         std::copy_n(data + srcIdx, 4, region.data() + dstIdx);
                     }
@@ -227,7 +238,11 @@ public:
                 uint32_t id = _rule(region.data(), N);
                 _lastID.store(id, std::memory_order_release);
 
-                OSG_NOTICE << "Pick (" << x << ", " << y << ") -> ID " << id << std::endl;
+                if(_mode != Mode::CONTINUOUS) {
+                    int wx = _x.load(std::memory_order_relaxed);
+                    int wy = _y.load(std::memory_order_relaxed);
+                    OSG_NOTICE << "Pick (" << wx << ", " << wy << ") -> ID " << id << std::endl;
+                }
             }
         }
 
@@ -237,6 +252,8 @@ public:
 private:
     int      _pickSize;
     PickRule _rule;
+    int      _winW, _winH;
+    Mode     _mode;
 
     osg::ref_ptr<osg::Image>      _image;
     mutable std::atomic<int>      _x{0}, _y{0};
@@ -250,19 +267,29 @@ private:
 
 class PickHandler : public osgGA::GUIEventHandler {
 public:
-    explicit PickHandler(PickReadback* rb) : _rb(rb) {}
+    // continuous=true: forward MOVE events for sub-frustum tracking; left-click queries lastID.
+    // continuous=false: left-click triggers a one-shot pick read.
+    explicit PickHandler(PickReadback* rb, bool continuous = false)
+        : _rb(rb), _continuous(continuous) {}
 
     bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override {
-        if(
-            ea.getEventType() == osgGA::GUIEventAdapter::PUSH &&
-            ea.getButton()    == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON
-        ) {
-            int x = static_cast<int>(ea.getX());
-            int y = static_cast<int>(ea.getY());
+        int x = static_cast<int>(ea.getX());
+        int y = static_cast<int>(ea.getY());
 
-            OSG_NOTICE << "Click (" << x << ", " << y << ")" << std::endl;
+        if(ea.getEventType() == osgGA::GUIEventAdapter::MOVE && _continuous) {
+            _rb->updateMouse(x, y);
+            return false;
+        }
 
-            _rb->requestPick(x, y);
+        if(ea.getEventType() == osgGA::GUIEventAdapter::PUSH &&
+           ea.getButton()    == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON) {
+            if(_continuous) {
+                OSG_NOTICE << "Pick (" << x << ", " << y << ") -> ID "
+                           << _rb->lastID() << std::endl;
+            } else {
+                OSG_NOTICE << "Click (" << x << ", " << y << ")" << std::endl;
+                _rb->requestPick(x, y);
+            }
         }
 
         return false;
@@ -270,6 +297,7 @@ public:
 
 private:
     osg::ref_ptr<PickReadback> _rb;
+    bool _continuous;
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -374,47 +402,81 @@ osg::ref_ptr<osg::Camera> createPickCamera(
 int main(int argc, char** argv) {
     osg::ArgumentParser args(&argc, argv);
 
-    int pickSize = 1;
-    args.read("--pick-size", pickSize);
+    int  pickSize  = 1;
+    int  smallPick = 0;
+    bool pick1x1   = args.read("--pick-1x1");
+    args.read("--pick-size",  pickSize);
+    args.read("--small-pick", smallPick);
     if(pickSize < 1) pickSize = 1;
-
-    OSG_NOTICE
-        << "Pick mode: image readback (osg::Image, 1-frame lag)"
-        << "  region: " << pickSize << "x" << pickSize
-        << " (rule: pickCenter)"
-        << " — left-click to pick"
-        << std::endl;
 
     osgViewer::Viewer viewer(args);
     viewer.setCameraManipulator(new osgGA::TrackballManipulator());
     viewer.addEventHandler(new osgViewer::StatsHandler());
 
-    // Realize first so we can query the actual viewport size
     viewer.realize();
 
     auto* vp = viewer.getCamera()->getViewport();
     int W = static_cast<int>(vp->width());
     int H = static_cast<int>(vp->height());
 
-    OSG_NOTICE << "Viewport: " << W << "x" << H << std::endl;
+    // Determine pick FBO dimensions.
+    int pickW, pickH;
+    if(pick1x1) {
+        pickW = pickH = 1;
+    } else if(smallPick > 0) {
+        pickW = pickH = smallPick;
+    } else {
+        pickW = W;  pickH = H;
+    }
+
+    auto mode = pick1x1 ? PickReadback::Mode::CONTINUOUS : PickReadback::Mode::CLICK;
+
+    OSG_NOTICE << "Pick FBO: " << pickW << "x" << pickH
+               << "  window: " << W << "x" << H
+               << (pick1x1   ? "  mode: 1x1 sub-frustum (continuous)"  :
+                   smallPick ? "  mode: small-pick (scaled coords)"     :
+                               "  mode: full FBO")
+               << "  region: " << pickSize << "x" << pickSize
+               << " — left-click to pick"
+               << std::endl;
 
     auto pickImage = osgx::make_ref<osg::Image>();
-    pickImage->allocateImage(W, H, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+    pickImage->allocateImage(pickW, pickH, 1, GL_RGBA, GL_UNSIGNED_BYTE);
 
     auto scene   = createScene();
-    auto pickCam = createPickCamera(W, H, pickImage.get());
-
-    // Pick camera renders the same scene node (shared ref_ptr)
+    auto pickCam = createPickCamera(pickW, pickH, pickImage.get());
     pickCam->addChild(scene);
 
-    // Sync pick camera's view/projection to the viewer's main camera every update traversal.
+    auto rb = osgx::make_ref<PickReadback>(pickSize, pickCenter, pickImage.get(), W, H, mode);
+    pickCam->setUpdateCallback(rb);
+
     auto root = osgx::make_ref<osg::Group>();
     root->setName("root");
 
+    // Sync view matrix; for 1×1 mode also build a sub-frustum projection centered on
+    // the cursor (equivalent to gluPickMatrix * viewerProjection).
     root->setUpdateCallback(new osgx::NodeLambdaCallback(
-        [&viewer, pc = pickCam.get()](osg::Node* n, osg::NodeVisitor* nv) {
+        [&viewer, pc = pickCam.get(), rb = rb.get(), pick1x1, W, H]
+        (osg::Node* n, osg::NodeVisitor* nv) {
             pc->setViewMatrix(viewer.getCamera()->getViewMatrix());
-            pc->setProjectionMatrix(viewer.getCamera()->getProjectionMatrix());
+
+            if(pick1x1) {
+                // Sub-frustum: maps the 1×1 pixel at the cursor to fill the entire NDC cube.
+                // Equivalent to prepending gluPickMatrix(cx+0.5, cy+0.5, 1, 1, [0,0,W,H])
+                // to the projection matrix (column-vector OpenGL convention → row-vector OSG).
+                double cx = rb->mouseX() + 0.5;
+                double cy = rb->mouseY() + 0.5;
+                osg::Matrix pickMat(
+                    W,          0, 0, 0,
+                    0,          H, 0, 0,
+                    0,          0, 1, 0,
+                    W - 2.0*cx, H - 2.0*cy, 0, 1
+                );
+                pc->setProjectionMatrix(viewer.getCamera()->getProjectionMatrix() * pickMat);
+            } else {
+                pc->setProjectionMatrix(viewer.getCamera()->getProjectionMatrix());
+            }
+
             n->traverse(*nv);
         }
     ));
@@ -422,12 +484,7 @@ int main(int argc, char** argv) {
     root->addChild(pickCam);
     root->addChild(scene);
 
-    // Install the readback as an update callback on the pick camera so it runs each
-    // update traversal and reads from the image OSG populated during the previous render.
-    auto rb = osgx::make_ref<PickReadback>(pickSize, pickCenter, pickImage.get());
-    pickCam->setUpdateCallback(rb);
-
-    viewer.addEventHandler(new PickHandler(rb));
+    viewer.addEventHandler(new PickHandler(rb, pick1x1));
     viewer.setSceneData(root);
 
     return viewer.run();
