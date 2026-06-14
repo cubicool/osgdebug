@@ -5,8 +5,8 @@ set(OSGDEBUG_EXAMPLES
 	# "culling"
 	## "notifyfilter"
 	"hover"
+	"manipulator"
 	"picking"
-	"rtt-image"
 	"viewer"
 	# "visitor"
 )

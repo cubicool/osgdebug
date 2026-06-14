@@ -9,7 +9,8 @@
 		_Pragma("clang diagnostic ignored \"-Wsign-compare\"") \
 		_Pragma("clang diagnostic ignored \"-Woverloaded-virtual\"") \
 		_Pragma("clang diagnostic ignored \"-Wshadow\"") \
-		_Pragma("clang diagnostic ignored \"-Wunused-but-set-variable\"")
+		_Pragma("clang diagnostic ignored \"-Wunused-but-set-variable\"") \
+		_Pragma("clang diagnostic ignored \"-Wextra\"")
 
 	#define OSGX_ENABLE_WARNINGS \
 		_Pragma("clang diagnostic pop")
@@ -23,7 +24,8 @@
 		_Pragma("GCC diagnostic ignored \"-Wsign-compare\"") \
 		_Pragma("GCC diagnostic ignored \"-Woverloaded-virtual\"") \
 		_Pragma("GCC diagnostic ignored \"-Wshadow\"") \
-		_Pragma("GCC diagnostic ignored \"-Wunused-but-set-variable\"")
+		_Pragma("GCC diagnostic ignored \"-Wunused-but-set-variable\"") \
+		_Pragma("GCC diagnostic ignored \"-Wextra\"")
 
 	#define OSGX_ENABLE_WARNINGS \
 		_Pragma("GCC diagnostic pop")
@@ -53,6 +55,8 @@ OSGX_DISABLE_WARNINGS
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
+
+#include <osgGA/CameraManipulator>
 
 #include <osgViewer/View>
 // #include <osgViewer/ViewerBase>
@@ -1730,6 +1734,276 @@ private:
 
 	bool _continuous;
 	bool _consume;
+};
+
+// ================================================================================================
+// Ortho2DManipulator
+//
+// Pan/zoom camera manipulator for orthographic 2D scenes.
+//
+// Controls:
+//
+// Left drag pan in world XY
+// Scroll geometric zoom (_wheelZoomFactor per click)
+// Shift+Scroll pixel-nudge zoom (_pixelNudge screen pixels per click)
+// Ctrl+Left drag 3D pitch/yaw (unlocks rotation around center)
+// Space / Home reset to home
+//
+// The manipulator owns the projection matrix: updateCamera() sets both view and
+// projection each frame, so callers do NOT need to configure the camera projection
+// separately.
+//
+// TODO: consider delegating to or toggling a full OrbitManipulator for persistent
+// 3D navigation (currently Ctrl+drag accumulates rotation, release keeps it).
+// ================================================================================================
+class Ortho2DManipulator: public osgGA::CameraManipulator {
+public:
+	META_Object(osgx, Ortho2DManipulator)
+
+	Ortho2DManipulator() = default;
+
+	OSGX_DISABLE_WARNINGS
+
+		Ortho2DManipulator(
+			const Ortho2DManipulator& m,
+			const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY
+		):
+		osgGA::CameraManipulator(m, co),
+		_center(m._center),
+		_halfExtentY(m._halfExtentY),
+		_minHalfExtent(m._minHalfExtent),
+		_maxHalfExtent(m._maxHalfExtent),
+		_pixelNudge(m._pixelNudge),
+		_wheelZoomFactor(m._wheelZoomFactor),
+		_rotateSensitivity(m._rotateSensitivity),
+		_rotation(m._rotation),
+		_node(m._node) {}
+
+	OSGX_ENABLE_WARNINGS
+
+	// Config
+	void setPixelNudge(double n) { _pixelNudge = n; }
+	double getPixelNudge() const { return _pixelNudge; }
+
+	void setWheelZoomFactor(double f) { _wheelZoomFactor = f; }
+	double getWheelZoomFactor() const { return _wheelZoomFactor; }
+
+	void setZoomLimits(double minH, double maxH) { _minHalfExtent = minH; _maxHalfExtent = maxH; }
+	void setRotateSensitivity(double s) { _rotateSensitivity = s; }
+
+	// State
+	void setCenter(const osg::Vec3d& c) { _center = c; }
+	const osg::Vec3d& getCenter() const { return _center; }
+
+	void setHalfExtentY(double h) {
+		_halfExtentY = std::clamp(h, _minHalfExtent, _maxHalfExtent);
+	}
+
+	double getHalfExtentY() const { return _halfExtentY; }
+
+	// CameraManipulator interface
+	void setNode(osg::Node* node) override { _node = node; }
+	const osg::Node* getNode() const override { return _node.get(); }
+	osg::Node* getNode() override { return _node.get(); }
+
+	// Extract pan center from the translation component of the camera-to-world matrix.
+	void setByMatrix(const osg::Matrixd& m) override {
+		_center.set(m(3, 0), m(3, 1), m(3, 2));
+	}
+
+	void setByInverseMatrix(const osg::Matrixd& m) override {
+		setByMatrix(osg::Matrixd::inverse(m));
+	}
+
+	// Camera-to-world: undo the view matrix composition.
+	osg::Matrixd getMatrix() const override {
+		return osg::Matrixd::inverse(getInverseMatrix());
+	}
+
+	// World-to-camera (view matrix).
+	// Orbit convention: translate center to origin -> pull back 1 unit -> apply rotation.
+	osg::Matrixd getInverseMatrix() const override {
+		return
+			osg::Matrixd::translate(-_center) *
+			osg::Matrixd::translate(0.0, 0.0, -1.0) *
+			osg::Matrixd::rotate(_rotation)
+		;
+	}
+
+	// Sets BOTH view and projection so the caller owns neither.
+	//
+	// We take ownership of near/far (DO_NOT_COMPUTE_NEAR_FAR) because OSG's bounding-volume
+	// computation clamps near > 0 even for ortho, which clips geometry that lands at negative
+	// depth when the camera is tilted in 3D. We derive tight near/far analytically from the
+	// scene bounding sphere each frame instead.
+	void updateCamera(osg::Camera& cam) override {
+		cam.setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
+		cam.setViewMatrix(getInverseMatrix());
+
+		const auto* vp = cam.getViewport();
+		double aspect = (vp && vp->height() > 0.0)
+			? vp->width() / vp->height()
+			: 1.0
+		;
+
+		double h = _halfExtentY;
+		double nearPlane = -1e6;
+		double farPlane = 1e6;
+
+		if(_node.valid()) {
+			osg::BoundingSphere bs = _node->getBound();
+
+			if(bs.radius() > 0.0) {
+				// Eye position and forward vector in world space, derived from the view matrix.
+				// Orbit: eye = center + rotation.conj() * (0, 0, 1)
+				osg::Vec3d eye = _center + _rotation.conj() * osg::Vec3d(0.0, 0.0, 1.0);
+				osg::Vec3d fwd = _rotation.conj() * osg::Vec3d(0.0, 0.0, -1.0);
+
+				// Signed depth of the scene center along the view axis.
+				double depth = (osg::Vec3d(bs.center()) - eye) * fwd;
+				double r = bs.radius() * 1.1; // 10% padding
+
+				nearPlane = depth - r;
+				farPlane = depth + r;
+			}
+		}
+
+		cam.setProjectionMatrixAsOrtho(
+			-h * aspect, h * aspect,
+			-h, h,
+			nearPlane, farPlane
+		);
+	}
+
+	void home(const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter& aa) override {
+		_rotation = osg::Quat();
+
+		if(_node.valid()) {
+			auto bs = _node->getBound();
+
+			_center = osg::Vec3d(bs.center());
+			_halfExtentY = (bs.radius() > 0.0) ? bs.radius() * 1.2 : 1.0;
+		}
+
+		else {
+			_center.set(0.0, 0.0, 0.0);
+			_halfExtentY = 1.0;
+		}
+
+		aa.requestRedraw();
+	}
+
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		switch(ea.getEventType()) {
+		case osgGA::GUIEventAdapter::PUSH:
+			_lastX = ea.getXnormalized();
+			_lastY = ea.getYnormalized();
+			_dragging = (ea.getButton() == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+
+			return false;
+
+		case osgGA::GUIEventAdapter::RELEASE:
+			_dragging = false;
+
+			return false;
+
+		case osgGA::GUIEventAdapter::DRAG: {
+			if(!_dragging) return false;
+
+			double nx = ea.getXnormalized();
+			double ny = ea.getYnormalized();
+			double dx = nx - _lastX;
+			double dy = ny - _lastY;
+
+			_lastX = nx;
+			_lastY = ny;
+
+			bool ctrl = (ea.getModKeyMask() & osgGA::GUIEventAdapter::MODKEY_CTRL) != 0;
+
+			if(ctrl) {
+				// 3D: pitch/yaw orbit around center.
+				// Yaw rotates around world Y; pitch rotates around the camera's current right axis.
+				osg::Vec3d right = _rotation.conj() * osg::Vec3d(1.0, 0.0, 0.0);
+
+				_rotation =
+					osg::Quat(dy * _rotateSensitivity, right) *
+					osg::Quat(-dx * _rotateSensitivity, osg::Vec3d(0.0, 1.0, 0.0)) *
+					_rotation
+				;
+			}
+
+			else {
+				// Pan along camera right/up so speed is constant regardless of rotation.
+				double aspect = ea.getWindowWidth() > 0
+					? double(ea.getWindowWidth()) / double(ea.getWindowHeight())
+					: 1.0
+				;
+
+				osg::Vec3d right = _rotation.conj() * osg::Vec3d(1.0, 0.0, 0.0);
+				osg::Vec3d up = _rotation.conj() * osg::Vec3d(0.0, 1.0, 0.0);
+
+				_center -= right * dx * _halfExtentY * aspect;
+				_center -= up * dy * _halfExtentY;
+			}
+
+			aa.requestRedraw();
+
+			return false;
+		}
+
+		case osgGA::GUIEventAdapter::SCROLL: {
+			bool shift = (ea.getModKeyMask() & osgGA::GUIEventAdapter::MODKEY_SHIFT) != 0;
+			bool up = (ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP);
+
+			if(shift) {
+				// Pixel-nudge: each click moves the visible boundary by exactly _pixelNudge pixels.
+				int winH = ea.getWindowHeight();
+				double worldPerPixel = 2.0 * _halfExtentY / double(winH > 0 ? winH : 1);
+
+				_halfExtentY += (up ? -1.0 : 1.0) * _pixelNudge * worldPerPixel;
+			}
+
+			else _halfExtentY *= up ? (1.0 / _wheelZoomFactor) : _wheelZoomFactor;
+
+			_halfExtentY = std::clamp(_halfExtentY, _minHalfExtent, _maxHalfExtent);
+
+			aa.requestRedraw();
+
+			return true;
+		}
+
+		case osgGA::GUIEventAdapter::KEYDOWN:
+			if(
+				ea.getKey() == osgGA::GUIEventAdapter::KEY_Space ||
+				ea.getKey() == osgGA::GUIEventAdapter::KEY_Home
+			) {
+				home(ea, aa);
+				return true;
+			}
+
+			return false;
+
+		default:
+			return false;
+		}
+	}
+
+private:
+	osg::Vec3d _center{0.0, 0.0, 0.0};
+
+	double _halfExtentY{1.0};
+	double _minHalfExtent{1e-4};
+	double _maxHalfExtent{1e6};
+	double _pixelNudge{1.0};
+	double _wheelZoomFactor{1.15};
+	double _rotateSensitivity{2.0};
+
+	osg::Quat _rotation; // identity = pure top-down 2D
+	osg::ref_ptr<osg::Node> _node;
+
+	bool _dragging{false};
+	double _lastX{0.0};
+	double _lastY{0.0};
 };
 
 }
