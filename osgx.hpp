@@ -1821,12 +1821,13 @@ public:
 	}
 
 	// World-to-camera (view matrix).
-	// Orbit convention: translate center to origin -> pull back 1 unit -> apply rotation.
+	// Orbit convention: center to origin -> rotate (pivot is now at origin) -> pull back.
+	// OSG uses row vectors, so A*B*C applies A first; pull-back must come last.
 	osg::Matrixd getInverseMatrix() const override {
 		return
 			osg::Matrixd::translate(-_center) *
-			osg::Matrixd::translate(0.0, 0.0, -1.0) *
-			osg::Matrixd::rotate(_rotation)
+			osg::Matrixd::rotate(_rotation) *
+			osg::Matrixd::translate(0.0, 0.0, -1.0)
 		;
 	}
 
