@@ -171,6 +171,21 @@ auto call(Func&& func, Args&&... args) -> decltype(auto) {
 	}
 }
 
+// Returns the "first parent of type `T`" that can be found, and is a little "less heavy" than other
+// options in OSG (`getParentalNodeList()`). Just fire-and-forget.
+template<typename T, typename Node>
+T* getFirstParent(const Node* node) {
+	for(unsigned int i = 0; i < node->getNumParents(); i++) {
+		const auto* p = node->getParent(i);
+
+		if(const auto* t = dynamic_cast<const T*>(p)) return const_cast<T*>(t);
+
+		if(auto* t = getFirstParent<T>(p)) return t;
+	}
+
+	return nullptr;
+}
+
 // ------------------------------------------------------------------------------------------------
 // Ring Buffer: manages a static-sized array (of size N), permitting new values
 // by always replacing the oldest.
