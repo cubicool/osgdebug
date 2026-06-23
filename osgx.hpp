@@ -35,6 +35,14 @@
 	#define OSGX_ENABLE_WARNINGS
 #endif
 
+// The same as `META_Object` but updated for modern C++ warnings.
+#define OSGX_META_Object(library,name) \
+	osg::Object* cloneType() const override { return new name (); } \
+	osg::Object* clone(const osg::CopyOp& copyop) const override { return new name (*this,copyop); } \
+	bool isSameKindAs(const osg::Object* obj) const override { return dynamic_cast<const name *>(obj)!=NULL; } \
+	const char* libraryName() const override { return #library; }\
+	const char* className() const override { return #name; }
+
 OSGX_DISABLE_WARNINGS
 
 // TODO: Trim these down to only the essential when this header settles.
@@ -64,8 +72,11 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include <functional>
 #include <limits>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <optional>
 #include <numeric>
@@ -625,7 +636,7 @@ public:
 	using BaseArray::end;
 	using BaseArray::assign;
 
-	META_Object(osgx, Array)
+	OSGX_META_Object(osgx, Array)
 
 	Array() = default;
 
@@ -773,7 +784,7 @@ public:
 	using BaseElements::push_back;
 	using BaseElements::reserve;
 
-	META_Object(osgx, DrawElements)
+	OSGX_META_Object(osgx, DrawElements)
 
 	// --------------------------------------------------------------------------------------------
 	// Constructors
@@ -942,7 +953,7 @@ public:
 			auto key = ea.getKey();
 
 			if(std::ranges::find(_keys, key) != _keys.end()) {
-				OSG_NOTICE << "In LambdaKeyHandler(key=" << key << ")" << std::endl;
+				// OSG_NOTICE << "In LambdaKeyHandler(key=" << key << ")" << std::endl;
 
 				return _fn(ea, aa, key);
 			}
@@ -1752,6 +1763,210 @@ private:
 };
 
 // ================================================================================================
+// MultiCameraManipulator
+//
+// Composite camera manipulator that routes input to one active manipulator while letting targets
+// drive either the viewer's main camera or a dedicated camera such as an RTT camera.
+// ================================================================================================
+class MultiCameraManipulator: public osgGA::CameraManipulator {
+public:
+	struct Target {
+		std::string name;
+		osg::ref_ptr<osgGA::CameraManipulator> manipulator;
+		osg::observer_ptr<osg::Camera> camera;
+		osg::observer_ptr<osg::Node> scene;
+		std::function<void(bool)> setActive;
+	};
+
+	void setToggleKey(int key) { _toggleKey = key; }
+	int getToggleKey() const { return _toggleKey; }
+
+	void addTarget(
+		const std::string& name,
+		osgGA::CameraManipulator* manipulator,
+		osg::Camera* camera=nullptr,
+		osg::Node* scene=nullptr,
+		std::function<void(bool)> setActive={}
+	) {
+		Target target;
+		target.name = name;
+		target.manipulator = manipulator;
+		target.camera = camera;
+		target.scene = scene;
+		target.setActive = setActive;
+
+		if(target.manipulator.valid()) {
+			target.manipulator->setNode(scene ? scene : _defaultScene.get());
+		}
+
+		_targets.push_back(target);
+
+		if(_targets.size() == 1) activate(0);
+	}
+
+	unsigned int getActiveIndex() const { return _active; }
+	unsigned int getNumTargets() const { return static_cast<unsigned int>(_targets.size()); }
+
+	Target* activeTarget() {
+		return _active < _targets.size() ? &_targets[_active] : nullptr;
+	}
+
+	const Target* activeTarget() const {
+		return _active < _targets.size() ? &_targets[_active] : nullptr;
+	}
+
+	void activate(unsigned int index) {
+		if(index >= _targets.size()) return;
+
+		if(_hasActive && _active == index) return;
+
+		if(_hasActive && _active < _targets.size() && _targets[_active].setActive) {
+			_targets[_active].setActive(false);
+		}
+
+		_active = index;
+		_hasActive = true;
+
+		auto& target = _targets[_active];
+
+		if(target.manipulator.valid()) {
+			target.manipulator->finishAnimation();
+			target.manipulator->setNode(target.scene.valid() ? target.scene.get() : _defaultScene.get());
+
+			if(target.camera.valid()) target.manipulator->setByInverseMatrix(target.camera->getViewMatrix());
+		}
+
+		if(target.setActive) target.setActive(true);
+
+		OSG_NOTICE << "MultiCameraManipulator: " << target.name << std::endl;
+	}
+
+	void next() {
+		if(!_targets.empty()) activate((_active + 1u) % static_cast<unsigned int>(_targets.size()));
+	}
+
+	void setByMatrix(const osg::Matrixd& matrix) override {
+		if(auto* target = activeTarget(); target && target->manipulator.valid()) {
+			target->manipulator->setByMatrix(matrix);
+		}
+	}
+
+	void setByInverseMatrix(const osg::Matrixd& matrix) override {
+		if(auto* target = activeTarget(); target && target->manipulator.valid()) {
+			target->manipulator->setByInverseMatrix(matrix);
+		}
+	}
+
+	osg::Matrixd getMatrix() const override {
+		auto* target = activeTarget();
+
+		return target && target->manipulator.valid() ? target->manipulator->getMatrix() : osg::Matrixd();
+	}
+
+	osg::Matrixd getInverseMatrix() const override {
+		auto* target = activeTarget();
+
+		return target && target->manipulator.valid() ? target->manipulator->getInverseMatrix() : osg::Matrixd();
+	}
+
+	void updateCamera(osg::Camera& mainCamera) override {
+		auto* target = activeTarget();
+
+		if(!target || !target->manipulator.valid()) return;
+
+		setupMainCamera(mainCamera);
+
+		if(target->camera.valid()) target->manipulator->updateCamera(*target->camera);
+		else target->manipulator->updateCamera(mainCamera);
+	}
+
+	void setNode(osg::Node* node) override {
+		_defaultScene = node;
+
+		for(auto& target : _targets) {
+			if(target.manipulator.valid()) {
+				target.manipulator->setNode(target.scene.valid() ? target.scene.get() : _defaultScene.get());
+			}
+		}
+	}
+
+	osg::Node* getNode() override {
+		auto* target = activeTarget();
+
+		return target && target->manipulator.valid() ? target->manipulator->getNode() : nullptr;
+	}
+
+	const osg::Node* getNode() const override {
+		auto* target = activeTarget();
+
+		return target && target->manipulator.valid() ? target->manipulator->getNode() : nullptr;
+	}
+
+	void home(double currentTime) override {
+		if(auto* target = activeTarget(); target && target->manipulator.valid()) {
+			target->manipulator->home(currentTime);
+		}
+	}
+
+	void home(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		if(auto* target = activeTarget(); target && target->manipulator.valid()) {
+			target->manipulator->home(ea, aa);
+		}
+	}
+
+	void init(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		if(auto* target = activeTarget(); target && target->manipulator.valid()) {
+			target->manipulator->init(ea, aa);
+		}
+	}
+
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		if(ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN && ea.getKey() == _toggleKey) {
+			if(auto* target = activeTarget(); target && target->manipulator.valid()) {
+				target->manipulator->init(ea, aa);
+			}
+
+			next();
+
+			if(auto* target = activeTarget(); target && target->manipulator.valid()) {
+				target->manipulator->init(ea, aa);
+			}
+
+			return true;
+		}
+
+		auto* target = activeTarget();
+
+		return target && target->manipulator.valid() && target->manipulator->handle(ea, aa);
+	}
+
+private:
+	void setupMainCamera(osg::Camera& mainCamera) {
+		if(_mainCameraSetup) return;
+
+		_mainCameraSetup = true;
+
+		for(auto& candidate : _targets) {
+			if(!candidate.camera.valid() && candidate.manipulator.valid()) {
+				candidate.manipulator->finishAnimation();
+				candidate.manipulator->setNode(candidate.scene.valid() ? candidate.scene.get() : _defaultScene.get());
+				candidate.manipulator->home(0.0);
+				candidate.manipulator->updateCamera(mainCamera);
+
+				break;
+			}
+		}
+	}
+
+	std::vector<Target> _targets;
+	osg::observer_ptr<osg::Node> _defaultScene;
+	unsigned int _active = 0;
+	int _toggleKey = 'x';
+	bool _hasActive = false;
+	bool _mainCameraSetup = false;
+};
+
+// ================================================================================================
 // Ortho2DManipulator
 //
 // Pan/zoom camera manipulator for orthographic 2D scenes.
@@ -1773,7 +1988,7 @@ private:
 // ================================================================================================
 class Ortho2DManipulator: public osgGA::CameraManipulator {
 public:
-	META_Object(osgx, Ortho2DManipulator)
+	OSGX_META_Object(osgx, Ortho2DManipulator)
 
 	Ortho2DManipulator() = default;
 
