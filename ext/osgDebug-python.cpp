@@ -1,0 +1,125 @@
+//vimrun! ./test.py
+
+#include "osgDebug.hpp"
+
+#include "pyosg/pyosg.hpp"
+
+#include "pybind11x.hpp"
+
+namespace py = pybind11;
+namespace pyx = pybind11x;
+
+PYBIND11_MODULE(osgDebug, m) {
+	auto py_osg = py::module_::import("OpenSceneGraph");
+
+	py::class_<
+		osgDebug::GraphicsOperation,
+		osg::GraphicsOperation,
+		osg::ref_ptr<osgDebug::GraphicsOperation>
+	>(m, "GraphicsOperation")
+		.def(py::init<>())
+	;
+
+	py::enum_<osgDebug::Severity>(m, "Severity")
+		.value("HIGH", osgDebug::Severity::HIGH)
+		.value("MEDIUM", osgDebug::Severity::MEDIUM)
+		.value("LOW", osgDebug::Severity::LOW)
+		.value("NOTIFICATION", osgDebug::Severity::NOTIFICATION)
+		.export_values()
+	;
+
+	py::enum_<osgDebug::Source>(m, "Source")
+		.value("API", osgDebug::Source::API)
+		.value("WINDOW_SYSTEM", osgDebug::Source::WINDOW_SYSTEM)
+		.value("SHADER_COMPILER", osgDebug::Source::SHADER_COMPILER)
+		.value("THIRD_PARTY", osgDebug::Source::THIRD_PARTY)
+		.value("APPLICATION", osgDebug::Source::APPLICATION)
+		.value("OTHER", osgDebug::Source::OTHER)
+		.export_values()
+	;
+
+	py::enum_<osgDebug::Type>(m, "Type")
+		.value("ERROR", osgDebug::Type::ERROR)
+		.value("DEPRECATED_BEHAVIOR", osgDebug::Type::DEPRECATED_BEHAVIOR)
+		.value("UNDEFINED_BEHAVIOR", osgDebug::Type::UNDEFINED_BEHAVIOR)
+		.value("PORTABILITY", osgDebug::Type::PORTABILITY)
+		.value("PERFORMANCE", osgDebug::Type::PERFORMANCE)
+		.value("OTHER", osgDebug::Type::OTHER)
+		.value("MARKER", osgDebug::Type::MARKER)
+		.value("PUSH_GROUP", osgDebug::Type::PUSH_GROUP)
+		.value("POP_GROUP", osgDebug::Type::POP_GROUP)
+		.export_values()
+	;
+
+	m
+		.def("initialize", &osgDebug::initialize)
+		.def("messageInsert", py::overload_cast<
+			osgDebug::Source,
+			osgDebug::Type,
+			GLuint,
+			osgDebug::Severity,
+			const std::string&
+		>(&osgDebug::messageInsert),
+			"source"_a,
+			"type"_a,
+			"id"_a,
+			"severity"_a,
+			"message"_a
+		)
+		.def("messageInsert", py::overload_cast<
+			osgDebug::Type,
+			GLuint,
+			osgDebug::Severity,
+			const std::string&
+		>(&osgDebug::messageInsert),
+			"type"_a,
+			"id"_a,
+			"severity"_a,
+			"message"_a
+		)
+		.def(
+			"pushGroup",
+			py::overload_cast<osgDebug::Source, GLuint, const std::string&>(&osgDebug::pushGroup)
+		)
+		.def(
+			"pushGroup",
+			py::overload_cast<GLuint, const std::string&>(&osgDebug::pushGroup)
+		)
+		.def("popGroup", &osgDebug::popGroup)
+	;
+
+	py::class_<osgDebug::Scoped>(m, "Scoped")
+		.def(
+			py::init<GLuint, std::string_view, osgDebug::Source, bool>(),
+			py::arg("id"),
+			py::arg("message"),
+			py::arg("source") = osgDebug::Source::APPLICATION,
+			py::arg("measureTime") = false
+		)
+		.def("__enter__", [](osgDebug::Scoped& self) -> osgDebug::Scoped& {
+			return self;
+		})
+		.def("__exit__", [](
+			osgDebug::Scoped& self,
+			py::object exc_type,
+			py::object exc_value,
+			py::object traceback
+		) {
+			return false; // don't suppress Python exceptions
+		})
+	;
+
+#if 0
+	m.doc() = "osgDebug - OpenSceneGraph + GL_KHR_debug (https://github.com/cubicool/osgDebug)";
+
+	py::dict info;
+
+	info["version"] = py::make_tuple(
+		OSGSLUG_VERSION_MAJOR,
+		OSGSLUG_VERSION_MINOR,
+		OSGSLUG_VERSION_PATCH
+	);
+
+	pyx::build_info(m, info);
+#endif
+}

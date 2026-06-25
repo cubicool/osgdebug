@@ -52,19 +52,151 @@ enum class Type: GLenum {
 	UNDEFINED_BEHAVIOR = 0x824E
 };
 
+/* // TODO!
+namespace detail {
+	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageCallback.xhtml
+	using glDebugMessageCallbackFunc = void(APIENTRYP)(GLDEBUGPROC, const void*);
+
+	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageControl.xhtml
+	using glDebugMessageControlFunc = void(APIENTRYP)(
+		GLenum source,
+		GLenum type,
+		GLenum severity,
+		GLsizei count,
+		const GLuint* ids,
+		GLboolean enabled
+	);
+
+	inline glDebugMessageCallbackFunc _messageCallback = nullptr;
+	inline glDebugMessageControlFunc _messageControl = nullptr;
+
+	inline const char* toString(Source s) {
+		switch(s) {
+			case Source::API: return "API";
+			case Source::APPLICATION: return "APPLICATION";
+			case Source::OTHER: return "OTHER";
+			case Source::SHADER_COMPILER: return "SHADER_COMPILER";
+			case Source::THIRD_PARTY: return "THIRD_PARTY";
+			case Source::WINDOW_SYSTEM: return "WINDOW_SYSTEM";
+		}
+
+		return "UNKNOWN_SOURCE";
+	}
+
+	inline const char* toString(Type t) {
+		switch(t) {
+			case Type::DEPRECATED_BEHAVIOR: return "DEPRECATED_BEHAVIOR";
+			case Type::ERROR: return "ERROR";
+			case Type::MARKER: return "MARKER";
+			case Type::OTHER: return "OTHER";
+			case Type::PERFORMANCE: return "PERFORMANCE";
+			case Type::POP_GROUP: return "POP_GROUP";
+			case Type::PORTABILITY: return "PORTABILITY";
+			case Type::PUSH_GROUP: return "PUSH_GROUP";
+			case Type::UNDEFINED_BEHAVIOR: return "UNDEFINED_BEHAVIOR";
+		}
+
+		return "UNKNOWN_TYPE";
+	}
+
+	inline const char* toString(Severity s) {
+		switch(s) {
+			case Severity::HIGH: return "HIGH";
+			case Severity::LOW: return "LOW";
+			case Severity::MEDIUM: return "MEDIUM";
+			case Severity::NOTIFICATION: return "NOTIFICATION";
+		}
+
+		return "UNKNOWN_SEVERITY";
+	}
+
+	inline void APIENTRY defaultCallback(
+		GLenum source,
+		GLenum type,
+		GLuint id,
+		GLenum severity,
+		GLsizei length,
+		const GLchar* message,
+		const void* userParam
+	) {
+		(void)userParam;
+
+		const auto src = static_cast<Source>(source);
+		const auto typ = static_cast<Type>(type);
+		const auto sev = static_cast<Severity>(severity);
+
+		std::string msg;
+
+		if(message) {
+			if(length >= 0) msg.assign(message, static_cast<size_t>(length));
+			else msg = message;
+		}
+
+		print(
+			"GL DEBUG | source=", toString(src),
+			" type=", toString(typ),
+			" severity=", toString(sev),
+			" id=", id,
+			" | ", msg
+		);
+	}
+
+	inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
+		if(!_messageCallback) return;
+
+		_messageCallback(callback, userParam);
+	}
+
+	inline void clearCallback() {
+		setCallback(nullptr, nullptr);
+	}
+
+	inline void installDefaultCallback(bool synchronous=true) {
+		if(!_messageCallback) return;
+
+		glEnable(GL_DEBUG_OUTPUT);
+
+		if(synchronous) {
+			glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+		}
+
+		_messageCallback(defaultCallback, nullptr);
+	}
+
+	inline void messageControl(
+		GLenum source,
+		GLenum type,
+		GLenum severity,
+		GLsizei count,
+		const GLuint* ids,
+		bool enabled
+	) {
+		if(!_messageControl) return;
+
+		_messageControl(
+			source,
+			type,
+			severity,
+			count,
+			ids,
+			enabled ? GL_TRUE : GL_FALSE
+		);
+	}
+} */
+
 namespace detail {
 	inline constexpr void print(const auto&... args) {
 		((osg::notify(osg::NOTICE) << args), ...) << std::endl;
 	}
 
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPushDebugGroup.xhtml
-	using glPushDebugGroupFunc = void(*)(GLenum, GLuint, GLsizei, const char*);
+	using glPushDebugGroupFunc = void(APIENTRYP)(GLenum, GLuint, GLsizei, const char*);
 
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPopDebugGroup.xhtml
-	using glPopDebugGroupFunc = void(*)();
+	using glPopDebugGroupFunc = void(APIENTRYP)();
 
 	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageInsert.xhtml
-	using glDebugMessageInsertFunc = void(*)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*);
+	using glDebugMessageInsertFunc = void(APIENTRYP)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*);
 
 	inline glPushDebugGroupFunc _pushGroup = nullptr;
 	inline glPopDebugGroupFunc _popGroup = nullptr;
@@ -252,12 +384,55 @@ inline void messageInsert(
 
 // TODO: More messageInsert() wrappers for Type/Severity.
 
+/* // TODO!
+inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
+	detail::setCallback(callback, userParam);
+}
+
+inline void clearCallback() {
+	detail::clearCallback();
+}
+
+inline void installDefaultCallback(bool synchronous=true) {
+	detail::installDefaultCallback(synchronous);
+}
+
+inline void enableDebugOutput(bool synchronous=true) {
+	glEnable(GL_DEBUG_OUTPUT);
+
+	if(synchronous) glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+}
+
+inline void disableDebugOutput() {
+	glDisable(GL_DEBUG_OUTPUT);
+	glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+}
+
+inline void messageControl(
+	Source source,
+	Type type,
+	Severity severity,
+	bool enabled
+) {
+	detail::messageControl(
+		static_cast<std::underlying_type_t<Source>>(source),
+		static_cast<std::underlying_type_t<Type>>(type),
+		static_cast<std::underlying_type_t<Severity>>(severity),
+		0,
+		nullptr,
+		enabled
+	);
+} */
+
 // TODO: Add a check for whether we're already initialized.
 inline void initialize(osg::GraphicsContext* gc) {
 	if(osg::isGLExtensionSupported(gc->getState()->getContextID(), "GL_KHR_debug")) {
 		detail::setupFunction("glPushDebugGroup", &detail::_pushGroup);
 		detail::setupFunction("glPopDebugGroup", &detail::_popGroup);
 		detail::setupFunction("glDebugMessageInsert", &detail::_messageInsert);
+		// TODO!
+		// detail::setupFunction("glDebugMessageCallback", &detail::_messageCallback);
+		// detail::setupFunction("glDebugMessageControl", &detail::_messageControl);
 	}
 }
 
@@ -285,7 +460,9 @@ public:
 
 		if(_measureTime) {
 			auto stop = osg::Timer::instance()->tick();
-			auto dt = stop - _start;
+			// auto dt = stop - _start;
+			// TODO: This is more correct?
+			auto dt = osg::Timer::instance()->delta_u(_start, stop);
 
 			messageInsert(
 				Type::PERFORMANCE,
