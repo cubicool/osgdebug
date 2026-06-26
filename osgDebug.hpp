@@ -23,6 +23,7 @@ using namespace osgx::literals;
 inline constexpr size_t DEFAULT_BUFFER_SIZE = 60;
 
 enum class Severity: GLenum {
+	DONT_CARE = 0x1100,
 	HIGH = 0x9146,
 	LOW = 0x9148,
 	MEDIUM = 0x9147,
@@ -32,6 +33,7 @@ enum class Severity: GLenum {
 // TODO: The default "source" (for pushGroup/messageInsert) is APPLICATION; does this make sense?
 // What are the others even FOR!?
 enum class Source: GLenum {
+	DONT_CARE = 0x1100,
 	API = 0x8246,
 	APPLICATION = 0x824A,
 	OTHER = 0x824B,
@@ -41,6 +43,7 @@ enum class Source: GLenum {
 };
 
 enum class Type: GLenum {
+	DONT_CARE = 0x1100,
 	DEPRECATED_BEHAVIOR = 0x824D,
 	ERROR = 0x824C,
 	MARKER = 0x8268,
@@ -52,26 +55,10 @@ enum class Type: GLenum {
 	UNDEFINED_BEHAVIOR = 0x824E
 };
 
-/* // TODO!
 namespace detail {
-	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageCallback.xhtml
-	using glDebugMessageCallbackFunc = void(APIENTRYP)(GLDEBUGPROC, const void*);
-
-	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageControl.xhtml
-	using glDebugMessageControlFunc = void(APIENTRYP)(
-		GLenum source,
-		GLenum type,
-		GLenum severity,
-		GLsizei count,
-		const GLuint* ids,
-		GLboolean enabled
-	);
-
-	inline glDebugMessageCallbackFunc _messageCallback = nullptr;
-	inline glDebugMessageControlFunc _messageControl = nullptr;
-
 	inline const char* toString(Source s) {
 		switch(s) {
+			case Source::DONT_CARE: return "DONT_CARE";
 			case Source::API: return "API";
 			case Source::APPLICATION: return "APPLICATION";
 			case Source::OTHER: return "OTHER";
@@ -85,6 +72,7 @@ namespace detail {
 
 	inline const char* toString(Type t) {
 		switch(t) {
+			case Type::DONT_CARE: return "DONT_CARE";
 			case Type::DEPRECATED_BEHAVIOR: return "DEPRECATED_BEHAVIOR";
 			case Type::ERROR: return "ERROR";
 			case Type::MARKER: return "MARKER";
@@ -101,6 +89,7 @@ namespace detail {
 
 	inline const char* toString(Severity s) {
 		switch(s) {
+			case Severity::DONT_CARE: return "DONT_CARE";
 			case Severity::HIGH: return "HIGH";
 			case Severity::LOW: return "LOW";
 			case Severity::MEDIUM: return "MEDIUM";
@@ -108,6 +97,42 @@ namespace detail {
 		}
 
 		return "UNKNOWN_SEVERITY";
+	}
+}
+
+namespace detail {
+	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPushDebugGroup.xhtml
+	using glPushDebugGroupFunc = void(APIENTRYP)(GLenum, GLuint, GLsizei, const char*);
+
+	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPopDebugGroup.xhtml
+	using glPopDebugGroupFunc = void(APIENTRYP)();
+
+	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageInsert.xhtml
+	using glDebugMessageInsertFunc = void(APIENTRYP)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*);
+
+	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageCallback.xhtml
+	using glDebugMessageCallbackFunc = void(APIENTRYP)(GLDEBUGPROC, const void*);
+
+	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageControl.xhtml
+	using glDebugMessageControlFunc = void(APIENTRYP)(
+		GLenum source,
+		GLenum type,
+		GLenum severity,
+		GLsizei count,
+		const GLuint* ids,
+		GLboolean enabled
+	);
+
+	inline glPushDebugGroupFunc _pushGroup = nullptr;
+	inline glPopDebugGroupFunc _popGroup = nullptr;
+	inline glDebugMessageInsertFunc _messageInsert = nullptr;
+	inline glDebugMessageCallbackFunc _messageCallback = nullptr;
+	inline glDebugMessageControlFunc _messageControl = nullptr;
+	inline osg::NotifySeverity _defaultCallbackNotifySeverity = osg::NOTICE;
+
+	inline constexpr void print(const auto&... args) {
+		// TODO: I don' think this is correct... it should probably have it's "own thing."
+		((osg::notify(_defaultCallbackNotifySeverity) << args), ...) << std::endl;
 	}
 
 	inline void APIENTRY defaultCallback(
@@ -119,7 +144,7 @@ namespace detail {
 		const GLchar* message,
 		const void* userParam
 	) {
-		(void)userParam;
+		// (void)userParam;
 
 		const auto src = static_cast<Source>(source);
 		const auto typ = static_cast<Type>(type);
@@ -132,75 +157,15 @@ namespace detail {
 			else msg = message;
 		}
 
-		print(
-			"GL DEBUG | source=", toString(src),
-			" type=", toString(typ),
-			" severity=", toString(sev),
-			" id=", id,
-			" | ", msg
-		);
+		osg::notify(_defaultCallbackNotifySeverity)
+			<< "osgDebug | source=" << toString(src)
+			<< " type=" << toString(typ)
+			<< " severity=" << toString(sev)
+			<< " id=" << id
+			<< " | " << msg
+			<< std::endl
+		;
 	}
-
-	inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
-		if(!_messageCallback) return;
-
-		_messageCallback(callback, userParam);
-	}
-
-	inline void clearCallback() {
-		setCallback(nullptr, nullptr);
-	}
-
-	inline void installDefaultCallback(bool synchronous=true) {
-		if(!_messageCallback) return;
-
-		glEnable(GL_DEBUG_OUTPUT);
-
-		if(synchronous) {
-			glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-		}
-
-		_messageCallback(defaultCallback, nullptr);
-	}
-
-	inline void messageControl(
-		GLenum source,
-		GLenum type,
-		GLenum severity,
-		GLsizei count,
-		const GLuint* ids,
-		bool enabled
-	) {
-		if(!_messageControl) return;
-
-		_messageControl(
-			source,
-			type,
-			severity,
-			count,
-			ids,
-			enabled ? GL_TRUE : GL_FALSE
-		);
-	}
-} */
-
-namespace detail {
-	inline constexpr void print(const auto&... args) {
-		((osg::notify(osg::NOTICE) << args), ...) << std::endl;
-	}
-
-	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPushDebugGroup.xhtml
-	using glPushDebugGroupFunc = void(APIENTRYP)(GLenum, GLuint, GLsizei, const char*);
-
-	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPopDebugGroup.xhtml
-	using glPopDebugGroupFunc = void(APIENTRYP)();
-
-	// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDebugMessageInsert.xhtml
-	using glDebugMessageInsertFunc = void(APIENTRYP)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*);
-
-	inline glPushDebugGroupFunc _pushGroup = nullptr;
-	inline glPopDebugGroupFunc _popGroup = nullptr;
-	inline glDebugMessageInsertFunc _messageInsert = nullptr;
 
 	inline void pushGroup(Source source, GLuint id, const std::string& message) {
 		if(!_pushGroup) return;
@@ -235,6 +200,64 @@ namespace detail {
 
 		// TODO: Temporary!
 		print("osgDebug::messageInsert | ", message);
+	}
+
+	inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
+		if(!_messageCallback) return;
+
+		_messageCallback(callback, userParam);
+	}
+
+	inline void clearCallback() {
+		setCallback(nullptr, nullptr);
+	}
+
+	inline void enableDebugOutput(bool synchronous=true) {
+		if(!_messageCallback) return;
+
+		glEnable(GL_DEBUG_OUTPUT);
+
+		if(synchronous) glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+		else glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+	}
+
+	inline void disableDebugOutput() {
+		if(!_messageCallback) return;
+
+		glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+		glDisable(GL_DEBUG_OUTPUT);
+	}
+
+	inline void installDefaultCallback(
+		bool synchronous=true,
+		osg::NotifySeverity notifySeverity=osg::NOTICE
+	) {
+		if(!_messageCallback) return;
+
+		_defaultCallbackNotifySeverity = notifySeverity;
+
+		enableDebugOutput(synchronous);
+		setCallback(defaultCallback, nullptr);
+	}
+
+	inline void messageControl(
+		GLenum source,
+		GLenum type,
+		GLenum severity,
+		bool enabled,
+		GLsizei count=0,
+		const GLuint* ids=nullptr
+	) {
+		if(!_messageControl) return;
+
+		_messageControl(
+			source,
+			type,
+			severity,
+			count,
+			ids,
+			enabled ? GL_TRUE : GL_FALSE
+		);
 	}
 
 	template<typename T>
@@ -384,7 +407,6 @@ inline void messageInsert(
 
 // TODO: More messageInsert() wrappers for Type/Severity.
 
-/* // TODO!
 inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
 	detail::setCallback(callback, userParam);
 }
@@ -393,36 +415,38 @@ inline void clearCallback() {
 	detail::clearCallback();
 }
 
-inline void installDefaultCallback(bool synchronous=true) {
-	detail::installDefaultCallback(synchronous);
+inline void installDefaultCallback(
+	bool synchronous=true,
+	osg::NotifySeverity notifySeverity=osg::NOTICE
+) {
+	detail::installDefaultCallback(synchronous, notifySeverity);
 }
 
 inline void enableDebugOutput(bool synchronous=true) {
-	glEnable(GL_DEBUG_OUTPUT);
-
-	if(synchronous) glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+	detail::enableDebugOutput(synchronous);
 }
 
 inline void disableDebugOutput() {
-	glDisable(GL_DEBUG_OUTPUT);
-	glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+	detail::disableDebugOutput();
 }
 
 inline void messageControl(
 	Source source,
 	Type type,
 	Severity severity,
-	bool enabled
+	bool enabled,
+	GLsizei count=0,
+	const GLuint* ids=nullptr
 ) {
 	detail::messageControl(
 		static_cast<std::underlying_type_t<Source>>(source),
 		static_cast<std::underlying_type_t<Type>>(type),
 		static_cast<std::underlying_type_t<Severity>>(severity),
-		0,
-		nullptr,
-		enabled
+		enabled,
+		count,
+		ids
 	);
-} */
+}
 
 // TODO: Add a check for whether we're already initialized.
 inline void initialize(osg::GraphicsContext* gc) {
@@ -430,10 +454,22 @@ inline void initialize(osg::GraphicsContext* gc) {
 		detail::setupFunction("glPushDebugGroup", &detail::_pushGroup);
 		detail::setupFunction("glPopDebugGroup", &detail::_popGroup);
 		detail::setupFunction("glDebugMessageInsert", &detail::_messageInsert);
-		// TODO!
-		// detail::setupFunction("glDebugMessageCallback", &detail::_messageCallback);
-		// detail::setupFunction("glDebugMessageControl", &detail::_messageControl);
+		detail::setupFunction("glDebugMessageCallback", &detail::_messageCallback);
+		detail::setupFunction("glDebugMessageControl", &detail::_messageControl);
 	}
+}
+
+inline void deinitialize(bool disableOutput=true) {
+	clearCallback();
+
+	if(disableOutput && detail::_messageCallback) disableDebugOutput();
+
+	detail::_pushGroup = nullptr;
+	detail::_popGroup = nullptr;
+	detail::_messageInsert = nullptr;
+	detail::_messageCallback = nullptr;
+	detail::_messageControl = nullptr;
+	detail::_defaultCallbackNotifySeverity = osg::NOTICE;
 }
 
 class Scoped {
@@ -460,9 +496,9 @@ public:
 
 		if(_measureTime) {
 			auto stop = osg::Timer::instance()->tick();
-			// auto dt = stop - _start;
+			auto dt = stop - _start;
 			// TODO: This is more correct?
-			auto dt = osg::Timer::instance()->delta_u(_start, stop);
+			// auto dt = osg::Timer::instance()->delta_u(_start, stop);
 
 			messageInsert(
 				Type::PERFORMANCE,

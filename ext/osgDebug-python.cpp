@@ -21,6 +21,7 @@ PYBIND11_MODULE(osgDebug, m) {
 	;
 
 	py::enum_<osgDebug::Severity>(m, "Severity")
+		.value("DONT_CARE", osgDebug::Severity::DONT_CARE)
 		.value("HIGH", osgDebug::Severity::HIGH)
 		.value("MEDIUM", osgDebug::Severity::MEDIUM)
 		.value("LOW", osgDebug::Severity::LOW)
@@ -29,6 +30,7 @@ PYBIND11_MODULE(osgDebug, m) {
 	;
 
 	py::enum_<osgDebug::Source>(m, "Source")
+		.value("DONT_CARE", osgDebug::Source::DONT_CARE)
 		.value("API", osgDebug::Source::API)
 		.value("WINDOW_SYSTEM", osgDebug::Source::WINDOW_SYSTEM)
 		.value("SHADER_COMPILER", osgDebug::Source::SHADER_COMPILER)
@@ -39,6 +41,7 @@ PYBIND11_MODULE(osgDebug, m) {
 	;
 
 	py::enum_<osgDebug::Type>(m, "Type")
+		.value("DONT_CARE", osgDebug::Type::DONT_CARE)
 		.value("ERROR", osgDebug::Type::ERROR)
 		.value("DEPRECATED_BEHAVIOR", osgDebug::Type::DEPRECATED_BEHAVIOR)
 		.value("UNDEFINED_BEHAVIOR", osgDebug::Type::UNDEFINED_BEHAVIOR)
@@ -53,6 +56,34 @@ PYBIND11_MODULE(osgDebug, m) {
 
 	m
 		.def("initialize", &osgDebug::initialize)
+		.def(
+			"deinitialize",
+			&osgDebug::deinitialize,
+			"disableOutput"_a=true
+		)
+		.def(
+			"installDefaultCallback",
+			&osgDebug::installDefaultCallback,
+			"synchronous"_a=true,
+			"notifySeverity"_a=osg::NOTICE
+		)
+		.def("clearCallback", &osgDebug::clearCallback)
+		.def(
+			"enableDebugOutput",
+			&osgDebug::enableDebugOutput,
+			"synchronous"_a=true
+		)
+		.def("disableDebugOutput", &osgDebug::disableDebugOutput)
+		.def(
+			"messageControl",
+			[](osgDebug::Source source, osgDebug::Type type, osgDebug::Severity severity, bool enabled) {
+				osgDebug::messageControl(source, type, severity, enabled);
+			},
+			"source"_a,
+			"type"_a,
+			"severity"_a,
+			"enabled"_a
+		)
 		.def("messageInsert", py::overload_cast<
 			osgDebug::Source,
 			osgDebug::Type,
