@@ -1,14 +1,15 @@
 set(OSGDEBUG_EXAMPLES
 	"eventhandler"
-	# "array"
-	# "callback"
+	"array"
+	"callback"
+	# TOOD: Fix this!
 	# "culling"
-	## "notifyfilter"
+	"notifyfilter"
 	"hover"
 	"manipulator"
 	"picking"
 	"viewer"
-	# "visitor"
+	"visitor"
 )
 
 foreach(example IN LISTS OSGDEBUG_EXAMPLES)
@@ -16,5 +17,5 @@ foreach(example IN LISTS OSGDEBUG_EXAMPLES)
 endforeach()
 
 find_package(OpenGL REQUIRED)
-target_link_libraries(osgdebug-hover   PRIVATE OpenGL::GL)
+target_link_libraries(osgdebug-hover PRIVATE OpenGL::GL)
 target_link_libraries(osgdebug-picking PRIVATE OpenGL::GL)
