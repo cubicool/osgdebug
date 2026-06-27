@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
 	}
 
 	auto dsv = osgx::DescribeSceneVisitor();
-	auto dv = osgDebug::DrawVisitor();
+	auto dv = osgDebug::ProfilerVisitor();
 
 	root->accept(dsv);
 	root->accept(dv);

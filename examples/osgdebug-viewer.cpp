@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
 	}
 
 	auto dsv = osgx::DescribeSceneVisitor();
-	auto dv = osgDebug::DrawVisitor();
+	auto dv = osgDebug::ProfilerVisitor();
 
 	root->accept(dsv);
 	root->accept(dv);
@@ -70,10 +70,11 @@ int main(int argc, char** argv) {
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 	viewer.addEventHandler(new osgViewer::StatsHandler());
+
 	osgDebug::appendCameraDrawCallback(
 		viewer.getCamera(),
 		osgDebug::CameraDrawCallbackSlot::FINAL_DRAW,
-		new osgDebug::FinalDrawCallback()
+		new osgDebug::ProfilerFinalCallback()
 	);
 
 	osgDebug::pushGroup(0, __FUNCTION__);

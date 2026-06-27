@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
 	auto root = osgx::make_ref<osg::Geode>();
 	auto draw = createSphere(10.0);
 
-	draw->setDrawCallback(new osgDebug::DrawCallback());
+	draw->setDrawCallback(new osgDebug::ProfilerCallback());
 
 	root->addDrawable(draw);
 
