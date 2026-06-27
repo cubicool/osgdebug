@@ -299,10 +299,12 @@ namespace detail {
 			size_t samplesSincePrint = 0;
 		};
 
+		using Stats = std::unordered_map<std::string, PathStats>;
+
 		std::vector<Entry> pending;
 		std::vector<Entry> ready;
 		std::vector<Entry> freeList;
-		std::unordered_map<std::string, PathStats> stats;
+		Stats stats;
 
 		Entry alloc(osg::GLExtensions* ext) {
 			if(!freeList.empty()) {
@@ -353,7 +355,7 @@ namespace detail {
 				s.gpuBuffer.add(gpuNs);
 				s.samplesSincePrint++;
 
-				if(s.samplesSincePrint >= printEvery) {
+				if(printEvery > 0 && s.samplesSincePrint >= printEvery) {
 					s.samplesSincePrint = 0;
 
 					// TODO: This is annoyingly AWFUL and should be fixed; SOON!
@@ -372,6 +374,14 @@ namespace detail {
 	};
 
 	inline osg::buffered_object<FrameAccumulator> _accumulators;
+}
+
+// Read-only view of per-path GPU timing stats for the given GL context.
+// Populated by ProfilerFinalCallback at the end of each frame.
+// Safe to call from onDraw (POST_DRAW fires before FINAL_DRAW in OSG, so you
+// see the previous frame's data - ring-buffer averaging makes that irrelevant).
+inline const detail::FrameAccumulator::Stats& profilerStats(unsigned int contextID) {
+	return detail::_accumulators[contextID].stats;
 }
 
 inline void pushGroup(Source source, GLuint id, const std::string& message) {
@@ -791,6 +801,13 @@ public:
 	explicit ProfilerFinalCallback(size_t printEvery=N, QueryMode mode=QueryMode::SYNC):
 	_printEvery(printEvery),
 	_mode(mode) {}
+
+	// TODO: Switching ASYNC->SYNC leaves one set of retired query objects in
+	// FrameAccumulator::ready that SYNC will never drain. Harmless for a debug
+	// tool (one-time minor GL object leak), but a future cleanup pass should
+	// flush ready on mode change. SYNC->ASYNC is clean.
+	void setMode(QueryMode mode) { _mode = mode; }
+	QueryMode getMode() const { return _mode; }
 
 	void operator()(osg::RenderInfo& ri) const override {
 		auto* ext = ri.getState()->get<osg::GLExtensions>();
