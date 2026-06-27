@@ -6,6 +6,7 @@ OSGX_DISABLE_WARNINGS
 
 #include <osg/GLExtensions>
 #include <osg/Drawable>
+#include <osg/Camera>
 #include <osgViewer/Viewer>
 
 OSGX_ENABLE_WARNINGS
@@ -472,9 +473,9 @@ inline void deinitialize(bool disableOutput=true) {
 	detail::_defaultCallbackNotifySeverity = osg::NOTICE;
 }
 
-class Scoped {
+class DebugGroupAnnotation: public osg::Referenced {
 public:
-	Scoped(
+	DebugGroupAnnotation(
 		GLuint id,
 		std::string_view message,
 		Source source=Source::APPLICATION,
@@ -483,15 +484,17 @@ public:
 	_id(id),
 	_source(source),
 	_message(message),
-	_measureTime(measureTime) {
+	_measureTime(measureTime) {}
+
+	void begin() {
 		_active = detail::_pushGroup != nullptr;
 
-		if(_active) pushGroup(_source, _id, std::string(_message));
+		if(_active) pushGroup(_source, _id, _message);
 
 		if(_measureTime) _start = osg::Timer::instance()->tick();
 	}
 
-	~Scoped() {
+	void end() {
 		if(!_active) return;
 
 		if(_measureTime) {
@@ -504,15 +507,14 @@ public:
 				Type::PERFORMANCE,
 				_id,
 				Severity::NOTIFICATION,
-				std::string(_message) + " took " + std::to_string(dt) + "us"
+				_message + " took " + std::to_string(dt) + "us"
 			);
 		}
 
 		popGroup();
-	}
 
-	Scoped(const Scoped&) = delete;
-	Scoped& operator=(const Scoped&) = delete;
+		_active = false;
+	}
 
 private:
 	GLuint _id;
@@ -523,6 +525,159 @@ private:
 	bool _measureTime = false;
 
 	osg::Timer_t _start{};
+};
+
+class Scoped {
+public:
+	Scoped(
+		GLuint id,
+		std::string_view message,
+		Source source=Source::APPLICATION,
+		bool measureTime=false
+	):
+	_state(id, message, source, measureTime) {
+		_state.begin();
+	}
+
+	~Scoped() {
+		_state.end();
+	}
+
+	Scoped(const Scoped&) = delete;
+	Scoped& operator=(const Scoped&) = delete;
+
+private:
+	DebugGroupAnnotation _state;
+};
+
+enum class CameraDrawCallbackSlot {
+	PRE_DRAW,
+	POST_DRAW,
+	FINAL_DRAW
+};
+
+namespace detail {
+	inline osg::Camera::DrawCallback* getCameraDrawCallback(
+		osg::Camera* camera,
+		CameraDrawCallbackSlot slot
+	) {
+		switch(slot) {
+			case CameraDrawCallbackSlot::PRE_DRAW: return camera->getPreDrawCallback();
+			case CameraDrawCallbackSlot::POST_DRAW: return camera->getPostDrawCallback();
+			case CameraDrawCallbackSlot::FINAL_DRAW: return camera->getFinalDrawCallback();
+		}
+
+		return nullptr;
+	}
+
+	inline void setCameraDrawCallback(
+		osg::Camera* camera,
+		CameraDrawCallbackSlot slot,
+		osg::Camera::DrawCallback* cb
+	) {
+		switch(slot) {
+			case CameraDrawCallbackSlot::PRE_DRAW:
+				camera->setPreDrawCallback(cb);
+				break;
+
+			case CameraDrawCallbackSlot::POST_DRAW:
+				camera->setPostDrawCallback(cb);
+				break;
+
+			case CameraDrawCallbackSlot::FINAL_DRAW:
+				camera->setFinalDrawCallback(cb);
+				break;
+		}
+	}
+}
+
+inline void appendCameraDrawCallback(
+	osg::Camera* camera,
+	CameraDrawCallbackSlot slot,
+	osg::Camera::DrawCallback* cb
+) {
+	auto* existing = detail::getCameraDrawCallback(camera, slot);
+
+	if(!existing) {
+		detail::setCameraDrawCallback(camera, slot, cb);
+		return;
+	}
+
+	if(auto* group = dynamic_cast<osgx::CameraDrawCallbacksGroup*>(existing)) {
+		group->add(cb);
+		return;
+	}
+
+	detail::setCameraDrawCallback(
+		camera,
+		slot,
+		new osgx::CameraDrawCallbacksGroup({existing, cb})
+	);
+}
+
+inline void prependCameraDrawCallback(
+	osg::Camera* camera,
+	CameraDrawCallbackSlot slot,
+	osg::Camera::DrawCallback* cb
+) {
+	auto* existing = detail::getCameraDrawCallback(camera, slot);
+
+	if(!existing) {
+		detail::setCameraDrawCallback(camera, slot, cb);
+		return;
+	}
+
+	detail::setCameraDrawCallback(
+		camera,
+		slot,
+		new osgx::CameraDrawCallbacksGroup({cb, existing})
+	);
+}
+
+class CameraDebugGroupBeginCallback: public osg::Camera::DrawCallback {
+public:
+	using Annotation = osg::ref_ptr<DebugGroupAnnotation>;
+
+	CameraDebugGroupBeginCallback(
+		GLuint id,
+		std::string_view message,
+		Source source=Source::APPLICATION,
+		bool measureTime=false
+	):
+	_annotation(new DebugGroupAnnotation(id, message, source, measureTime)) {}
+
+	explicit CameraDebugGroupBeginCallback(Annotation annotation):
+	_annotation(std::move(annotation)) {}
+
+	void operator()(osg::RenderInfo&) const override {
+		_annotation->begin();
+	}
+
+private:
+	Annotation _annotation;
+};
+
+class CameraDebugGroupEndCallback: public osg::Camera::DrawCallback {
+public:
+	using Annotation = osg::ref_ptr<DebugGroupAnnotation>;
+
+	CameraDebugGroupEndCallback(
+		GLuint id,
+		std::string_view message,
+		Source source=Source::APPLICATION,
+		bool measureTime=false
+	):
+	_annotation(new DebugGroupAnnotation(id, message, source, measureTime)) {}
+
+	explicit CameraDebugGroupEndCallback(Annotation annotation):
+	_annotation(std::move(annotation)) {}
+
+	void operator()(osg::RenderInfo&) const override {
+		_annotation->end();
+	}
+
+private:
+	Annotation _annotation;
 };
 
 // Phase 1: issues GL timestamp queries around the draw call and pushes the result
@@ -831,6 +986,7 @@ public:
 	int run() override {
 		while(!done()) {
 			ensureInitialized();
+			installTraceHintCallbacks();
 
 			advance();
 			eventTraversal();
@@ -850,19 +1006,10 @@ public:
 					" (wall-clock ", wallTime, "s)"
 				);
 
-				{
-					Scoped scoped(0, "Frame", Source::APPLICATION, true);
+				auto [_ut, ut] = osgx::call([this]() { updateTraversal(); });
+				detail::print("Update took ", ut, "us");
 
-					{
-						Scoped update(1, "Update", Source::APPLICATION, true);
-						updateTraversal();
-					}
-
-					{
-						Scoped render(2, "Render", Source::APPLICATION, true);
-						renderingTraversals();
-					}
-				}
+				renderingTraversals();
 
 				_render.store(false, std::memory_order_release);
 			}
@@ -874,11 +1021,56 @@ public:
 	}
 
 private:
+	void installTraceHintCallbacks() {
+		if(_traceHintCallbacksInstalled) return;
+
+		auto* camera = getCamera();
+		auto frameAnnotation = osgx::make_ref<DebugGroupAnnotation>(
+			0,
+			"Frame",
+			Source::APPLICATION,
+			true
+		);
+		auto renderAnnotation = osgx::make_ref<DebugGroupAnnotation>(
+			2,
+			"Render",
+			Source::APPLICATION,
+			true
+		);
+
+		appendCameraDrawCallback(
+			camera,
+			CameraDrawCallbackSlot::PRE_DRAW,
+			new CameraDebugGroupBeginCallback(frameAnnotation)
+		);
+
+		appendCameraDrawCallback(
+			camera,
+			CameraDrawCallbackSlot::PRE_DRAW,
+			new CameraDebugGroupBeginCallback(renderAnnotation)
+		);
+
+		appendCameraDrawCallback(
+			camera,
+			CameraDrawCallbackSlot::FINAL_DRAW,
+			new CameraDebugGroupEndCallback(renderAnnotation)
+		);
+
+		appendCameraDrawCallback(
+			camera,
+			CameraDrawCallbackSlot::FINAL_DRAW,
+			new CameraDebugGroupEndCallback(frameAnnotation)
+		);
+
+		_traceHintCallbacksInstalled = true;
+	}
+
 	static constexpr unsigned int _POLL_INTERVAL_US = 100000;
 
 	osg::ref_ptr<EventHandler> _renderKeyHandler;
 
 	std::atomic<bool> _render{true};
+	bool _traceHintCallbacksInstalled = false;
 
 	osg::Timer_t _startTick = osg::Timer::instance()->tick();
 	unsigned int _count = 0;
