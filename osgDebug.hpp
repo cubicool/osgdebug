@@ -11,9 +11,15 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-#include <unordered_map>
+#ifdef OSGDEBUG_IMGUI
+#include <imgui.h>
+#include <backends/imgui_impl_opengl3.h>
+#endif
 
-// TODO: Add notification mirroring of debug calls (to std::cout, osg::notify, etc).
+#include <unordered_map>
+#include <functional>
+#include <sstream>
+
 // TODO: Make some macro wrappers for pushGroup/insertMessage that use __FUNCTION__, __FILE__, etc.
 // TODO: pushGroup/insertMessage accept an "id", which we probably should manage automatically.
 
@@ -129,11 +135,18 @@ namespace detail {
 	inline glDebugMessageInsertFunc _messageInsert = nullptr;
 	inline glDebugMessageCallbackFunc _messageCallback = nullptr;
 	inline glDebugMessageControlFunc _messageControl = nullptr;
-	inline osg::NotifySeverity _defaultCallbackNotifySeverity = osg::NOTICE;
 
-	inline constexpr void print(const auto&... args) {
-		// TODO: I don' think this is correct... it should probably have it's "own thing."
-		((osg::notify(_defaultCallbackNotifySeverity) << args), ...) << std::endl;
+	// All osgDebug log output - internal diagnostics, GL annotation mirrors, driver
+	// messages - flows through this single sink. Replace it to redirect to spdlog,
+	// Qt logging, an ImGui scrollback, etc. Default: osg::notify(NOTICE).
+	inline std::function<void(std::string_view)> _sink = [](std::string_view s) {
+		osg::notify(osg::NOTICE) << s << std::endl;
+	};
+
+	inline void notify(const auto&... args) {
+		std::ostringstream oss;
+		((oss << args), ...);
+		_sink(oss.str());
 	}
 
 	inline void APIENTRY defaultCallback(
@@ -145,8 +158,6 @@ namespace detail {
 		const GLchar* message,
 		const void* userParam
 	) {
-		// (void)userParam;
-
 		const auto src = static_cast<Source>(source);
 		const auto typ = static_cast<Type>(type);
 		const auto sev = static_cast<Severity>(severity);
@@ -158,14 +169,15 @@ namespace detail {
 			else msg = message;
 		}
 
-		osg::notify(_defaultCallbackNotifySeverity)
-			<< "osgDebug | source=" << toString(src)
+		std::ostringstream oss;
+
+		oss << "osgDebug | source=" << toString(src)
 			<< " type=" << toString(typ)
 			<< " severity=" << toString(sev)
 			<< " id=" << id
-			<< " | " << msg
-			<< std::endl
-		;
+			<< " | " << msg;
+
+		_sink(oss.str());
 	}
 
 	inline void pushGroup(Source source, GLuint id, const std::string& message) {
@@ -178,8 +190,7 @@ namespace detail {
 			message.c_str()
 		);
 
-		// TODO: Temporary! But lets us append (almost) anything as just an extra arg! :)
-		print("osgDebug::pushGroup | ", message);
+		notify("osgDebug::pushGroup | ", message);
 	}
 
 	inline void popGroup() {
@@ -199,8 +210,7 @@ namespace detail {
 
 		_messageInsert(source, type, id, severity, -1, message.c_str());
 
-		// TODO: Temporary!
-		print("osgDebug::messageInsert | ", message);
+		notify("osgDebug::messageInsert | ", message);
 	}
 
 	inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
@@ -229,13 +239,8 @@ namespace detail {
 		glDisable(GL_DEBUG_OUTPUT);
 	}
 
-	inline void installDefaultCallback(
-		bool synchronous=true,
-		osg::NotifySeverity notifySeverity=osg::NOTICE
-	) {
+	inline void installDefaultCallback(bool synchronous=true) {
 		if(!_messageCallback) return;
-
-		_defaultCallbackNotifySeverity = notifySeverity;
 
 		enableDebugOutput(synchronous);
 		setCallback(defaultCallback, nullptr);
@@ -268,10 +273,10 @@ namespace detail {
 		if(f) {
 			*func = reinterpret_cast<T>(f);
 
-			print(" >> Bound function '", name, "' to @", (void*)(*func));
+			notify("osgDebug | Bound function '", name, "' to @", (void*)(*func));
 		}
 
-		else print(" >> FAILED to bind '", name, "'");
+		else notify("osgDebug | FAILED to bind '", name, "'");
 	}
 
 	// Per-context accumulator for two-phase GPU timing. ProfilerCallback (phase 1) pushes
@@ -352,8 +357,8 @@ namespace detail {
 					s.samplesSincePrint = 0;
 
 					// TODO: This is annoyingly AWFUL and should be fixed; SOON!
-					print(
-						" >> [", e.path, "] GPU: ", gpuNs / 1000u, "us",
+					notify(
+						"osgDebug::Profiler | [", e.path, "] GPU: ", gpuNs / 1000u, "us",
 						" | avg: ", s.gpuBuffer.average(printEvery) / 1000u, "us",
 						" Frame: ", frameNum
 					);
@@ -416,11 +421,14 @@ inline void clearCallback() {
 	detail::clearCallback();
 }
 
-inline void installDefaultCallback(
-	bool synchronous=true,
-	osg::NotifySeverity notifySeverity=osg::NOTICE
-) {
-	detail::installDefaultCallback(synchronous, notifySeverity);
+inline void installDefaultCallback(bool synchronous=true) {
+	detail::installDefaultCallback(synchronous);
+}
+
+// Replace the log sink for all osgDebug output (internal diagnostics, GL annotation
+// mirrors, driver messages). The default writes to osg::notify(NOTICE).
+inline void setSink(std::function<void(std::string_view)> sink) {
+	detail::_sink = std::move(sink);
 }
 
 inline void enableDebugOutput(bool synchronous=true) {
@@ -470,21 +478,28 @@ inline void deinitialize(bool disableOutput=true) {
 	detail::_messageInsert = nullptr;
 	detail::_messageCallback = nullptr;
 	detail::_messageControl = nullptr;
-	detail::_defaultCallbackNotifySeverity = osg::NOTICE;
 }
 
-// ---------------------------------------------------------------------------
-// KHR_debug annotation objects
+// Annotations are camera-scoped: a PRE_DRAW/FINAL_DRAW pair brackets everything that camera
+// renders. Sub-groups within a single camera's scene graph cannot be individually annotated this
+// way; for per-group bracketing, each group needs its own camera (RTT). For per-drawable bracketing
+// use Scoped inside a DrawCallback instead.
 //
-// DebugGroupAnnotation pairs a glPushDebugGroup / glPopDebugGroup around any
-// block of GL work.  All calls require a current GL context; always install via
-// AnnotationBeginCallback / AnnotationEndCallback on a camera slot, never call
-// begin() / end() from application-side C++ code outside a draw callback.
-// ---------------------------------------------------------------------------
-
-class DebugGroupAnnotation: public osg::Referenced {
+// Choosing the right tool:
+//
+// Scoped - begin and end are in the SAME scope (e.g. inside a single drawImplementation call).
+// RAII; use on the stack.
+//
+// AnnotationGroup - begin and end must live in SEPARATE callbacks. Its sole purpose is to share
+// state across AnnotationBeginCallback (PRE_DRAW) and AnnotationEndCallback (FINAL_DRAW) so the
+// push/pop remain matched across the camera's frame boundary. Not a general-purpose annotation
+// type.
+//
+// All calls require a current GL context; never call begin()/end() from application-side C++ code
+// outside a draw callback.
+class AnnotationGroup: public osg::Referenced {
 public:
-	DebugGroupAnnotation(
+	AnnotationGroup(
 		GLuint id,
 		std::string_view message,
 		Source source=Source::APPLICATION,
@@ -558,12 +573,8 @@ public:
 	Scoped& operator=(const Scoped&) = delete;
 
 private:
-	DebugGroupAnnotation _state;
+	AnnotationGroup _state;
 };
-
-// ---------------------------------------------------------------------------
-// Camera draw callback utilities
-// ---------------------------------------------------------------------------
 
 enum class CameraDrawCallbackSlot {
 	PRE_DRAW,
@@ -592,16 +603,13 @@ namespace detail {
 	) {
 		switch(slot) {
 			case CameraDrawCallbackSlot::PRE_DRAW:
-				camera->setPreDrawCallback(cb);
-				break;
+				camera->setPreDrawCallback(cb); break;
 
 			case CameraDrawCallbackSlot::POST_DRAW:
-				camera->setPostDrawCallback(cb);
-				break;
+				camera->setPostDrawCallback(cb); break;
 
 			case CameraDrawCallbackSlot::FINAL_DRAW:
-				camera->setFinalDrawCallback(cb);
-				break;
+				camera->setFinalDrawCallback(cb); break;
 		}
 	}
 }
@@ -615,11 +623,13 @@ inline void appendCameraDrawCallback(
 
 	if(!existing) {
 		detail::setCameraDrawCallback(camera, slot, cb);
+
 		return;
 	}
 
 	if(auto* group = dynamic_cast<osgx::CameraDrawCallbacksGroup*>(existing)) {
 		group->add(cb);
+
 		return;
 	}
 
@@ -649,10 +659,10 @@ inline void prependCameraDrawCallback(
 	);
 }
 
-// Fires DebugGroupAnnotation::begin() from a camera draw slot (GL context current).
+// Fires AnnotationGroup::begin() from a camera draw slot (GL context current).
 class AnnotationBeginCallback: public osg::Camera::DrawCallback {
 public:
-	using Annotation = osg::ref_ptr<DebugGroupAnnotation>;
+	using Annotation = osg::ref_ptr<AnnotationGroup>;
 
 	AnnotationBeginCallback(
 		GLuint id,
@@ -660,7 +670,7 @@ public:
 		Source source=Source::APPLICATION,
 		bool measureTime=false
 	):
-	_annotation(new DebugGroupAnnotation(id, message, source, measureTime)) {}
+	_annotation(new AnnotationGroup(id, message, source, measureTime)) {}
 
 	explicit AnnotationBeginCallback(Annotation annotation):
 	_annotation(std::move(annotation)) {}
@@ -673,10 +683,10 @@ private:
 	Annotation _annotation;
 };
 
-// Fires DebugGroupAnnotation::end() from a camera draw slot (GL context current).
+// Fires AnnotationGroup::end() from a camera draw slot (GL context current).
 class AnnotationEndCallback: public osg::Camera::DrawCallback {
 public:
-	using Annotation = osg::ref_ptr<DebugGroupAnnotation>;
+	using Annotation = osg::ref_ptr<AnnotationGroup>;
 
 	AnnotationEndCallback(
 		GLuint id,
@@ -684,7 +694,7 @@ public:
 		Source source=Source::APPLICATION,
 		bool measureTime=false
 	):
-	_annotation(new DebugGroupAnnotation(id, message, source, measureTime)) {}
+	_annotation(new AnnotationGroup(id, message, source, measureTime)) {}
 
 	explicit AnnotationEndCallback(Annotation annotation):
 	_annotation(std::move(annotation)) {}
@@ -697,18 +707,16 @@ private:
 	Annotation _annotation;
 };
 
-// ---------------------------------------------------------------------------
-// GPU timestamp profiler
+// GPU/glGenQueries Profiling
 //
-// Two-phase design: ProfilerCallback (phase 1) wraps each drawable and issues
-// glQueryCounter begin/end without blocking.  ProfilerFinalCallback (phase 2)
-// drains the accumulated results after the camera finishes rendering.
+// Two-phase design: ProfilerCallback (phase 1) wraps each drawable and issues glQueryCounter
+// begin/end without blocking. ProfilerFinalCallback (phase 2) drains the accumulated results after
+// the camera finishes rendering.
 //
 // Usage:
-//   root->accept(osgDebug::ProfilerVisitor());
-//   appendCameraDrawCallback(cam, FINAL_DRAW, new osgDebug::ProfilerFinalCallback());
-// ---------------------------------------------------------------------------
-
+//
+// root->accept(osgDebug::ProfilerVisitor());
+// appendCameraDrawCallback(cam, FINAL_DRAW, new osgDebug::ProfilerFinalCallback());
 enum class QueryMode { SYNC, ASYNC };
 
 // Phase 1: wrap a drawable, bracket its draw with GL timestamp queries.
@@ -736,6 +744,8 @@ public:
 		const auto contextID = ri.getState()->getContextID();
 
 		const auto start = osg::Timer::instance()->tick();
+
+		Scoped scoped(0, path);
 
 		if(ext && ext->glQueryCounter) {
 			auto& acc = detail::_accumulators[contextID];
@@ -832,7 +842,7 @@ public:
 
 		auto dcb = new ProfilerCallback<N>(path, d.getDrawCallback());
 
-		detail::print(" >> Setting ProfilerCallback on ", path);
+		detail::notify("osgDebug::ProfilerVisitor | Setting ProfilerCallback on ", path);
 
 		d.setDrawCallback(dcb);
 
@@ -859,9 +869,6 @@ public:
 	}
 };
 
-// ---------------------------------------------------------------------------
-// FrameByFrameViewer
-//
 // An osgViewer::Viewer subclass for apitrace-friendly debugging. Press 'n' to
 // advance one frame; the viewer idles between keystrokes so apitrace captures
 // never flood with unintended frames.
@@ -869,16 +876,10 @@ public:
 // On first render, installs AnnotationBeginCallback / AnnotationEndCallback on
 // the camera so every rendered frame appears in apitrace as:
 //
-//   Frame {
-//     Render {
-//       [all draw calls for this frame]
-//     }
-//   }
+// Frame { [all draw calls for this frame] }
 //
-// Any other object (e.g. osgSlug::Atlas) can install its own annotation
-// callbacks on its camera slots and they will nest naturally inside these groups.
-// ---------------------------------------------------------------------------
-
+// Any other object with its own RTT camera (e.g. osgSlug::Atlas) can install
+// its own annotation callbacks and they will nest naturally inside this group.
 class FrameByFrameViewer: public osgViewer::Viewer {
 public:
 	class EventHandler: public osgGA::GUIEventHandler {
@@ -925,14 +926,42 @@ public:
 					osg::Timer::instance()->tick()
 				);
 
-				detail::print(
-					"FrameByFrameViewer render #", _count,
-					" (wall-clock ", wallTime, "s)"
+				detail::notify(
+					"osgDebug::FrameByFrameViewer | render #", _count,
+					" @", wallTime, "s"
 				);
 
 				auto [_ut, ut] = osgx::call([this]() { updateTraversal(); });
-				detail::print("Update took ", ut, "us");
 
+				detail::notify("osgDebug::FrameByFrameViewer | Update took ", ut, "us");
+
+				// Below are exactly what the typical `osgViewer::Viewer::renderingTraversals()`
+				// method does.
+				//
+				// - Calculate frame time/number.
+				// - Collect stats (if enabled).
+				// - Iterate over getScenes().
+				//   - Call scene.DatabasePager.signalBeginFrame().
+				//   - Call scene.ImagePager.signalBeginFrame().
+				//   - Compute bounds of scene.
+				// - Iterate over getCameras().
+				//   - Call camera.getRenderer().cull().
+				// - Iterate over getContexts(), defined in subclass (Viewer/CompositeViewer).
+				//   - Make context thread active.
+				//   - Call context.runOperations().
+				//     - Iterate over all context cameras.
+				//       - Call camera.getRenderer()(context).
+				//         - osgViewer::Renderer calls either cull_draw() or draw(), FINALLY
+				//           leading to our Drawable! The order of function call is:
+				//             - SceneView::draw()
+				//             - RenderBin::draw()
+				// - Iterate over getContexts().
+				//   - Make context thread active.
+				//   - Call context.swapBuffers().
+				// - Iterate over getScenes().
+				//   - Call scene.DatabasePager.signalEndFrame().
+				//   - Call scene.ImagePager.signalEndFrame().
+				// - Update stats (if enabled).
 				renderingTraversals();
 
 				_render.store(false, std::memory_order_release);
@@ -960,25 +989,24 @@ private:
 
 		auto* camera = getCamera();
 
-		auto frameAnnotation = osgx::make_ref<DebugGroupAnnotation>(
-			0, "Frame", Source::APPLICATION, true
+		auto frameAnnotation = osgx::make_ref<AnnotationGroup>(
+			0,
+			"Frame",
+			Source::APPLICATION,
+			true
 		);
 
-		auto renderAnnotation = osgx::make_ref<DebugGroupAnnotation>(
-			1, "Render", Source::APPLICATION, true
+		appendCameraDrawCallback(
+			camera,
+			CameraDrawCallbackSlot::PRE_DRAW,
+			new AnnotationBeginCallback(frameAnnotation)
 		);
 
-		appendCameraDrawCallback(camera, CameraDrawCallbackSlot::PRE_DRAW,
-			new AnnotationBeginCallback(frameAnnotation));
-
-		appendCameraDrawCallback(camera, CameraDrawCallbackSlot::PRE_DRAW,
-			new AnnotationBeginCallback(renderAnnotation));
-
-		appendCameraDrawCallback(camera, CameraDrawCallbackSlot::FINAL_DRAW,
-			new AnnotationEndCallback(renderAnnotation));
-
-		appendCameraDrawCallback(camera, CameraDrawCallbackSlot::FINAL_DRAW,
-			new AnnotationEndCallback(frameAnnotation));
+		appendCameraDrawCallback(
+			camera,
+			CameraDrawCallbackSlot::FINAL_DRAW,
+			new AnnotationEndCallback(frameAnnotation)
+		);
 
 		_annotationCallbacksInstalled = true;
 	}
@@ -990,9 +1018,160 @@ private:
 	std::atomic<bool> _render{true};
 	bool _firstFrame = true;
 	bool _annotationCallbacksInstalled = false;
-
 	osg::Timer_t _startTick = osg::Timer::instance()->tick();
 	unsigned int _count = 0;
 };
+
+#ifdef OSGDEBUG_IMGUI
+// ImGuiHandler - drop-in osgGA::GUIEventHandler that owns the ImGui lifecycle.
+//
+// Installs pre/post draw callbacks on the camera on the first OSG event.
+// Requires SingleThreaded viewer (ImGui context is per-thread).
+//
+// Set onDraw to emit ImGui calls; they run inside an active frame.
+class ImGuiHandler: public osgGA::GUIEventHandler {
+public:
+	std::function<void(osg::RenderInfo&)> onDraw;
+
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		if(!_initialized) {
+			if(auto* view = aa.asView()) {
+				auto* cam = view->getNumSlaves() > 0
+					? view->getSlave(0)._camera.get()
+					: view->getCamera()
+				;
+
+				cam->setPreDrawCallback(new PreDraw(*this));
+				cam->setPostDrawCallback(new PostDraw(*this));
+
+				_initialized = true;
+			}
+
+			return false;
+		}
+
+		if(_firstFrame || ea.getHandled()) return false;
+
+		ImGuiIO& io = ImGui::GetIO();
+
+		switch(ea.getEventType()) {
+		case osgGA::GUIEventAdapter::KEYDOWN:
+		case osgGA::GUIEventAdapter::KEYUP: {
+			bool down = ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN;
+			int c = ea.getKey();
+
+			if(io.WantCaptureKeyboard && down && c >= 32 && c < 127) io.AddInputCharacter(
+				static_cast<unsigned int>(c)
+			);
+
+			return io.WantCaptureKeyboard;
+		}
+
+		case osgGA::GUIEventAdapter::PUSH:
+			io.AddMousePosEvent(ea.getX(), io.DisplaySize.y - ea.getY());
+
+			if(ea.getButton() == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON) io.AddMouseButtonEvent(
+				ImGuiMouseButton_Left,
+				true
+			);
+
+			else if(ea.getButton() == osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON) {
+				io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+			}
+
+			return io.WantCaptureMouse;
+
+		case osgGA::GUIEventAdapter::RELEASE:
+			io.AddMousePosEvent(ea.getX(), io.DisplaySize.y - ea.getY());
+
+			if(ea.getButton() == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON) io.AddMouseButtonEvent(
+				ImGuiMouseButton_Left,
+				false
+			);
+
+			else if(ea.getButton() == osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON) {
+				io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+			}
+
+			return io.WantCaptureMouse;
+
+		case osgGA::GUIEventAdapter::DRAG:
+		case osgGA::GUIEventAdapter::MOVE:
+			io.AddMousePosEvent(ea.getX(), io.DisplaySize.y - ea.getY());
+
+			return io.WantCaptureMouse;
+
+		case osgGA::GUIEventAdapter::SCROLL:
+			io.AddMouseWheelEvent(
+				0.0f,
+				ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP ? 1.0f : -1.0f
+			);
+
+			return io.WantCaptureMouse;
+
+		default:
+			break;
+		}
+
+		return false;
+	}
+
+private:
+	bool _initialized = false;
+	bool _firstFrame = true;
+	double _time = 0.0;
+
+	void newFrame(osg::RenderInfo& ri) {
+		if(_firstFrame) {
+			ImGui::CreateContext();
+			ImGui_ImplOpenGL3_Init();
+
+			_firstFrame = false;
+		}
+
+		ImGui_ImplOpenGL3_NewFrame();
+
+		auto* traits = ri.getCurrentCamera()->getGraphicsContext()->getTraits();
+
+		ImGuiIO& io = ImGui::GetIO();
+
+		io.DisplaySize = ImVec2(
+			static_cast<float>(traits->width),
+			static_cast<float>(traits->height)
+		);
+
+		double t = ri.getView()->getFrameStamp()->getSimulationTime();
+
+		io.DeltaTime = static_cast<float>(t - _time) + 0.0000001f;
+
+		_time = t;
+
+		ImGui::NewFrame();
+	}
+
+	void render(osg::RenderInfo& ri) {
+		if(onDraw) onDraw(ri);
+
+		ImGui::Render();
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+	}
+
+	struct PreDraw: public osg::Camera::DrawCallback {
+		ImGuiHandler& _h;
+
+		explicit PreDraw(ImGuiHandler& h): _h(h) {}
+
+		void operator()(osg::RenderInfo& ri) const override { _h.newFrame(ri); }
+	};
+
+	struct PostDraw: public osg::Camera::DrawCallback {
+		ImGuiHandler& _h;
+
+		explicit PostDraw(ImGuiHandler& h): _h(h) {}
+
+		void operator()(osg::RenderInfo& ri) const override { _h.render(ri); }
+	};
+};
+#endif
 
 }

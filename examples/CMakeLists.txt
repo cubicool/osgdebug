@@ -31,10 +31,11 @@ if(IMGUI_FOUND)
         "osgdebug-imgui.cpp"
         "../osgx.hpp"
         "../osgDebug.hpp"
-        "../osgDebugImGui.hpp"
+        # "../osgDebugImGui.hpp"
     )
 
     osgdebug_compile_options(osgdebug-imgui)
+	target_compile_definitions(osgdebug-imgui PRIVATE OSGDEBUG_IMGUI)
     target_include_directories(osgdebug-imgui PRIVATE ${IMGUI_INCLUDE_DIRS})
     target_link_libraries(osgdebug-imgui PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
 else()

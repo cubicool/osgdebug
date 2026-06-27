@@ -61,24 +61,28 @@ belong to which logical pass.
 `messageInsert` from application-side C++ code (e.g. from `main()` or a viewer loop);
 always use the camera callback objects, which fire while the context is guaranteed current.
 
-- `osgDebug::DebugGroupAnnotation` — pairs `begin()` / `end()` around a named group.
-- `osgDebug::Scoped` — RAII wrapper; opens the group on construction, closes on destruction. Safe inside a draw callback.
-- `osgDebug::AnnotationBeginCallback` / `AnnotationEndCallback` — install a `DebugGroupAnnotation` on a camera's `PRE_DRAW` or `FINAL_DRAW` slot so it fires at the correct time.
+**Annotations are camera-scoped.** A `PRE_DRAW` / `FINAL_DRAW` callback pair brackets
+everything that camera renders — not individual nodes or groups within the scene graph.
+Sub-groups of a single camera's scene cannot be individually annotated this way; for
+per-group bracketing, each group needs its own RTT camera. For per-drawable bracketing,
+use `ProfilerCallback` instead.
+
+- `osgDebug::Scoped` — **use this by default.** RAII push/pop; construct on the stack inside any `drawImplementation` or draw callback. Begin and end are in the same scope.
+- `osgDebug::AnnotationGroup` — use only when begin and end must live in *separate* callback objects. Its sole purpose is to share push/pop state across `AnnotationBeginCallback` (`PRE_DRAW`) and `AnnotationEndCallback` (`FINAL_DRAW`) so the group remains matched across the camera's frame boundary. Not a general-purpose annotation type.
+- `osgDebug::AnnotationBeginCallback` / `AnnotationEndCallback` — install an `AnnotationGroup` on a camera's `PRE_DRAW` or `FINAL_DRAW` slot so it fires at the correct time.
 - `osgDebug::appendCameraDrawCallback()` / `prependCameraDrawCallback()` — safely add callbacks to an existing slot without clobbering others.
 
-Groups nest naturally. `FrameByFrameViewer` installs a `Frame { Render { } }` pair on
-its camera automatically. Any other object (e.g. an `osgSlug::Atlas`) can install its
-own `AnnotationBeginCallback` / `AnnotationEndCallback` and it will appear nested inside
-the viewer's groups in the trace:
+Groups nest naturally. `FrameByFrameViewer` installs a single `Frame` group on its
+camera automatically. Any other object with its own RTT camera (e.g. an `osgSlug::Atlas`)
+can install its own `AnnotationBeginCallback` / `AnnotationEndCallback` and it will
+appear nested inside the viewer's group in the trace:
 
 ```
 Frame
-  Render
-    Atlas: glyph-cache
-      [draw calls]
-    Atlas: labels
-      [draw calls]
-  /Render
+  Atlas: glyph-cache
+    [draw calls]
+  Atlas: labels
+    [draw calls]
 /Frame
 ```
 

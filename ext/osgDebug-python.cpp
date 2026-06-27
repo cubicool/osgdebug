@@ -64,8 +64,7 @@ PYBIND11_MODULE(osgDebug, m) {
 		.def(
 			"installDefaultCallback",
 			&osgDebug::installDefaultCallback,
-			"synchronous"_a=true,
-			"notifySeverity"_a=osg::NOTICE
+			"synchronous"_a=true
 		)
 		.def("clearCallback", &osgDebug::clearCallback)
 		.def(

@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
 
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
-	viewer.addEventHandler(new osgViewer::StatsHandler());
+	// viewer.addEventHandler(new osgViewer::StatsHandler());
 
 	osgDebug::appendCameraDrawCallback(
 		viewer.getCamera(),
