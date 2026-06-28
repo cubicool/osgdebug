@@ -11,8 +11,6 @@ OSGX_DISABLE_WARNINGS
 #include <osgGA/TrackballManipulator>
 #include <osgGA/StateSetManipulator>
 
-#include <osgViewer/ViewerEventHandlers>
-
 OSGX_ENABLE_WARNINGS
 
 int main(int argc, char** argv) {
@@ -49,13 +47,13 @@ int main(int argc, char** argv) {
 
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
-	viewer.addEventHandler(new osgViewer::StatsHandler());
 	viewer.addEventHandler(new osgGA::StateSetManipulator(viewer.getCamera()->getOrCreateStateSet()));
 
 	// Widget constructor enforces SingleThreaded and pushes itself to the front
 	// of the viewer's event handler list automatically.
 	auto* gui = new osgDebug::imgui::Widget(viewer);
 
+	gui->addStatsSection();
 	gui->addProfilerSection(root);
 
 	// Optional: append app-specific sections below the built-in ones.

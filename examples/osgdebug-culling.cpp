@@ -5,50 +5,91 @@
 OSGX_DISABLE_WARNINGS
 
 #include <osg/io_utils>
+#include <osg/Geode>
+#include <osg/Group>
 #include <osg/MatrixTransform>
+#include <osg/ShapeDrawable>
+
+#include <osgUtil/CullVisitor>
 
 #include <osgDB/WriteFile>
 
+#include <osgViewer/ViewerEventHandlers>
+
 OSGX_ENABLE_WARNINGS
 
-// TODO: Use this to keep a list of what IS being culled!
-class CullCallback: public osg::NodeCallback {
+class CullProbeCallback: public osg::DrawableCullCallback {
 public:
-	virtual void operator()(osg::Node* node, osg::NodeVisitor* nv) {
-		std::cout << "CullCallback: " << node->getName() << " IS VISIBLE!" << std::endl;
+	bool cull(osg::NodeVisitor* nv, osg::Drawable* drawable, osg::RenderInfo*) const override {
+		auto* cv = nv ? nv->asCullVisitor() : nullptr;
 
-		traverse(node, nv);
+		if(!cv || !drawable) return false;
+
+		const bool culled = drawable->isCullingActive() && cv->isCulled(drawable->getBoundingBox());
+		const auto frame = cv->getFrameStamp() ? cv->getFrameStamp()->getFrameNumber() : 0u;
+
+		std::cout
+			<< "frame " << frame
+			<< " | " << drawable->getName()
+			<< " | " << (culled ? "CULLED" : "VISIBLE")
+			<< std::endl
+		;
+
+		return false;
 	}
 };
 
-/* class DrawableCullCallback: public osg::DrawableCullCallback {
-public:
-	virtual bool cull(osg::NodeVisitor*, osg::Drawable* drawable, osg::State* state) const {
-		std::cout << "DrawableCullCallback: " << drawable->getName() << std::endl;
+osg::ref_ptr<osg::Node> makeScene() {
+	auto root = osgx::make_nref<osg::Group>("culling.root");
+	root->setCullingActive(false);
 
-		return true;
+	for(int y = -3; y <= 3; y++) {
+		for(int x = -3; x <= 3; x++) {
+			const std::string name = "sphere." + std::to_string(x) + "." + std::to_string(y);
+
+			auto transform = osgx::make_nref<osg::MatrixTransform>(
+				name + ".xf",
+				osg::Matrix::translate(
+					static_cast<float>(x) * 3.0f,
+					0.0f,
+					static_cast<float>(y) * 3.0f
+				)
+			);
+
+			auto geode = osgx::make_nref<osg::Geode>(name + ".geode");
+			auto drawable = osgx::make_nref<osg::ShapeDrawable>(
+				name + ".drawable",
+				new osg::Sphere(osg::Vec3(), 1.0f)
+			);
+
+			transform->setCullingActive(false);
+			geode->setCullingActive(false);
+			drawable->setCullCallback(new CullProbeCallback());
+
+			geode->addDrawable(drawable);
+			transform->addChild(geode);
+			root->addChild(transform);
+		}
 	}
-}; */
+
+	return root;
+}
 
 int main(int argc, char** argv) {
+	// osgDebug::FrameByFrameViewer viewer;
 	osgViewer::Viewer viewer;
 
-	auto root = osgx::scene::sphereGrid(5, 5);
-
-	osgx::LambdaVisitor<osg::Drawable>([](auto& d) {
-		std::cout << &d << ": setting CullCallback on " << d.getName() << std::endl;
-
-		d.setCullCallback(new CullCallback());
-	})(root);
+	auto root = makeScene();
 
 	viewer.setSceneData(root);
+	viewer.addEventHandler(new osgViewer::StatsHandler());
 	viewer.addEventHandler(new osgx::VisitorEventHandler<osgx::DescribeSceneVisitor>(
 		osgGA::GUIEventAdapter::KeySymbol::KEY_F9 // 'v'
 	));
 
 	auto r = viewer.run();
 
-	osgDB::writeNodeFile(*root, "osgdebug-culling.osgt");
+	// osgDB::writeNodeFile(*root, "osgdebug-culling.osgt");
 
 	return r;
 }

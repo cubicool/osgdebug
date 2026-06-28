@@ -7,6 +7,8 @@ OSGX_DISABLE_WARNINGS
 #include <osg/GLExtensions>
 #include <osg/Drawable>
 #include <osg/Camera>
+#include <osg/Stats>
+#include <osgUtil/CullVisitor>
 #include <osgViewer/Viewer>
 
 OSGX_ENABLE_WARNINGS
@@ -28,6 +30,12 @@ namespace osgDebug {
 using namespace osgx::literals;
 
 inline constexpr size_t DEFAULT_BUFFER_SIZE = 60;
+
+enum class CullState {
+	UNKNOWN,
+	VISIBLE,
+	CULLED
+};
 
 enum class Severity: GLenum {
 	DONT_CARE = 0x1100,
@@ -293,8 +301,47 @@ namespace detail {
 			GLuint end = 0;
 		};
 
+		class GPUStatsBuffer {
+		public:
+			void add(GLuint64 value, size_t capacity=DEFAULT_BUFFER_SIZE) {
+				if(!capacity) capacity = 1;
+
+				_capacity = capacity;
+				_samples.push_back(value);
+
+				while(_samples.size() > _capacity) _samples.erase(_samples.begin());
+			}
+
+			GLuint64 average() const {
+				return average(_samples.size());
+			}
+
+			GLuint64 average(size_t count) const {
+				count = std::min(count, _samples.size());
+
+				if(!count) return 0;
+
+				GLuint64 sum = 0;
+				const auto first = _samples.size() - count;
+
+				for(size_t i = first; i < _samples.size(); i++) sum += _samples[i];
+
+				return sum / static_cast<GLuint64>(count);
+			}
+
+			size_t size() const { return _samples.size(); }
+			size_t capacity() const { return _capacity; }
+
+		private:
+			std::vector<GLuint64> _samples;
+			size_t _capacity = DEFAULT_BUFFER_SIZE;
+		};
+
 		struct PathStats {
-			osgx::aring_buffer<GLuint64, DEFAULT_BUFFER_SIZE> gpuBuffer;
+			GPUStatsBuffer gpuBuffer;
+
+			CullState cullState = CullState::UNKNOWN;
+			unsigned int cullFrame = 0;
 
 			size_t samplesSincePrint = 0;
 		};
@@ -327,22 +374,45 @@ namespace detail {
 			pending.push_back(std::move(e));
 		}
 
+		void markCull(const std::string& path, CullState state, unsigned int frameNum) {
+			auto& s = stats[path];
+
+			s.cullState = state;
+			s.cullFrame = frameNum;
+		}
+
 		// SYNC: drain current frame's pending queries, blocking per-query.
-		void drain(osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
-			_drain(pending, ext, printEvery, frameNum);
+		void drain(
+			osg::GLExtensions* ext,
+			size_t sampleWindow,
+			size_t printEvery,
+			unsigned int frameNum
+		) {
+			_drain(pending, ext, sampleWindow, printEvery, frameNum);
 		}
 
 		// ASYNC: drain the previous frame's results (should already be ready),
 		// then advance the double-buffer so this frame's pending becomes next
 		// frame's ready. One-frame lag; ring-buffer averaging makes it irrelevant.
-		void swap_and_drain(osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
-			_drain(ready, ext, printEvery, frameNum);
+		void swap_and_drain(
+			osg::GLExtensions* ext,
+			size_t sampleWindow,
+			size_t printEvery,
+			unsigned int frameNum
+		) {
+			_drain(ready, ext, sampleWindow, printEvery, frameNum);
 
 			std::swap(pending, ready);
 		}
 
 	private:
-		void _drain(std::vector<Entry>& source, osg::GLExtensions* ext, size_t printEvery, unsigned int frameNum) {
+		void _drain(
+			std::vector<Entry>& source,
+			osg::GLExtensions* ext,
+			size_t sampleWindow,
+			size_t printEvery,
+			unsigned int frameNum
+		) {
 			for(auto& e : source) {
 				GLuint64 t0 = 0, t1 = 0;
 
@@ -352,7 +422,7 @@ namespace detail {
 				const GLuint64 gpuNs = t1 - t0;
 				auto& s = stats[e.path];
 
-				s.gpuBuffer.add(gpuNs);
+				s.gpuBuffer.add(gpuNs, sampleWindow);
 				s.samplesSincePrint++;
 
 				if(printEvery > 0 && s.samplesSincePrint >= printEvery) {
@@ -729,10 +799,22 @@ private:
 // appendCameraDrawCallback(cam, FINAL_DRAW, new osgDebug::ProfilerFinalCallback());
 enum class QueryMode { SYNC, ASYNC };
 
+class ProfilerCallbackBase: public osg::Drawable::DrawCallback {
+public:
+	virtual void setProfilerName(const std::string& name) = 0;
+	virtual const std::string& getProfilerName() const = 0;
+};
+
+class ProfilerCullCallbackBase: public osg::DrawableCullCallback {
+public:
+	virtual void setProfilerName(const std::string& name) = 0;
+	virtual const std::string& getProfilerName() const = 0;
+};
+
 // Phase 1: wrap a drawable, bracket its draw with GL timestamp queries.
 // Never blocks; safe in any threading model.
 template<size_t N=DEFAULT_BUFFER_SIZE>
-class ProfilerCallback: public osg::Drawable::DrawCallback {
+class ProfilerCallback: public ProfilerCallbackBase {
 public:
 	using CPUBuffer = osgx::aring_buffer<decltype(osg::Timer::instance()->tick()), N>;
 
@@ -747,6 +829,9 @@ public:
 	ProfilerCallback("", cb) {}
 
 	const CPUBuffer& cpuBuffer() const { return _cpuBuffer; }
+
+	void setProfilerName(const std::string& name) override { _name = name; }
+	const std::string& getProfilerName() const override { return _name; }
 
 	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const override {
 		auto* ext = ri.getState()->get<osg::GLExtensions>();
@@ -787,6 +872,56 @@ protected:
 	mutable CPUBuffer _cpuBuffer;
 };
 
+class ProfilerCullCallback: public ProfilerCullCallbackBase {
+public:
+	ProfilerCullCallback(const std::string& name="", osg::Callback* cb=nullptr):
+	_name(name),
+	_cb(cb) {}
+
+	void setProfilerName(const std::string& name) override { _name = name; }
+	const std::string& getProfilerName() const override { return _name; }
+
+	bool cull(osg::NodeVisitor* nv, osg::Drawable* drawable, osg::RenderInfo* ri) const override {
+		const auto frameNum = nv && nv->getFrameStamp()
+			? nv->getFrameStamp()->getFrameNumber()
+			: 0u
+		;
+
+		const auto contextID = ri && ri->getState()
+			? ri->getState()->getContextID()
+			: 0u
+		;
+
+		const auto& path = _name.empty() && drawable ? drawable->getName() : _name;
+		bool callbackCulled = false;
+
+		if(_cb.valid()) {
+			if(auto* dcb = _cb->asDrawableCullCallback()) {
+				callbackCulled = dcb->cull(nv, drawable, ri);
+			}
+
+			else _cb->run(drawable, nv);
+		}
+
+		auto* cv = nv ? nv->asCullVisitor() : nullptr;
+		const bool boundsCulled = drawable && cv && drawable->isCullingActive()
+			&& cv->isCulled(drawable->getBoundingBox())
+		;
+
+		detail::_accumulators[contextID].markCull(
+			path,
+			(callbackCulled || boundsCulled) ? CullState::CULLED : CullState::VISIBLE,
+			frameNum
+		);
+
+		return callbackCulled;
+	}
+
+private:
+	std::string _name;
+	osg::ref_ptr<osg::Callback> _cb;
+};
+
 // Phase 2: install on a camera via FINAL_DRAW slot to drain the FrameAccumulator.
 //
 // QueryMode::SYNC (default): blocks per-query on GL_QUERY_RESULT for the current
@@ -821,9 +956,9 @@ public:
 
 		auto& acc = detail::_accumulators[ri.getState()->getContextID()];
 
-		if(_mode == QueryMode::ASYNC) acc.swap_and_drain(ext, _printEvery, frameNum);
+		if(_mode == QueryMode::ASYNC) acc.swap_and_drain(ext, N, _printEvery, frameNum);
 
-		else acc.drain(ext, _printEvery, frameNum);
+		else acc.drain(ext, N, _printEvery, frameNum);
 	}
 
 private:
@@ -857,11 +992,33 @@ public:
 			path += d.getName().empty() ? d.className() : d.getName();
 		}
 
-		auto dcb = new ProfilerCallback<N>(path, d.getDrawCallback());
+		if(auto* profiler = dynamic_cast<ProfilerCallbackBase*>(d.getDrawCallback())) {
+			profiler->setProfilerName(path);
 
-		detail::notify("osgDebug::ProfilerVisitor | Setting ProfilerCallback on ", path);
+			detail::notify("osgDebug::ProfilerVisitor | Updating ProfilerCallback on ", path);
+		}
 
-		d.setDrawCallback(dcb);
+		else {
+			auto dcb = new ProfilerCallback<N>(path, d.getDrawCallback());
+
+			detail::notify("osgDebug::ProfilerVisitor | Setting ProfilerCallback on ", path);
+
+			d.setDrawCallback(dcb);
+		}
+
+		if(auto* profiler = dynamic_cast<ProfilerCullCallbackBase*>(d.getCullCallback())) {
+			profiler->setProfilerName(path);
+
+			detail::notify("osgDebug::ProfilerVisitor | Updating ProfilerCullCallback on ", path);
+		}
+
+		else {
+			auto ccb = new ProfilerCullCallback(path, d.getCullCallback());
+
+			detail::notify("osgDebug::ProfilerVisitor | Setting ProfilerCullCallback on ", path);
+
+			d.setCullCallback(ccb);
+		}
 
 		traverse(d);
 	}
@@ -1044,8 +1201,138 @@ namespace imgui {
 
 // Controls what the Widget window shows. Future home for docking, title, etc.
 struct Options {
-	bool showGPUInfo   = true;
+	bool showGPUInfo = true;
 	bool showFrameInfo = true;
+};
+
+// ImGui front-end for OSG's aggregate osg::Stats counters. This mirrors the
+// useful parts of osgViewer::StatsHandler without installing its HUD camera.
+class StatsSection {
+public:
+	explicit StatsSection(osgViewer::Viewer& viewer):
+	_viewer(viewer) {
+		if(auto* stats = _viewer.getViewerStats()) {
+			stats->collectStats("frame_rate", true);
+			stats->collectStats("event", true);
+			stats->collectStats("update", true);
+			stats->collectStats("scene", true);
+		}
+
+		osgViewer::ViewerBase::Cameras cameras;
+		_viewer.getCameras(cameras);
+
+		for(auto* camera : cameras) {
+			if(auto* stats = camera ? camera->getStats() : nullptr) {
+				stats->collectStats("rendering", true);
+				stats->collectStats("gpu", true);
+				stats->collectStats("scene", true);
+			}
+		}
+	}
+
+	void operator()(osg::RenderInfo& ri) const {
+		auto* viewerStats = _viewer.getViewerStats();
+		auto* camera = ri.getCurrentCamera() ? ri.getCurrentCamera() : _viewer.getCamera();
+		auto* cameraStats = camera ? camera->getStats() : nullptr;
+
+		if(!viewerStats && !cameraStats) {
+			ImGui::TextDisabled("No osg::Stats objects available.");
+			return;
+		}
+
+		if(ImGui::BeginTable("osg_stats", 3, _tableFlags)) {
+			ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+			ImGui::TableSetupColumn("Latest", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+			ImGui::TableHeadersRow();
+
+			_row(viewerStats, "Frame rate", "FPS", 1.0, true, "%.1f");
+			_row(viewerStats, "Event traversal time taken", "Event (ms)", 1000.0, false, "%.3f");
+			_row(viewerStats, "Update traversal time taken", "Update (ms)", 1000.0, false, "%.3f");
+
+			if(cameraStats) {
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::TextDisabled("Camera");
+
+				_row(cameraStats, "Cull traversal time taken", "Cull (ms)", 1000.0, false, "%.3f");
+				_row(cameraStats, "Draw traversal time taken", "Draw (ms)", 1000.0, false, "%.3f");
+				_row(cameraStats, "GPU draw time taken", "GPU draw (ms)", 1000.0, false, "%.3f");
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::TextDisabled("Visible Scene");
+
+				_latestRow(cameraStats, "Visible number of drawables", "Drawables", "%.0f");
+				_latestRow(cameraStats, "Visible number of PrimitiveSets", "PrimitiveSets", "%.0f");
+				_latestRow(cameraStats, "Visible vertex count", "Vertices", "%.0f");
+				_latestRow(cameraStats, "Visible number of render bins", "Render bins", "%.0f");
+			}
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextDisabled("Scene Totals");
+
+			_latestRow(viewerStats, "Number of unique Drawable", "Unique drawables", "%.0f");
+			_latestRow(viewerStats, "Number of instanced Drawable", "Instanced drawables", "%.0f");
+			_latestRow(viewerStats, "Number of unique Vertices", "Unique vertices", "%.0f");
+			_latestRow(viewerStats, "Number of unique Primitives", "Unique primitives", "%.0f");
+
+			ImGui::EndTable();
+		}
+	}
+
+private:
+	osgViewer::Viewer& _viewer;
+
+	static constexpr ImGuiTableFlags _tableFlags =
+		ImGuiTableFlags_Borders         |
+		ImGuiTableFlags_RowBg           |
+		ImGuiTableFlags_SizingStretchProp;
+
+	static bool _latest(osg::Stats* stats, const std::string& name, double& value) {
+		return stats && stats->getAttribute(stats->getLatestFrameNumber(), name, value);
+	}
+
+	static void _valueText(bool valid, double value, double multiplier, const char* fmt) {
+		if(valid) ImGui::Text(fmt, value * multiplier);
+		else ImGui::TextDisabled(".");
+	}
+
+	static void _row(
+		osg::Stats* stats,
+		const std::string& name,
+		const char* label,
+		double multiplier,
+		bool averageInInverseSpace,
+		const char* fmt
+	) {
+		double avg = 0.0;
+		double latest = 0.0;
+
+		const bool hasAvg = stats && stats->getAveragedAttribute(name, avg, averageInInverseSpace);
+		const bool hasLatest = _latest(stats, name, latest);
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(label);
+		ImGui::TableSetColumnIndex(1); _valueText(hasAvg, avg, multiplier, fmt);
+		ImGui::TableSetColumnIndex(2); _valueText(hasLatest, latest, multiplier, fmt);
+	}
+
+	static void _latestRow(
+		osg::Stats* stats,
+		const std::string& name,
+		const char* label,
+		const char* fmt
+	) {
+		double latest = 0.0;
+		const bool hasLatest = _latest(stats, name, latest);
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(label);
+		ImGui::TableSetColumnIndex(1); ImGui::TextDisabled(".");
+		ImGui::TableSetColumnIndex(2); _valueText(hasLatest, latest, 1.0, fmt);
+	}
 };
 
 // Callable that installs its own profiler backend on construction and draws
@@ -1068,34 +1355,48 @@ public:
 
 	void operator()(osg::RenderInfo& ri) const {
 		const auto& stats = profilerStats(ri.getState()->getContextID());
+		const auto frameNum = ri.getState()->getFrameStamp()
+			? ri.getState()->getFrameStamp()->getFrameNumber()
+			: 0u
+		;
 
 		int modeIdx = _finalCb->getMode() == QueryMode::SYNC ? 0 : 1;
 
-		if(ImGui::RadioButton("SYNC",  &modeIdx, 0)) _finalCb->setMode(QueryMode::SYNC);
+		if(ImGui::RadioButton("SYNC", &modeIdx, 0)) _finalCb->setMode(QueryMode::SYNC);
+
 		ImGui::SameLine();
+
 		if(ImGui::RadioButton("ASYNC", &modeIdx, 1)) _finalCb->setMode(QueryMode::ASYNC);
 
 		GLuint64 totalNs = 0;
 
-		for(const auto& [path, ps] : stats) totalNs += ps.gpuBuffer.average();
+		for(const auto& [path, ps] : stats) {
+			const bool unknown = ps.cullState == CullState::UNKNOWN;
+			const bool visibleThisFrame = ps.cullFrame == frameNum && ps.cullState == CullState::VISIBLE;
+
+			if(unknown || visibleThisFrame) totalNs += ps.gpuBuffer.average();
+		}
 
 		constexpr ImGuiTableFlags tableFlags =
-			ImGuiTableFlags_Borders         |
-			ImGuiTableFlags_RowBg           |
-			ImGuiTableFlags_ScrollY         |
+			ImGuiTableFlags_Borders |
+			ImGuiTableFlags_RowBg |
+			ImGuiTableFlags_ScrollY |
 			ImGuiTableFlags_SizingStretchProp;
 
 		if(ImGui::BeginTable("gpu_stats", 3, tableFlags)) {
 			ImGui::TableSetupScrollFreeze(0, 1);
 			ImGui::TableSetupColumn("Drawable Path", ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("GPU avg (us)",  ImGuiTableColumnFlags_WidthFixed, 90.0f);
+			ImGui::TableSetupColumn("GPU avg (us)", ImGuiTableColumnFlags_WidthFixed, 90.0f);
 			ImGui::TableSetupColumn("% of profiled", ImGuiTableColumnFlags_WidthFixed, 160.0f);
 			ImGui::TableHeadersRow();
 
 			for(const auto& [path, ps] : stats) {
-				const GLuint64 avgNs    = ps.gpuBuffer.average();
-				const double   avgUs    = static_cast<double>(avgNs) / 1000.0;
-				const float    fraction = totalNs > 0
+				const GLuint64 avgNs = ps.gpuBuffer.average();
+				const double avgUs = static_cast<double>(avgNs) / 1000.0;
+				const bool culled = ps.cullState != CullState::UNKNOWN
+					&& (ps.cullFrame != frameNum || ps.cullState == CullState::CULLED)
+				;
+				const float fraction = totalNs > 0
 					? static_cast<float>(avgNs) / static_cast<float>(totalNs)
 					: 0.0f
 				;
@@ -1106,7 +1407,10 @@ public:
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(path.c_str());
 				ImGui::TableSetColumnIndex(1); ImGui::Text("%.2f", avgUs);
-				ImGui::TableSetColumnIndex(2); ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), pctLabel);
+				ImGui::TableSetColumnIndex(2);
+
+				if(culled) ImGui::TextDisabled("CULLED");
+				else ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), pctLabel);
 			}
 
 			ImGui::EndTable();
@@ -1142,6 +1446,10 @@ public:
 
 	void addProfilerSection(osg::Node* sceneRoot) {
 		addSection("Profiler", ProfilerSection(_viewer, sceneRoot));
+	}
+
+	void addStatsSection() {
+		addSection("Stats", StatsSection(_viewer));
 	}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
@@ -1269,12 +1577,12 @@ private:
 		if(ImGui::Begin("osgDebug")) {
 			if(_opts.showGPUInfo) {
 				static const auto* glRenderer = glGetString(GL_RENDERER);
-				static const auto* glVersion  = glGetString(GL_VERSION);
-				static const auto* glVendor   = glGetString(GL_VENDOR);
+				static const auto* glVersion = glGetString(GL_VERSION);
+				static const auto* glVendor = glGetString(GL_VENDOR);
 
-				if(glVendor)   ImGui::TextDisabled("Vendor: %s",   glVendor);
+				if(glVendor) ImGui::TextDisabled("Vendor: %s", glVendor);
 				if(glRenderer) ImGui::TextDisabled("Renderer: %s", glRenderer);
-				if(glVersion)  ImGui::TextDisabled("GL: %s",       glVersion);
+				if(glVersion) ImGui::TextDisabled("GL: %s", glVersion);
 
 				ImGui::Separator();
 			}
@@ -1282,7 +1590,7 @@ private:
 			if(_opts.showFrameInfo) {
 				auto* fs = ri.getView()->getFrameStamp();
 
-				ImGui::Text("Frame: %u",    fs->getFrameNumber());
+				ImGui::Text("Frame: %u", fs->getFrameNumber());
 				ImGui::Text("Time: %.3f s", fs->getSimulationTime());
 
 				ImGui::Separator();

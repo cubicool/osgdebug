@@ -2,8 +2,7 @@ set(OSGDEBUG_EXAMPLES
 	"eventhandler"
 	"array"
 	"callback"
-	# TOOD: Fix this!
-	# "culling"
+	"culling"
 	"notifyfilter"
 	"hover"
 	"manipulator"
