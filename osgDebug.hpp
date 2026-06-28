@@ -1040,15 +1040,109 @@ private:
 };
 
 #ifdef OSGDEBUG_IMGUI
-// ImGuiHandler - drop-in osgGA::GUIEventHandler that owns the ImGui lifecycle.
-//
-// Installs pre/post draw callbacks on the camera on the first OSG event.
-// Requires SingleThreaded viewer (ImGui context is per-thread).
-//
-// Set onDraw to emit ImGui calls; they run inside an active frame.
-class ImGuiHandler: public osgGA::GUIEventHandler {
+namespace imgui {
+
+// Controls what the Widget window shows. Future home for docking, title, etc.
+struct Options {
+	bool showGPUInfo   = true;
+	bool showFrameInfo = true;
+};
+
+// Callable that installs its own profiler backend on construction and draws
+// the GPU timing table + SYNC/ASYNC toggle when invoked.
+// Pass to Widget::addSection() or use Widget::addProfilerSection() shortcut.
+class ProfilerSection {
 public:
-	std::function<void(osg::RenderInfo&)> onDraw;
+	ProfilerSection(osgViewer::Viewer& viewer, osg::Node* sceneRoot) {
+		ProfilerVisitor<> pv;
+		sceneRoot->accept(pv);
+
+		_finalCb = new ProfilerFinalCallback<>(0);
+
+		appendCameraDrawCallback(
+			viewer.getCamera(),
+			CameraDrawCallbackSlot::FINAL_DRAW,
+			_finalCb
+		);
+	}
+
+	void operator()(osg::RenderInfo& ri) const {
+		const auto& stats = profilerStats(ri.getState()->getContextID());
+
+		int modeIdx = _finalCb->getMode() == QueryMode::SYNC ? 0 : 1;
+
+		if(ImGui::RadioButton("SYNC",  &modeIdx, 0)) _finalCb->setMode(QueryMode::SYNC);
+		ImGui::SameLine();
+		if(ImGui::RadioButton("ASYNC", &modeIdx, 1)) _finalCb->setMode(QueryMode::ASYNC);
+
+		GLuint64 totalNs = 0;
+
+		for(const auto& [path, ps] : stats) totalNs += ps.gpuBuffer.average();
+
+		constexpr ImGuiTableFlags tableFlags =
+			ImGuiTableFlags_Borders         |
+			ImGuiTableFlags_RowBg           |
+			ImGuiTableFlags_ScrollY         |
+			ImGuiTableFlags_SizingStretchProp;
+
+		if(ImGui::BeginTable("gpu_stats", 3, tableFlags)) {
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableSetupColumn("Drawable Path", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("GPU avg (us)",  ImGuiTableColumnFlags_WidthFixed, 90.0f);
+			ImGui::TableSetupColumn("% of profiled", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+			ImGui::TableHeadersRow();
+
+			for(const auto& [path, ps] : stats) {
+				const GLuint64 avgNs    = ps.gpuBuffer.average();
+				const double   avgUs    = static_cast<double>(avgNs) / 1000.0;
+				const float    fraction = totalNs > 0
+					? static_cast<float>(avgNs) / static_cast<float>(totalNs)
+					: 0.0f
+				;
+
+				char pctLabel[16];
+				std::snprintf(pctLabel, sizeof(pctLabel), "%.1f%%", fraction * 100.0f);
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(path.c_str());
+				ImGui::TableSetColumnIndex(1); ImGui::Text("%.2f", avgUs);
+				ImGui::TableSetColumnIndex(2); ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), pctLabel);
+			}
+
+			ImGui::EndTable();
+		}
+	}
+
+private:
+	ProfilerFinalCallback<>* _finalCb = nullptr;
+};
+
+// Owns the ImGui lifecycle for one viewer window.
+// Constructor enforces SingleThreaded and pushes itself to the front of the
+// viewer's event handler list. Sections are drawn in order inside one window.
+class Widget: public osgGA::GUIEventHandler {
+public:
+	Widget(osgViewer::Viewer& viewer, Options opts = {}):
+		_viewer(viewer), _opts(opts)
+	{
+		if(viewer.getThreadingModel() != osgViewer::Viewer::SingleThreaded) {
+			osg::notify(osg::WARN)
+				<< "osgDebug::imgui::Widget: "
+				<< "forcing viewer to SingleThreaded (required by ImGui)\n";
+
+			viewer.setThreadingModel(osgViewer::Viewer::SingleThreaded);
+		}
+
+		viewer.getEventHandlers().push_front(this);
+	}
+
+	void addSection(std::string label, std::function<void(osg::RenderInfo&)> fn) {
+		_sections.emplace_back(std::move(label), std::move(fn));
+	}
+
+	void addProfilerSection(osg::Node* sceneRoot) {
+		addSection("Profiler", ProfilerSection(_viewer, sceneRoot));
+	}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
 		if(!_initialized) {
@@ -1134,9 +1228,12 @@ public:
 	}
 
 private:
+	osgViewer::Viewer& _viewer;
+	Options _opts;
 	bool _initialized = false;
 	bool _firstFrame = true;
 	double _time = 0.0;
+	std::vector<std::pair<std::string, std::function<void(osg::RenderInfo&)>>> _sections;
 
 	void newFrame(osg::RenderInfo& ri) {
 		if(_firstFrame) {
@@ -1167,28 +1264,58 @@ private:
 	}
 
 	void render(osg::RenderInfo& ri) {
-		if(onDraw) onDraw(ri);
+		ImGui::SetNextWindowSize(ImVec2(600, 320), ImGuiCond_FirstUseEver);
 
+		if(ImGui::Begin("osgDebug")) {
+			if(_opts.showGPUInfo) {
+				static const auto* glRenderer = glGetString(GL_RENDERER);
+				static const auto* glVersion  = glGetString(GL_VERSION);
+				static const auto* glVendor   = glGetString(GL_VENDOR);
+
+				if(glVendor)   ImGui::TextDisabled("Vendor: %s",   glVendor);
+				if(glRenderer) ImGui::TextDisabled("Renderer: %s", glRenderer);
+				if(glVersion)  ImGui::TextDisabled("GL: %s",       glVersion);
+
+				ImGui::Separator();
+			}
+
+			if(_opts.showFrameInfo) {
+				auto* fs = ri.getView()->getFrameStamp();
+
+				ImGui::Text("Frame: %u",    fs->getFrameNumber());
+				ImGui::Text("Time: %.3f s", fs->getSimulationTime());
+
+				ImGui::Separator();
+			}
+
+			for(auto& [label, fn] : _sections) {
+				if(ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) fn(ri);
+			}
+		}
+
+		ImGui::End();
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 	}
 
 	struct PreDraw: public osg::Camera::DrawCallback {
-		ImGuiHandler& _h;
+		Widget& _w;
 
-		explicit PreDraw(ImGuiHandler& h): _h(h) {}
+		explicit PreDraw(Widget& w): _w(w) {}
 
-		void operator()(osg::RenderInfo& ri) const override { _h.newFrame(ri); }
+		void operator()(osg::RenderInfo& ri) const override { _w.newFrame(ri); }
 	};
 
 	struct PostDraw: public osg::Camera::DrawCallback {
-		ImGuiHandler& _h;
+		Widget& _w;
 
-		explicit PostDraw(ImGuiHandler& h): _h(h) {}
+		explicit PostDraw(Widget& w): _w(w) {}
 
-		void operator()(osg::RenderInfo& ri) const override { _h.render(ri); }
+		void operator()(osg::RenderInfo& ri) const override { _w.render(ri); }
 	};
 };
+
+} // namespace imgui
 #endif
 
 }

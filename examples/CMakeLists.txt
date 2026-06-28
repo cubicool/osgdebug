@@ -31,7 +31,6 @@ if(IMGUI_FOUND)
         "osgdebug-imgui.cpp"
         "../osgx.hpp"
         "../osgDebug.hpp"
-        # "../osgDebugImGui.hpp"
     )
 
     osgdebug_compile_options(osgdebug-imgui)
