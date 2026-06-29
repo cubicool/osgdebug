@@ -6,12 +6,51 @@ OSGX_DISABLE_WARNINGS
 
 #include <osg/ShapeDrawable>
 #include <osg/Geode>
+#include <osg/Image>
 #include <osg/MatrixTransform>
+#include <osg/Texture2D>
 
 #include <osgGA/TrackballManipulator>
 #include <osgGA/StateSetManipulator>
 
 OSGX_ENABLE_WARNINGS
+
+namespace {
+	osg::Image* makeProceduralImage(int index) {
+		constexpr int width = 64;
+		constexpr int height = 64;
+
+		auto image = osgx::make_ref<osg::Image>();
+		image->setName("ProceduralImage_" + std::to_string(index));
+		image->allocateImage(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+
+		for(int y = 0; y < height; ++y) {
+			for(int x = 0; x < width; ++x) {
+				auto* px = image->data(x, y);
+				const bool checker = ((x / 8) + (y / 8)) % 2 == 0;
+
+				px[0] = static_cast<unsigned char>((x * 255) / (width - 1));
+				px[1] = static_cast<unsigned char>((y * 255) / (height - 1));
+				px[2] = static_cast<unsigned char>(checker ? 255 - index * 60 : 40 + index * 70);
+				px[3] = 255;
+			}
+		}
+
+		return image.release();
+	}
+
+	osg::Texture2D* makeProceduralTexture(int index) {
+		auto texture = osgx::make_ref<osg::Texture2D>();
+		texture->setName("ProceduralTexture_" + std::to_string(index));
+		texture->setImage(makeProceduralImage(index));
+		texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+		texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+		texture->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+		texture->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+
+		return texture.release();
+	}
+}
 
 int main(int argc, char** argv) {
 	osgViewer::Viewer viewer;
@@ -40,6 +79,12 @@ int main(int argc, char** argv) {
 		);
 
 		sphere->setName("Sphere_x" + std::to_string(static_cast<int>(detailRatios[i])));
+		sphere->getOrCreateStateSet()->setTextureAttributeAndModes(
+			0,
+			makeProceduralTexture(i),
+			osg::StateAttribute::ON
+		);
+
 		geode->addDrawable(sphere);
 		xform->addChild(geode);
 		root->addChild(xform);
@@ -55,6 +100,7 @@ int main(int argc, char** argv) {
 
 	gui->addStatsSection();
 	gui->addProfilerSection(root);
+	gui->addTextureSection(root);
 
 	// Optional: append app-specific sections below the built-in ones.
 	gui->addSection("My App", [](osg::RenderInfo&) {

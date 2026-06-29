@@ -8,6 +8,8 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Drawable>
 #include <osg/Camera>
 #include <osg/Stats>
+#include <osg/Texture2D>
+#include <osg/Texture2DArray>
 #include <osgUtil/CullVisitor>
 #include <osgViewer/Viewer>
 
@@ -19,6 +21,8 @@ OSGX_ENABLE_WARNINGS
 #endif
 
 #include <unordered_map>
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <sstream>
 
@@ -1205,6 +1209,211 @@ struct Options {
 	bool showFrameInfo = true;
 };
 
+inline void drawTexture2D(
+	osg::Texture2D* texture,
+	osg::RenderInfo& ri,
+	unsigned int width = 0,
+	unsigned int height = 0
+) {
+	if(!texture || !ri.getState()) return;
+
+	texture->apply(*ri.getState());
+
+	unsigned int w = texture->getTextureWidth();
+	unsigned int h = texture->getTextureHeight();
+
+	if((w == 0 || h == 0) && texture->getImage()) {
+		w = static_cast<unsigned int>(texture->getImage()->s());
+		h = static_cast<unsigned int>(texture->getImage()->t());
+	}
+
+	if(w == 0 || h == 0) {
+		ImGui::TextDisabled("Texture has no size.");
+		return;
+	}
+
+	const double aspect = static_cast<double>(w) / static_cast<double>(h);
+
+	if(width != 0 && height != 0) {
+		w = width;
+		h = height;
+	}
+	else if(width != 0) {
+		w = width;
+		h = static_cast<unsigned int>(static_cast<double>(w) / aspect);
+	}
+	else if(height != 0) {
+		h = height;
+		w = static_cast<unsigned int>(static_cast<double>(h) * aspect);
+	}
+
+	auto* textureObject = texture->getTextureObject(ri.getState()->getContextID());
+	if(!textureObject) {
+		ImGui::TextDisabled("Texture object unavailable.");
+		return;
+	}
+
+	const bool flip = texture->getImage()
+		&& texture->getImage()->getOrigin() == osg::Image::TOP_LEFT
+	;
+
+	ImGui::Image(
+		reinterpret_cast<ImTextureID>(static_cast<std::intptr_t>(textureObject->id())),
+		ImVec2(static_cast<float>(w), static_cast<float>(h)),
+		ImVec2(0.0f, flip ? 0.0f : 1.0f),
+		ImVec2(1.0f, flip ? 1.0f : 0.0f),
+		ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+		ImVec4(1.0f, 1.0f, 0.0f, 1.0f)
+	);
+}
+
+// Texture2DArray cannot be sampled by ImGui's sampler2D shader, so we display
+// metadata only: dimensions, layer count, and GL object ID.
+inline void drawTexture2DArray(
+	osg::Texture2DArray* texture,
+	osg::RenderInfo& ri,
+	unsigned int /*thumbSize*/ = 0
+) {
+	if(!texture || !ri.getState()) return;
+
+	texture->apply(*ri.getState());
+
+	const int w = texture->getTextureWidth();
+	const int h = texture->getTextureHeight();
+	const int d = texture->getTextureDepth();
+	const auto* obj = texture->getTextureObject(ri.getState()->getContextID());
+
+	if(w == 0 || h == 0) {
+		ImGui::TextDisabled("Array texture has no size.");
+		return;
+	}
+
+	if(!obj) {
+		ImGui::TextDisabled("Array texture object unavailable.");
+		return;
+	}
+
+	ImGui::Text("%dx%d, %d layer%s  (GL id %u)", w, h, d, d == 1 ? "" : "s", obj->id());
+	ImGui::TextDisabled("(array: thumbnail not supported)");
+}
+
+// Scene texture browser. Discovers Texture2D and Texture2DArray attributes on
+// node StateSets. Texture2D entries are shown as thumbnails; Texture2DArray
+// entries show metadata only (GL_TEXTURE_2D_ARRAY is incompatible with ImGui's
+// sampler2D shader). All display goes through live GL texture objects.
+class TextureSection {
+public:
+	TextureSection(osgViewer::Viewer& viewer, osg::Node* root = nullptr):
+		_viewer(viewer), _root(root) {}
+
+	void operator()(osg::RenderInfo& ri) {
+		if(!_scanned) refresh(ri);
+
+		if(ImGui::Button("Refresh")) refresh(ri);
+
+		ImGui::SameLine();
+		ImGui::Text("Found %d textures", static_cast<int>(_textures.size()));
+
+		ImGui::SliderFloat("Thumbnail size", &_thumbnailSize, 32.0f, 256.0f, "%.0f px");
+
+		if(_textures.empty()) {
+			ImGui::TextDisabled("No texture attributes found.");
+			return;
+		}
+
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float windowVisibleX2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+
+		for(std::size_t i = 0; i < _textures.size(); ++i) {
+			auto* texture = _textures[i].get();
+			const std::string name = texture->getName().empty() ? "Texture" : texture->getName();
+
+			ImGui::PushID(texture);
+			ImGui::BeginGroup();
+			ImGui::TextUnformatted(name.c_str());
+
+			if(auto* t2d = dynamic_cast<osg::Texture2D*>(texture)) {
+				drawTexture2D(t2d, ri, static_cast<unsigned int>(_thumbnailSize));
+			}
+			else if(auto* t2da = dynamic_cast<osg::Texture2DArray*>(texture)) {
+				drawTexture2DArray(t2da, ri, static_cast<unsigned int>(_thumbnailSize));
+			}
+			else {
+				ImGui::TextDisabled("(unsupported type)");
+			}
+
+			ImGui::EndGroup();
+
+			if(ImGui::IsItemHovered()) {
+				ImGui::BeginTooltip();
+				ImGui::Text("%dx%d", texture->getTextureWidth(), texture->getTextureHeight());
+
+				if(auto* t2d = dynamic_cast<osg::Texture2D*>(texture)) {
+					if(auto* image = t2d->getImage()) {
+						if(!image->getFileName().empty()) {
+							ImGui::TextUnformatted(image->getFileName().c_str());
+						}
+					}
+				}
+
+				ImGui::EndTooltip();
+			}
+
+			const float lastX2 = ImGui::GetItemRectMax().x;
+			const float nextX2 = lastX2 + style.ItemSpacing.x + _thumbnailSize;
+			if(i + 1 < _textures.size() && nextX2 < windowVisibleX2) ImGui::SameLine();
+
+			ImGui::PopID();
+		}
+	}
+
+	void refresh(osg::RenderInfo& ri) {
+		_textures.clear();
+		_scanned = true;
+
+		osg::Node* root = _root.get();
+		if(!root) root = _viewer.getSceneData();
+		if(!root) root = ri.getCurrentCamera();
+		if(!root) return;
+
+		FindTexturesVisitor visitor;
+		root->accept(visitor);
+		_textures = std::move(visitor.textures);
+	}
+
+private:
+	class FindTexturesVisitor: public osg::NodeVisitor {
+	public:
+		FindTexturesVisitor():
+			osg::NodeVisitor(TRAVERSE_ALL_CHILDREN) {}
+
+		void apply(osg::Node& node) override {
+			if(auto* stateset = node.getStateSet()) {
+				const auto& textureAttributes = stateset->getTextureAttributeList();
+				for(unsigned int unit = 0; unit < textureAttributes.size(); ++unit) {
+					auto* texture = dynamic_cast<osg::Texture*>(
+						stateset->getTextureAttribute(unit, osg::StateAttribute::TEXTURE)
+					);
+
+					if(texture && std::find(textures.begin(), textures.end(), texture) == textures.end()) {
+						textures.emplace_back(texture);
+					}
+				}
+			}
+
+			traverse(node);
+		}
+
+		std::vector<osg::ref_ptr<osg::Texture>> textures;
+	};
+
+	osgViewer::Viewer& _viewer;
+	osg::observer_ptr<osg::Node> _root;
+	std::vector<osg::ref_ptr<osg::Texture>> _textures;
+	float _thumbnailSize = 64.0f;
+	bool _scanned = false;
+};
+
 // ImGui front-end for OSG's aggregate osg::Stats counters. This mirrors the
 // useful parts of osgViewer::StatsHandler without installing its HUD camera.
 class StatsSection {
@@ -1450,6 +1659,14 @@ public:
 
 	void addStatsSection() {
 		addSection("Stats", StatsSection(_viewer));
+	}
+
+	void addTextureSection(osg::Node* root) {
+		addSection("Textures", TextureSection(_viewer, root));
+	}
+
+	void addTextureSection() {
+		addSection("Textures", TextureSection(_viewer));
 	}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
