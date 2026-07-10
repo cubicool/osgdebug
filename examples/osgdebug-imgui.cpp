@@ -17,16 +17,25 @@ OSGX_ENABLE_WARNINGS
 
 namespace {
 	osg::Image* makeProceduralImage(int index) {
-		constexpr int width = 64;
-		constexpr int height = 64;
+		constexpr std::size_t width = 64;
+		constexpr std::size_t height = 64;
 
 		auto image = osgx::make_ref<osg::Image>();
 		image->setName("ProceduralImage_" + std::to_string(index));
-		image->allocateImage(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+		image->allocateImage(
+			static_cast<int>(width),
+			static_cast<int>(height),
+			1,
+			GL_RGBA,
+			GL_UNSIGNED_BYTE
+		);
 
-		for(int y = 0; y < height; ++y) {
-			for(int x = 0; x < width; ++x) {
-				auto* px = image->data(x, y);
+		for(std::size_t y = 0; y < height; ++y) {
+			for(std::size_t x = 0; x < width; ++x) {
+				auto* px = image->data(
+					static_cast<unsigned int>(x),
+					static_cast<unsigned int>(y)
+				);
 				const bool checker = ((x / 8) + (y / 8)) % 2 == 0;
 
 				px[0] = static_cast<unsigned char>((x * 255) / (width - 1));

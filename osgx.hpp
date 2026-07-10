@@ -3062,16 +3062,16 @@ struct SH9 {
 inline SH9 computeSH(const osg::Image* img) {
 	SH9 sh;
 
-	const int W = img->s();
-	const int H = img->t();
+	const auto W = static_cast<std::size_t>(std::max(img->s(), 0));
+	const auto H = static_cast<std::size_t>(std::max(img->t(), 0));
 
-	for(int y = 0; y < H; y++) {
+	for(std::size_t y = 0; y < H; y++) {
 		const double theta = (double(y) + 0.5) / double(H) * osg::PI;
 		const double sinTheta = std::sin(theta);
 		const double cosTheta = std::cos(theta);
 		const double dOmega = sinTheta * (osg::PI / double(H)) * (2.0 * osg::PI / double(W));
 
-		for(int x = 0; x < W; x++) {
+		for(std::size_t x = 0; x < W; x++) {
 			const double phi = (double(x) + 0.5) / double(W) * 2.0 * osg::PI;
 			const double sx = sinTheta * std::cos(phi);
 			const double sy = sinTheta * std::sin(phi);
@@ -3101,7 +3101,10 @@ inline SH9 computeSH(const osg::Image* img) {
 				osg::PI / 4.0
 			};
 
-			const osg::Vec4f c = img->getColor(x, y);
+			const osg::Vec4f c = img->getColor(
+				static_cast<unsigned int>(x),
+				static_cast<unsigned int>(y)
+			);
 
 			for(int i = 0; i < 9; i++) {
 				const double w = Y[i] * A[i] * dOmega;

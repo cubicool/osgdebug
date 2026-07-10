@@ -1168,7 +1168,7 @@ private:
 		auto* camera = getCamera();
 
 		auto frameAnnotation = osgx::make_ref<AnnotationGroup>(
-			0,
+			0u,
 			"Frame",
 			Source::APPLICATION,
 			true
@@ -1219,12 +1219,12 @@ inline void drawTexture2D(
 
 	texture->apply(*ri.getState());
 
-	unsigned int w = texture->getTextureWidth();
-	unsigned int h = texture->getTextureHeight();
+	auto w = static_cast<std::size_t>(std::max(texture->getTextureWidth(), 0));
+	auto h = static_cast<std::size_t>(std::max(texture->getTextureHeight(), 0));
 
 	if((w == 0 || h == 0) && texture->getImage()) {
-		w = static_cast<unsigned int>(texture->getImage()->s());
-		h = static_cast<unsigned int>(texture->getImage()->t());
+		w = static_cast<std::size_t>(std::max(texture->getImage()->s(), 0));
+		h = static_cast<std::size_t>(std::max(texture->getImage()->t(), 0));
 	}
 
 	if(w == 0 || h == 0) {
