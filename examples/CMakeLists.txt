@@ -9,6 +9,7 @@ set(OSGDEBUG_EXAMPLES
 	"picking"
 	"viewer"
 	"visitor"
+	"grid"
 )
 
 foreach(example IN LISTS OSGDEBUG_EXAMPLES)

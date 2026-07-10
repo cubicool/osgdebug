@@ -17,7 +17,7 @@ find_package(OpenSceneGraph REQUIRED
 )
 
 find_package(Python3 COMPONENTS Interpreter Development OPTIONAL)
-add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
+# add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
 
 if(isMultiConfig)
 	if(NOT "Asan" IN_LIST CMAKE_CONFIGURATION_TYPES)
@@ -103,6 +103,9 @@ add_subdirectory("utils")
 # add_subdirectory("plugins") # TODO: Disabled
 
 if(Python3_Development_FOUND)
+	# TODO: Make this an option too!
+	add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
+
 	pybind11_add_module(osgDebug_python "ext/osgDebug-python.cpp")
 
 	set_target_properties(osgDebug_python PROPERTIES OUTPUT_NAME "osgDebug")
