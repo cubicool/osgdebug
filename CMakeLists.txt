@@ -122,4 +122,21 @@ if(Python3_Development_FOUND)
 	target_compile_features(osgDebug_python PUBLIC cxx_std_20)
 	# target_compile_options(osgDebug_python PRIVATE ${SLUGHORN_COMPILE_OPTIONS})
 	set_target_properties(osgDebug_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+	# Same ImGui detection as examples/CMakeLists.txt (pkg_check_modules is
+	# subdirectory-scoped, so it has to be repeated here rather than reused).
+	find_package(PkgConfig)
+
+	if(PkgConfig_FOUND)
+		pkg_check_modules(IMGUI imgui)
+	endif()
+
+	if(IMGUI_FOUND)
+		find_package(OpenGL REQUIRED)
+		target_compile_definitions(osgDebug_python PRIVATE OSGDEBUG_IMGUI)
+		target_include_directories(osgDebug_python PRIVATE ${IMGUI_INCLUDE_DIRS})
+		target_link_libraries(osgDebug_python PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
+	else()
+		message(STATUS "ImGui not found via pkg-config; osgDebug.imgui Python bindings will be unavailable")
+	endif()
 endif()

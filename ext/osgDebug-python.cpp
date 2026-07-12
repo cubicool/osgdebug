@@ -6,6 +6,8 @@
 
 #include "pybind11x.hpp"
 
+#include <pybind11/functional.h>
+
 namespace py = pybind11;
 namespace pyx = pybind11x;
 
@@ -138,6 +140,57 @@ PYBIND11_MODULE(osgDebug, m) {
 			return false; // don't suppress Python exceptions
 		})
 	;
+
+	// osgDebug::imgui -- deliberately NOT a general ImGui wrapper (that's pyimgui's
+	// job elsewhere). Just enough to build quick debugging knobs inside a
+	// Widget::addSection() callback: a handful of stateless functions returning
+	// (changed, value) tuples, since Python floats/bools aren't mutable
+	// references the way ImGui's C++ &value out-params expect.
+#ifdef OSGDEBUG_IMGUI
+	auto m_imgui = m.def_submodule("imgui", "osgDebug::imgui namespace");
+
+	py::class_<
+		osgDebug::imgui::Widget,
+		osgGA::GUIEventHandler,
+		osg::ref_ptr<osgDebug::imgui::Widget>
+	>(m_imgui, "Widget")
+		.def(
+			py::init<osgViewer::Viewer&, osg::Camera*>(),
+			"viewer"_a,
+			"draw_camera"_a = nullptr
+		)
+		.def("addSection", &osgDebug::imgui::Widget::addSection, "label"_a, "fn"_a)
+		.def("addStatsSection", &osgDebug::imgui::Widget::addStatsSection)
+		.def("addProfilerSection", &osgDebug::imgui::Widget::addProfilerSection, "sceneRoot"_a)
+		.def(
+			"addTextureSection",
+			py::overload_cast<osg::Node*>(&osgDebug::imgui::Widget::addTextureSection),
+			"root"_a
+		)
+		.def(
+			"addTextureSection",
+			py::overload_cast<>(&osgDebug::imgui::Widget::addTextureSection)
+		)
+	;
+
+	m_imgui
+		.def(
+			"slider_float",
+			[](const std::string& label, float value, float min, float max, const char* format) {
+				bool changed = ImGui::SliderFloat(label.c_str(), &value, min, max, format);
+
+				return py::make_tuple(changed, value);
+			},
+			"label"_a,
+			"value"_a,
+			"min"_a,
+			"max"_a,
+			"format"_a = "%.3f"
+		)
+		.def("text", [](const std::string& s) { ImGui::TextUnformatted(s.c_str()); }, "text"_a)
+		.def("separator", []() { ImGui::Separator(); })
+	;
+#endif // OSGDEBUG_IMGUI
 
 #if 0
 	m.doc() = "osgDebug - OpenSceneGraph + GL_KHR_debug (https://github.com/cubicool/osgDebug)";

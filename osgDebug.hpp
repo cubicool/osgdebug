@@ -1635,8 +1635,18 @@ private:
 // viewer's event handler list. Sections are drawn in order inside one window.
 class Widget: public osgGA::GUIEventHandler {
 public:
-	Widget(osgViewer::Viewer& viewer, Options opts = {}):
-		_viewer(viewer), _opts(opts)
+	// drawCamera lets an app pin the ImGui NewFrame/Render pair to a specific
+	// camera instead of the default master-camera/slave-0 guess (see handle()
+	// below). Needed by deferred-rendering apps with their own downstream
+	// POST_RENDER compositing camera nested under the scene graph (not a View
+	// slave) -- that camera draws AFTER the master camera's own
+	// PostDrawCallback, so ImGui's draw would render then be immediately
+	// overwritten by the later fullscreen composite, while its mouse-capture
+	// bookkeeping (computed in NewFrame(), independent of what's actually
+	// still visible on screen) stays live -- an invisible rectangle that eats
+	// mouse input. Pass that camera explicitly to fix it.
+	Widget(osgViewer::Viewer& viewer, osg::Camera* drawCamera = nullptr, Options opts = {}):
+		_viewer(viewer), _opts(opts), _drawCamera(drawCamera)
 	{
 		if(viewer.getThreadingModel() != osgViewer::Viewer::SingleThreaded) {
 			osg::notify(osg::WARN)
@@ -1671,12 +1681,18 @@ public:
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
 		if(!_initialized) {
-			if(auto* view = aa.asView()) {
-				auto* cam = view->getNumSlaves() > 0
-					? view->getSlave(0)._camera.get()
-					: view->getCamera()
-				;
+			osg::Camera* cam = _drawCamera.get();
 
+			if(!cam) {
+				if(auto* view = aa.asView()) {
+					cam = view->getNumSlaves() > 0
+						? view->getSlave(0)._camera.get()
+						: view->getCamera()
+					;
+				}
+			}
+
+			if(cam) {
 				cam->setPreDrawCallback(new PreDraw(*this));
 				cam->setPostDrawCallback(new PostDraw(*this));
 
@@ -1755,6 +1771,7 @@ public:
 private:
 	osgViewer::Viewer& _viewer;
 	Options _opts;
+	osg::observer_ptr<osg::Camera> _drawCamera;
 	bool _initialized = false;
 	bool _firstFrame = true;
 	double _time = 0.0;
@@ -1770,7 +1787,15 @@ private:
 
 		ImGui_ImplOpenGL3_NewFrame();
 
-		auto* traits = ri.getCurrentCamera()->getGraphicsContext()->getTraits();
+		// A nested (non-slave) drawCamera -- e.g. an app's own downstream
+		// POST_RENDER compositing camera, see the Widget constructor comment --
+		// generally never gets an explicit GraphicsContext of its own; fall back
+		// to the viewer's master camera, which always has the real one.
+		auto* gc = ri.getCurrentCamera()->getGraphicsContext();
+
+		if(!gc) gc = _viewer.getCamera()->getGraphicsContext();
+
+		auto* traits = gc->getTraits();
 
 		ImGuiIO& io = ImGui::GetIO();
 
