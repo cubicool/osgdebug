@@ -1203,10 +1203,20 @@ private:
 #ifdef OSGDEBUG_IMGUI
 namespace imgui {
 
-// Controls what the Widget window shows. Future home for docking, title, etc.
+// The system imgui package (pkg-config `imgui`) isn't built from the docking
+// branch (no IMGUI_HAS_DOCK/DockSpaceOverViewport), so there's no drag-to-dock
+// here the way osgEarth's ImGuiEventHandler does it with its own vendored
+// docking-branch imgui.h. Dock::LEFT/RIGHT instead just pins the "osgDebug"
+// window to that edge, full viewport height, every frame -- no dragging, but
+// no new build dependency either.
+enum class Dock { NONE, LEFT, RIGHT };
+
+// Controls what the Widget window shows.
 struct Options {
 	bool showGPUInfo = true;
 	bool showFrameInfo = true;
+	Dock dock = Dock::NONE;
+	float dockWidth = 340.0f;
 };
 
 inline void drawTexture2D(
@@ -1814,9 +1824,23 @@ private:
 	}
 
 	void render(osg::RenderInfo& ri) {
-		ImGui::SetNextWindowSize(ImVec2(600, 320), ImGuiCond_FirstUseEver);
+		ImGuiWindowFlags flags = ImGuiWindowFlags_None;
 
-		if(ImGui::Begin("osgDebug")) {
+		if(_opts.dock == Dock::NONE) {
+			ImGui::SetNextWindowSize(ImVec2(600, 320), ImGuiCond_FirstUseEver);
+		}
+
+		else {
+			const ImGuiIO& io = ImGui::GetIO();
+			float x = _opts.dock == Dock::LEFT ? 0.0f : io.DisplaySize.x - _opts.dockWidth;
+
+			ImGui::SetNextWindowPos(ImVec2(x, 0.0f), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(_opts.dockWidth, io.DisplaySize.y), ImGuiCond_Always);
+
+			flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+		}
+
+		if(ImGui::Begin("osgDebug", nullptr, flags)) {
 			if(_opts.showGPUInfo) {
 				static const auto* glRenderer = glGetString(GL_RENDERER);
 				static const auto* glVersion = glGetString(GL_VERSION);
@@ -1865,7 +1889,7 @@ private:
 	};
 };
 
-} // namespace imgui
+}
 #endif
 
 }

@@ -149,15 +149,31 @@ PYBIND11_MODULE(osgDebug, m) {
 #ifdef OSGDEBUG_IMGUI
 	auto m_imgui = m.def_submodule("imgui", "osgDebug::imgui namespace");
 
+	py::enum_<osgDebug::imgui::Dock>(m_imgui, "Dock")
+		.value("NONE", osgDebug::imgui::Dock::NONE)
+		.value("LEFT", osgDebug::imgui::Dock::LEFT)
+		.value("RIGHT", osgDebug::imgui::Dock::RIGHT)
+		.export_values()
+	;
+
+	py::class_<osgDebug::imgui::Options>(m_imgui, "Options")
+		.def(py::init<>())
+		.def_readwrite("show_gpu_info", &osgDebug::imgui::Options::showGPUInfo)
+		.def_readwrite("show_frame_info", &osgDebug::imgui::Options::showFrameInfo)
+		.def_readwrite("dock", &osgDebug::imgui::Options::dock)
+		.def_readwrite("dock_width", &osgDebug::imgui::Options::dockWidth)
+	;
+
 	py::class_<
 		osgDebug::imgui::Widget,
 		osgGA::GUIEventHandler,
 		osg::ref_ptr<osgDebug::imgui::Widget>
 	>(m_imgui, "Widget")
 		.def(
-			py::init<osgViewer::Viewer&, osg::Camera*>(),
+			py::init<osgViewer::Viewer&, osg::Camera*, osgDebug::imgui::Options>(),
 			"viewer"_a,
-			"draw_camera"_a = nullptr
+			"draw_camera"_a = nullptr,
+			"options"_a = osgDebug::imgui::Options()
 		)
 		.def("addSection", &osgDebug::imgui::Widget::addSection, "label"_a, "fn"_a)
 		.def("addStatsSection", &osgDebug::imgui::Widget::addStatsSection)
@@ -177,6 +193,12 @@ PYBIND11_MODULE(osgDebug, m) {
 		.def(
 			"slider_float",
 			[](const std::string& label, float value, float min, float max, const char* format) {
+				// Narrower than ImGui's own default item width -- Widget is meant to
+				// live in a fairly narrow docked sidebar (see Options::dock), where the
+				// label text (often several words, e.g. "Light Orbit Radius") needs
+				// more room than the slider bar itself does.
+				ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.3f);
+
 				bool changed = ImGui::SliderFloat(label.c_str(), &value, min, max, format);
 
 				return py::make_tuple(changed, value);
@@ -189,6 +211,35 @@ PYBIND11_MODULE(osgDebug, m) {
 		)
 		.def("text", [](const std::string& s) { ImGui::TextUnformatted(s.c_str()); }, "text"_a)
 		.def("separator", []() { ImGui::Separator(); })
+		.def(
+			"checkbox",
+			[](const std::string& label, bool value) {
+				bool changed = ImGui::Checkbox(label.c_str(), &value);
+
+				return py::make_tuple(changed, value);
+			},
+			"label"_a,
+			"value"_a
+		)
+		.def(
+			"radio_group",
+			[](int value, const std::vector<std::string>& labels, bool sameLine) {
+				bool changed = false;
+
+				for(std::size_t i = 0; i < labels.size(); i++) {
+					int v = static_cast<int>(i);
+
+					if(ImGui::RadioButton(labels[i].c_str(), &value, v)) changed = true;
+
+					if(sameLine && i + 1 < labels.size()) ImGui::SameLine();
+				}
+
+				return py::make_tuple(changed, value);
+			},
+			"value"_a,
+			"labels"_a,
+			"same_line"_a = true
+		)
 	;
 #endif // OSGDEBUG_IMGUI
 
