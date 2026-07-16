@@ -166,30 +166,70 @@ PYBIND11_MODULE(osgDebug, m) {
 		.def_readwrite("dock_width", &osgDebug::imgui::Options::dockWidth)
 	;
 
+	// A growable options bag for addSection() -- expected to grow (a size hint
+	// beyond expand/constrain, tooltips, etc.), so this is keyword-constructible
+	// from Python rather than adding more positional args to addSection itself.
+	py::class_<osgDebug::imgui::SectionOptions>(m_imgui, "SectionOptions")
+		.def(
+			py::init([](bool expand, bool defaultOpen) {
+				osgDebug::imgui::SectionOptions opts;
+
+				opts.expand = expand;
+				opts.defaultOpen = defaultOpen;
+
+				return opts;
+			}),
+			"expand"_a = false,
+			"default_open"_a = true
+		)
+		.def_readwrite("expand", &osgDebug::imgui::SectionOptions::expand)
+		.def_readwrite("default_open", &osgDebug::imgui::SectionOptions::defaultOpen)
+	;
+
 	py::class_<
 		osgDebug::imgui::Widget,
 		osgGA::GUIEventHandler,
 		osg::ref_ptr<osgDebug::imgui::Widget>
 	>(m_imgui, "Widget")
 		.def(
-			py::init<osgViewer::Viewer&, osg::Camera*, osgDebug::imgui::Options>(),
+			// osgViewer::View, not the full Viewer -- Widget only needs getCamera()
+			// (cached once) and getEventHandlers(); a Python osgViewer::Viewer still
+			// works here since it upcasts (View is separately registered above and
+			// Viewer's py::class_ lists it as a base).
+			py::init<osgViewer::View&, osg::Camera*, osgDebug::imgui::Options>(),
 			"viewer"_a,
 			"draw_camera"_a = nullptr,
 			"options"_a = osgDebug::imgui::Options()
 		)
-		.def("addSection", &osgDebug::imgui::Widget::addSection, "label"_a, "fn"_a)
+		.def(
+			"addSection",
+			&osgDebug::imgui::Widget::addSection,
+			"label"_a,
+			"fn"_a,
+			"options"_a = osgDebug::imgui::SectionOptions()
+		)
 		.def("removeSection", &osgDebug::imgui::Widget::removeSection, "label"_a)
 		.def("clearSections", &osgDebug::imgui::Widget::clearSections)
-		.def("addStatsSection", &osgDebug::imgui::Widget::addStatsSection)
-		.def("addProfilerSection", &osgDebug::imgui::Widget::addProfilerSection, "sceneRoot"_a)
+		// Widget no longer holds a Viewer/View reference of its own (see the C++
+		// class comment), so these now take one explicitly instead of reusing
+		// whatever Widget was constructed with.
+		.def("addStatsSection", &osgDebug::imgui::Widget::addStatsSection, "viewer"_a)
+		.def(
+			"addProfilerSection",
+			&osgDebug::imgui::Widget::addProfilerSection,
+			"view"_a,
+			"sceneRoot"_a
+		)
 		.def(
 			"addTextureSection",
-			py::overload_cast<osg::Node*>(&osgDebug::imgui::Widget::addTextureSection),
+			py::overload_cast<osgViewer::View&, osg::Node*>(&osgDebug::imgui::Widget::addTextureSection),
+			"view"_a,
 			"root"_a
 		)
 		.def(
 			"addTextureSection",
-			py::overload_cast<>(&osgDebug::imgui::Widget::addTextureSection)
+			py::overload_cast<osgViewer::View&>(&osgDebug::imgui::Widget::addTextureSection),
+			"view"_a
 		)
 	;
 

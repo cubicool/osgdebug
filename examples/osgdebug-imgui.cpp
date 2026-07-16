@@ -64,6 +64,12 @@ namespace {
 int main(int argc, char** argv) {
 	osgViewer::Viewer viewer;
 
+	// osgDebug::imgui::Widget no longer checks/forces this itself (see its class
+	// comment) -- Dear ImGui's single global context isn't safe to touch from more
+	// than one OSG draw thread, so this is the caller's responsibility now, same
+	// as osgEarth's own ImGuiEventHandler.
+	viewer.setThreadingModel(osgViewer::Viewer::SingleThreaded);
+
 	// Build a small scene: three named spheres at different X positions.
 	auto root = osgx::make_nref<osg::Group>("Root");
 
@@ -103,13 +109,13 @@ int main(int argc, char** argv) {
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 	viewer.addEventHandler(new osgGA::StateSetManipulator(viewer.getCamera()->getOrCreateStateSet()));
 
-	// Widget constructor enforces SingleThreaded and pushes itself to the front
-	// of the viewer's event handler list automatically.
+	// Widget pushes itself to the front of the viewer's event handler list
+	// automatically (SingleThreaded is our responsibility now, set above).
 	auto* gui = new osgDebug::imgui::Widget(viewer);
 
-	gui->addStatsSection();
-	gui->addProfilerSection(root);
-	gui->addTextureSection(root);
+	gui->addStatsSection(viewer);
+	gui->addProfilerSection(viewer, root);
+	gui->addTextureSection(viewer, root);
 
 	// Optional: append app-specific sections below the built-in ones.
 	gui->addSection("My App", [](osg::RenderInfo&) {

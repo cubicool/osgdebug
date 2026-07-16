@@ -37,6 +37,23 @@ struct Options {
 	float dockWidth = 340.0f;
 };
 
+// Per-section knobs for Widget::addSection() -- a growable bag of named options
+// rather than more positional bools, since this is expected to grow (a size
+// hint beyond expand/constrain, tooltips, etc.). Public/namespace-scope on
+// purpose: this is what a caller constructs directly (Python included), unlike
+// Widget's own private Section storage struct, which just holds one of these.
+struct SectionOptions {
+	// true: divide up whatever vertical space is left over after all
+	// non-expanding sections have drawn at their natural height (see
+	// Widget::render()). Meant for the rare section that actually wants to
+	// grow (Profiler's scrolling table), not a general layout system.
+	bool expand = false;
+
+	// true: CollapsingHeader starts open. false: starts collapsed -- e.g.
+	// Stats, which is verbose and mostly a placeholder for better future work.
+	bool defaultOpen = true;
+};
+
 inline void drawTexture2D(
 	osg::Texture2D* texture,
 	osg::RenderInfo& ri,
@@ -138,8 +155,15 @@ inline void drawTexture2DArray(
 // sampler2D shader). All display goes through live GL texture objects.
 class TextureSection {
 public:
-	TextureSection(osgViewer::Viewer& viewer, osg::Node* root = nullptr):
-	_viewer(viewer),
+	// Takes osgViewer::View (not the full Viewer) -- this is the only Section that
+	// genuinely needs a live reference held across frames, because getSceneData()
+	// must reflect whatever the scene root CURRENTLY is (it can change after this
+	// is constructed -- see the async-load pattern where the scene starts empty
+	// and a real model attaches seconds later). Everything else this class could
+	// possibly want is either one-time (nothing here is) or cacheable, so View is
+	// the narrowest type that still lets refresh() ask that question live.
+	TextureSection(osgViewer::View& view, osg::Node* root = nullptr):
+	_view(&view),
 	_root(root) {}
 
 	void operator()(osg::RenderInfo& ri) {
@@ -213,7 +237,7 @@ public:
 
 		osg::Node* root = _root.get();
 
-		if(!root) root = _viewer.getSceneData();
+		if(!root && _view.valid()) root = _view->getSceneData();
 		if(!root) root = ri.getCurrentCamera();
 		if(!root) return;
 
@@ -251,7 +275,7 @@ private:
 		std::vector<osg::ref_ptr<osg::Texture>> textures;
 	};
 
-	osgViewer::Viewer& _viewer;
+	osg::observer_ptr<osgViewer::View> _view;
 	osg::observer_ptr<osg::Node> _root;
 	std::vector<osg::ref_ptr<osg::Texture>> _textures;
 
@@ -263,17 +287,23 @@ private:
 // useful parts of osgViewer::StatsHandler without installing its HUD camera.
 class StatsSection {
 public:
+	// osgViewer::Viewer& is only a CONSTRUCTOR parameter, never stored -- both
+	// getViewerStats() and getCameras() are ViewerBase-only (not on osg::View), but
+	// both are one-time setup here, and the osg::Stats*/master osg::Camera* they
+	// return are stable for the Viewer's whole lifetime, so they're captured once
+	// below instead of re-asked from a held Viewer reference every frame.
 	explicit StatsSection(osgViewer::Viewer& viewer):
-	_viewer(viewer) {
-		if(auto* stats = _viewer.getViewerStats()) {
-			stats->collectStats("frame_rate", true);
-			stats->collectStats("event", true);
-			stats->collectStats("update", true);
-			stats->collectStats("scene", true);
+	_viewerStats(viewer.getViewerStats()),
+	_masterCamera(viewer.getCamera()) {
+		if(_viewerStats.valid()) {
+			_viewerStats->collectStats("frame_rate", true);
+			_viewerStats->collectStats("event", true);
+			_viewerStats->collectStats("update", true);
+			_viewerStats->collectStats("scene", true);
 		}
 
 		osgViewer::ViewerBase::Cameras cameras;
-		_viewer.getCameras(cameras);
+		viewer.getCameras(cameras);
 
 		for(auto* camera : cameras) {
 			if(auto* stats = camera ? camera->getStats() : nullptr) {
@@ -285,8 +315,8 @@ public:
 	}
 
 	void operator()(osg::RenderInfo& ri) const {
-		auto* viewerStats = _viewer.getViewerStats();
-		auto* camera = ri.getCurrentCamera() ? ri.getCurrentCamera() : _viewer.getCamera();
+		auto* viewerStats = _viewerStats.get();
+		auto* camera = ri.getCurrentCamera() ? ri.getCurrentCamera() : _masterCamera.get();
 		auto* cameraStats = camera ? camera->getStats() : nullptr;
 
 		if(!viewerStats && !cameraStats) {
@@ -337,7 +367,8 @@ public:
 	}
 
 private:
-	osgViewer::Viewer& _viewer;
+	osg::ref_ptr<osg::Stats> _viewerStats;
+	osg::observer_ptr<osg::Camera> _masterCamera;
 
 	static constexpr ImGuiTableFlags _tableFlags =
 		ImGuiTableFlags_Borders |
@@ -395,14 +426,16 @@ private:
 // Pass to Widget::addSection() or use Widget::addProfilerSection() shortcut.
 class ProfilerSection {
 public:
-	ProfilerSection(osgViewer::Viewer& viewer, osg::Node* sceneRoot) {
+	// Only ever touches view.getCamera(), transiently, right here -- nothing to
+	// hold onto afterward, so this never stored a Viewer/View reference at all.
+	ProfilerSection(osgViewer::View& view, osg::Node* sceneRoot) {
 		ProfilerVisitor<> pv;
 		sceneRoot->accept(pv);
 
 		_finalCb = new ProfilerFinalCallback<>(0);
 
 		appendCameraDrawCallback(
-			viewer.getCamera(),
+			view.getCamera(),
 			CameraDrawCallbackSlot::FINAL_DRAW,
 			_finalCb
 		);
@@ -477,8 +510,17 @@ private:
 };
 
 // Owns the ImGui lifecycle for one viewer window.
-// Constructor enforces SingleThreaded and pushes itself to the front of the
-// viewer's event handler list. Sections are drawn in order inside one window.
+// Requires the viewer already be osgViewer::Viewer::SingleThreaded (Dear ImGui's
+// single global ImGuiContext/IO state isn't safe to touch from more than one OSG
+// draw thread) -- same requirement as osgEarth's own ImGuiEventHandler, which
+// likewise leaves it entirely to the caller (see its applications/osgearth_imgui
+// example: setThreadingModel is called before the handler is ever constructed).
+// We used to check-and-force this ourselves, but that required holding a
+// ViewerBase-shaped reference for a one-time check nothing else here needs --
+// narrowing to osgViewer::View below means this class no longer even has access
+// to the threading model at all, which is the point: it's the caller's job now.
+// Pushes itself to the front of the view's event handler list. Sections are
+// drawn in order inside one window.
 class Widget: public osgGA::GUIEventHandler {
 public:
 	// drawCamera lets an app pin the ImGui NewFrame/Render pair to a specific
@@ -491,25 +533,15 @@ public:
 	// bookkeeping (computed in NewFrame(), independent of what's actually
 	// still visible on screen) stays live -- an invisible rectangle that eats
 	// mouse input. Pass that camera explicitly to fix it.
-	Widget(osgViewer::Viewer& viewer, osg::Camera* drawCamera=nullptr, Options opts={}):
-	_viewer(viewer),
+	Widget(osgViewer::View& view, osg::Camera* drawCamera=nullptr, Options opts={}):
+	_masterCamera(view.getCamera()),
 	_opts(opts),
 	_drawCamera(drawCamera) {
-		// TODO: Was this inspired by osgEarth3's implementation?
-		if(viewer.getThreadingModel() != osgViewer::Viewer::SingleThreaded) {
-			osg::notify(osg::WARN)
-				<< "osgDebug::imgui::Widget: "
-				<< "forcing viewer to SingleThreaded (required by ImGui)" << std::endl
-			;
-
-			viewer.setThreadingModel(osgViewer::Viewer::SingleThreaded);
-		}
-
-		viewer.getEventHandlers().push_front(this);
+		view.getEventHandlers().push_front(this);
 	}
 
-	void addSection(std::string label, std::function<void(osg::RenderInfo&)> fn) {
-		_sections.emplace_back(std::move(label), std::move(fn));
+	void addSection(std::string label, std::function<void(osg::RenderInfo&)> fn, SectionOptions options={}) {
+		_sections.push_back({std::move(label), std::move(fn), options});
 	}
 
 	// Removes every section matching label (there's nothing preventing duplicate
@@ -518,7 +550,7 @@ public:
 	// on this same thread via the camera's PostDrawCallback between frames, never
 	// concurrently with application code.
 	void removeSection(const std::string& label) {
-		std::erase_if(_sections, [&](const auto& section) { return section.first == label; });
+		std::erase_if(_sections, [&](const auto& section) { return section.label == label; });
 	}
 
 	// Drops every section at once -- the bin-shaped reset: rebuild whatever
@@ -527,20 +559,29 @@ public:
 		_sections.clear();
 	}
 
-	void addProfilerSection(osg::Node* sceneRoot) {
-		addSection("Profiler", ProfilerSection(_viewer, sceneRoot));
+	// These take view/viewer explicitly rather than reusing whatever Widget was
+	// constructed with -- Widget itself no longer holds one (just a cached
+	// master camera, see below), so there's nothing here to forward silently.
+	// Profiler defaults to expand=true: it's the one section whose natural
+	// content (a scrolling GPU-timing table) actually wants the room.
+	void addProfilerSection(osgViewer::View& view, osg::Node* sceneRoot) {
+		addSection("Profiler", ProfilerSection(view, sceneRoot), {.expand = true});
 	}
 
-	void addStatsSection() {
-		addSection("Stats", StatsSection(_viewer));
+	// StatsSection genuinely needs ViewerBase (getViewerStats()/getCameras() are
+	// declared there, not on osg::View), so this is the one convenience method
+	// that can't narrow below osgViewer::Viewer&. Starts collapsed -- it's
+	// verbose and mostly a placeholder for better future work.
+	void addStatsSection(osgViewer::Viewer& viewer) {
+		addSection("Stats", StatsSection(viewer), {.defaultOpen = false});
 	}
 
-	void addTextureSection(osg::Node* root) {
-		addSection("Textures", TextureSection(_viewer, root));
+	void addTextureSection(osgViewer::View& view, osg::Node* root) {
+		addSection("Textures", TextureSection(view, root));
 	}
 
-	void addTextureSection() {
-		addSection("Textures", TextureSection(_viewer));
+	void addTextureSection(osgViewer::View& view) {
+		addSection("Textures", TextureSection(view));
 	}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
@@ -633,13 +674,20 @@ public:
 	}
 
 private:
-	osgViewer::Viewer& _viewer;
+	osg::observer_ptr<osg::Camera> _masterCamera;
 	Options _opts;
 	osg::observer_ptr<osg::Camera> _drawCamera;
 	bool _initialized = false;
 	bool _firstFrame = true;
 	double _time = 0.0;
-	std::vector<std::pair<std::string, std::function<void(osg::RenderInfo&)>>> _sections;
+
+	struct Section {
+		std::string label;
+		std::function<void(osg::RenderInfo&)> fn;
+		SectionOptions options;
+	};
+
+	std::vector<Section> _sections;
 
 	void newFrame(osg::RenderInfo& ri) {
 		if(_firstFrame) {
@@ -657,7 +705,7 @@ private:
 		// to the viewer's master camera, which always has the real one.
 		auto* gc = ri.getCurrentCamera()->getGraphicsContext();
 
-		if(!gc) gc = _viewer.getCamera()->getGraphicsContext();
+		if(!gc && _masterCamera.valid()) gc = _masterCamera->getGraphicsContext();
 
 		auto* traits = gc->getTraits();
 
@@ -680,9 +728,10 @@ private:
 	void render(osg::RenderInfo& ri) {
 		ImGuiWindowFlags flags = ImGuiWindowFlags_None;
 
-		if(_opts.dock == Dock::NONE) {
-			ImGui::SetNextWindowSize(ImVec2(600, 320), ImGuiCond_FirstUseEver);
-		}
+		if(_opts.dock == Dock::NONE) ImGui::SetNextWindowSize(
+			ImVec2(600, 320),
+			ImGuiCond_FirstUseEver
+		);
 
 		else {
 			const ImGuiIO& io = ImGui::GetIO();
@@ -716,8 +765,49 @@ private:
 				ImGui::Separator();
 			}
 
-			for(auto& [label, fn] : _sections) {
-				if(ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) fn(ri);
+			// expand sections divide whatever's left AFTER constrain sections have
+			// already drawn at their natural height -- computed as "available right
+			// now / how many expand sections (including this one) are still coming,"
+			// so each gets an equal share of what's ACTUALLY left, not a naive 1/N of
+			// the original total. A collapsed expand section draws nothing (skipped
+			// entirely below, same as any collapsed header) and still decrements the
+			// counter, so it doesn't dilute the sections after it.
+			int rem = static_cast<int>(std::count_if(
+				_sections.begin(),
+				_sections.end(),
+				[](const auto& section) { return section.options.expand; }
+			));
+
+			for(auto& section : _sections) {
+				const bool open = ImGui::CollapsingHeader(
+					section.label.c_str(),
+					section.options.defaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None
+				);
+
+				if(section.options.expand) {
+					if(open) {
+						// const float share = ImGui::GetContentRegionAvail().y / static_cast<float>(rem);
+
+						ImGui::PushID(section.label.c_str());
+						ImGui::BeginChild(
+							"##expand",
+							ImVec2(
+								0.0f,
+								ImGui::GetContentRegionAvail().y / static_cast<float>(rem)
+							),
+							ImGuiChildFlags_Border
+						);
+
+						section.fn(ri);
+
+						ImGui::EndChild();
+						ImGui::PopID();
+					}
+
+					rem--;
+				}
+
+				else if(open) section.fn(ri);
 			}
 		}
 
