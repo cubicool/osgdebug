@@ -8,6 +8,8 @@
 
 #include <pybind11/functional.h>
 
+#include <cstring>
+
 namespace py = pybind11;
 namespace pyx = pybind11x;
 
@@ -176,6 +178,8 @@ PYBIND11_MODULE(osgDebug, m) {
 			"options"_a = osgDebug::imgui::Options()
 		)
 		.def("addSection", &osgDebug::imgui::Widget::addSection, "label"_a, "fn"_a)
+		.def("removeSection", &osgDebug::imgui::Widget::removeSection, "label"_a)
+		.def("clearSections", &osgDebug::imgui::Widget::clearSections)
 		.def("addStatsSection", &osgDebug::imgui::Widget::addStatsSection)
 		.def("addProfilerSection", &osgDebug::imgui::Widget::addProfilerSection, "sceneRoot"_a)
 		.def(
@@ -209,6 +213,57 @@ PYBIND11_MODULE(osgDebug, m) {
 			"max"_a,
 			"format"_a = "%.3f"
 		)
+		.def(
+			"slider_float_nudge",
+			[](
+				const std::string& label,
+				float value,
+				float min,
+				float max,
+				float stepPct,
+				const char* format
+			) {
+				// Same-width narrowing rationale as slider_float, minus the space
+				// eaten by the two nudge buttons on either side.
+				const float buttonWidth = ImGui::GetFrameHeight();
+				const float avail = ImGui::GetContentRegionAvail().x * 0.3f;
+				const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+				const float step = (max - min) * stepPct;
+
+				bool changed = false;
+
+				ImGui::PushID(label.c_str());
+
+				if(ImGui::Button("-", ImVec2(buttonWidth, 0.0f))) {
+					value = std::clamp(value - step, min, max);
+					changed = true;
+				}
+
+				ImGui::SameLine(0.0f, spacing);
+				ImGui::SetNextItemWidth(std::max(avail - 2.0f * (buttonWidth + spacing), 1.0f));
+
+				if(ImGui::SliderFloat("##slider", &value, min, max, format)) changed = true;
+
+				ImGui::SameLine(0.0f, spacing);
+
+				if(ImGui::Button("+", ImVec2(buttonWidth, 0.0f))) {
+					value = std::clamp(value + step, min, max);
+					changed = true;
+				}
+
+				ImGui::PopID();
+				ImGui::SameLine();
+				ImGui::TextUnformatted(label.c_str());
+
+				return py::make_tuple(changed, value);
+			},
+			"label"_a,
+			"value"_a,
+			"min"_a,
+			"max"_a,
+			"step_pct"_a = 0.01f,
+			"format"_a = "%.3f"
+		)
 		.def("text", [](const std::string& s) { ImGui::TextUnformatted(s.c_str()); }, "text"_a)
 		.def("separator", []() { ImGui::Separator(); })
 		.def(
@@ -220,6 +275,27 @@ PYBIND11_MODULE(osgDebug, m) {
 			},
 			"label"_a,
 			"value"_a
+		)
+		.def(
+			"input_text",
+			[](const std::string& label, std::string value, int maxLength, bool enterReturnsTrue) {
+				value.resize(static_cast<std::size_t>(maxLength));
+
+				ImGuiInputTextFlags flags = enterReturnsTrue
+					? ImGuiInputTextFlags_EnterReturnsTrue
+					: ImGuiInputTextFlags_None
+				;
+
+				bool changed = ImGui::InputText(label.c_str(), value.data(), value.size(), flags);
+
+				value.resize(std::strlen(value.c_str()));
+
+				return py::make_tuple(changed, value);
+			},
+			"label"_a,
+			"value"_a,
+			"max_length"_a = 256,
+			"enter_returns_true"_a = false
 		)
 		.def(
 			"radio_group",
