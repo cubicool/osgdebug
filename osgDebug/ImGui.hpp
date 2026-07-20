@@ -14,6 +14,7 @@ OSGX_ENABLE_WARNINGS
 
 #include <imgui.h>
 #include <backends/imgui_impl_opengl3.h>
+#include <cstring>
 #endif
 
 namespace osgDebug {
@@ -49,10 +50,115 @@ struct SectionOptions {
 	// grow (Profiler's scrolling table), not a general layout system.
 	bool expand = false;
 
-	// true: CollapsingHeader starts open. false: starts collapsed -- e.g.
-	// Stats, which is verbose and mostly a placeholder for better future work.
-	bool defaultOpen = true;
+	// true: CollapsingHeader starts open. Sections start collapsed unless the
+	// caller explicitly requests otherwise.
+	bool defaultOpen = false;
 };
+
+inline SectionOptions makeSectionOptions(bool expand=false, bool defaultOpen=false) {
+	return {.expand = expand, .defaultOpen = defaultOpen};
+}
+
+// Small value-oriented Dear ImGui adapters. They are deliberately useful from
+// both C++ and Python: C++ callers get a (changed, value) result instead of an
+// out-parameter, while Python can expose the exact same behavior as a tuple.
+inline std::pair<bool, float> sliderFloat(
+	const std::string& label,
+	float value,
+	float min,
+	float max,
+	const char* format="%.3f"
+) {
+	ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.3f);
+
+	return {ImGui::SliderFloat(label.c_str(), &value, min, max, format), value};
+}
+
+inline std::pair<bool, float> sliderFloatNudge(
+	const std::string& label,
+	float value,
+	float min,
+	float max,
+	float stepPct=0.01f,
+	const char* format="%.3f"
+) {
+	const float buttonWidth = ImGui::GetFrameHeight();
+	const float avail = ImGui::GetContentRegionAvail().x * 0.3f;
+	const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+	const float step = (max - min) * stepPct;
+	bool changed = false;
+
+	ImGui::PushID(label.c_str());
+
+	if(ImGui::Button("-", ImVec2(buttonWidth, 0.0f))) {
+		value = std::clamp(value - step, min, max);
+		changed = true;
+	}
+
+	ImGui::SameLine(0.0f, spacing);
+	ImGui::SetNextItemWidth(std::max(avail - 2.0f * (buttonWidth + spacing), 1.0f));
+
+	if(ImGui::SliderFloat("##slider", &value, min, max, format)) changed = true;
+
+	ImGui::SameLine(0.0f, spacing);
+
+	if(ImGui::Button("+", ImVec2(buttonWidth, 0.0f))) {
+		value = std::clamp(value + step, min, max);
+		changed = true;
+	}
+
+	ImGui::PopID();
+	ImGui::SameLine();
+	ImGui::TextUnformatted(label.c_str());
+
+	return {changed, value};
+}
+
+inline void text(const std::string& value) {
+	ImGui::TextUnformatted(value.c_str());
+}
+
+inline void separator() {
+	ImGui::Separator();
+}
+
+inline std::pair<bool, bool> checkbox(const std::string& label, bool value) {
+	return {ImGui::Checkbox(label.c_str(), &value), value};
+}
+
+inline std::pair<bool, std::string> inputText(
+	const std::string& label,
+	std::string value,
+	int maxLength=256,
+	bool enterReturnsTrue=false
+) {
+	value.resize(static_cast<std::size_t>(maxLength));
+	const ImGuiInputTextFlags flags = enterReturnsTrue
+		? ImGuiInputTextFlags_EnterReturnsTrue
+		: ImGuiInputTextFlags_None;
+	const bool changed = ImGui::InputText(label.c_str(), value.data(), value.size(), flags);
+
+	value.resize(std::strlen(value.c_str()));
+
+	return {changed, std::move(value)};
+}
+
+inline std::pair<bool, int> radioGroup(
+	int value,
+	const std::vector<std::string>& labels,
+	bool sameLine=true
+) {
+	bool changed = false;
+
+	for(std::size_t i = 0; i < labels.size(); ++i) {
+		const int option = static_cast<int>(i);
+
+		if(ImGui::RadioButton(labels[i].c_str(), &value, option)) changed = true;
+		if(sameLine && i + 1 < labels.size()) ImGui::SameLine();
+	}
+
+	return {changed, value};
+}
 
 inline void drawTexture2D(
 	osg::Texture2D* texture,
@@ -469,13 +575,14 @@ public:
 			ImGuiTableFlags_Borders |
 			ImGuiTableFlags_RowBg |
 			ImGuiTableFlags_ScrollY |
+			ImGuiTableFlags_Resizable |
 			ImGuiTableFlags_SizingStretchProp;
 
 		if(ImGui::BeginTable("gpu_stats", 3, tableFlags)) {
 			ImGui::TableSetupScrollFreeze(0, 1);
 			ImGui::TableSetupColumn("Drawable Path", ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("GPU avg (us)", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-			ImGui::TableSetupColumn("% of profiled", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+			ImGui::TableSetupColumn("GPU avg (us)", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+			ImGui::TableSetupColumn("% of profiled", ImGuiTableColumnFlags_WidthFixed, 80.0f);
 			ImGui::TableHeadersRow();
 
 			for(const auto& [path, ps] : stats) {
@@ -494,6 +601,9 @@ public:
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(path.c_str());
+
+				if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+
 				ImGui::TableSetColumnIndex(1); ImGui::Text("%.2f", avgUs);
 				ImGui::TableSetColumnIndex(2);
 
@@ -563,25 +673,28 @@ public:
 	// constructed with -- Widget itself no longer holds one (just a cached
 	// master camera, see below), so there's nothing here to forward silently.
 	// Profiler defaults to expand=true: it's the one section whose natural
-	// content (a scrolling GPU-timing table) actually wants the room.
-	void addProfilerSection(osgViewer::View& view, osg::Node* sceneRoot) {
-		addSection("Profiler", ProfilerSection(view, sceneRoot), {.expand = true});
+	// content (a scrolling GPU-timing table) actually wants the room. It still
+	// starts collapsed unless the caller explicitly opens it.
+	void addProfilerSection(osgViewer::View& view, osg::Node* sceneRoot, bool defaultOpen=false) {
+		addSection("Profiler", ProfilerSection(view, sceneRoot), {
+			.expand = true,
+			.defaultOpen = defaultOpen
+		});
 	}
 
 	// StatsSection genuinely needs ViewerBase (getViewerStats()/getCameras() are
 	// declared there, not on osg::View), so this is the one convenience method
-	// that can't narrow below osgViewer::Viewer&. Starts collapsed -- it's
-	// verbose and mostly a placeholder for better future work.
-	void addStatsSection(osgViewer::Viewer& viewer) {
-		addSection("Stats", StatsSection(viewer), {.defaultOpen = false});
+	// that can't narrow below osgViewer::Viewer&.
+	void addStatsSection(osgViewer::Viewer& viewer, bool defaultOpen=false) {
+		addSection("Stats", StatsSection(viewer), {.defaultOpen = defaultOpen});
 	}
 
-	void addTextureSection(osgViewer::View& view, osg::Node* root) {
-		addSection("Textures", TextureSection(view, root));
+	void addTextureSection(osgViewer::View& view, osg::Node* root, bool defaultOpen=false) {
+		addSection("Textures", TextureSection(view, root), {.defaultOpen = defaultOpen});
 	}
 
-	void addTextureSection(osgViewer::View& view) {
-		addSection("Textures", TextureSection(view));
+	void addTextureSection(osgViewer::View& view, bool defaultOpen=false) {
+		addSection("Textures", TextureSection(view), {.defaultOpen = defaultOpen});
 	}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
@@ -692,6 +805,10 @@ private:
 	void newFrame(osg::RenderInfo& ri) {
 		if(_firstFrame) {
 			ImGui::CreateContext();
+			// Widget is deliberately self-contained: do not read/write imgui.ini
+			// in whichever directory happens to launch the application. An
+			// application-owned ImGui context remains free to enable persistence.
+			ImGui::GetIO().IniFilename = nullptr;
 			ImGui_ImplOpenGL3_Init();
 
 			_firstFrame = false;

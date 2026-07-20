@@ -521,7 +521,7 @@ inline void messageControl(
 	Type type,
 	Severity severity,
 	bool enabled,
-	GLsizei count=0,
+	GLsizei count,
 	const GLuint* ids=nullptr
 ) {
 	detail::messageControl(
@@ -532,6 +532,10 @@ inline void messageControl(
 		count,
 		ids
 	);
+}
+
+inline void messageControl(Source source, Type type, Severity severity, bool enabled) {
+	messageControl(source, type, severity, enabled, 0, nullptr);
 }
 
 // TODO: Add a check for whether we're already initialized.

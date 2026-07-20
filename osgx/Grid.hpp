@@ -306,13 +306,19 @@ public:
 		return camera;
 	}
 
-	// Skips the throwaway named instance: osgx::Grid::createOrthoCamera(args...) constructs a
-	// Grid (forwarding args to whichever constructor matches) and immediately wraps it.
-	template<typename... Args>
-	static osg::ref_ptr<osg::Camera> createOrthoCamera(Args&&... args) {
-		auto grid = make_ref<Grid>(std::forward<Args>(args)...);
+	// Skips the throwaway named instance: constructs a Grid and immediately wraps it.
+	// Keep concrete overloads for the public API so language bindings do not need
+	// their own factory implementations.
+	static osg::ref_ptr<osg::Camera> createOrthoCamera() {
+		return make_ref<Grid>()->orthoCamera();
+	}
 
-		return grid->orthoCamera();
+	static osg::ref_ptr<osg::Camera> createOrthoCamera(
+		const osg::Vec3& corner,
+		const osg::Vec3& widthVec,
+		const osg::Vec3& heightVec
+	) {
+		return make_ref<Grid>(corner, widthVec, heightVec)->orthoCamera();
 	}
 
 private:
@@ -340,7 +346,10 @@ private:
 		setVertexArray(vertices);
 		setTexCoordArray(0, texCoords);
 		setNormalArray(normals, osg::Array::BIND_OVERALL);
-		addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::QUADS, 0, 4));
+		// GL_QUADS is invalid in a core-profile context (including the 4.6 core
+		// profile used by pyosg-lighting). A four-vertex triangle fan describes the
+		// same rectangle without falling back to that removed legacy primitive.
+		addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::TRIANGLE_FAN, 0, 4));
 
 		_installState();
 	}

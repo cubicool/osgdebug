@@ -79,9 +79,9 @@ PYBIND11_MODULE(osgDebug, m) {
 		.def("disableDebugOutput", &osgDebug::disableDebugOutput)
 		.def(
 			"messageControl",
-			[](osgDebug::Source source, osgDebug::Type type, osgDebug::Severity severity, bool enabled) {
-				osgDebug::messageControl(source, type, severity, enabled);
-			},
+			py::overload_cast<osgDebug::Source, osgDebug::Type, osgDebug::Severity, bool>(
+				&osgDebug::messageControl
+			),
 			"source"_a,
 			"type"_a,
 			"severity"_a,
@@ -143,6 +143,61 @@ PYBIND11_MODULE(osgDebug, m) {
 		})
 	;
 
+	// osgx::Grid -- exposed here because osgDebug is the project-level Python module;
+	// the base osg::Geometry and Vec types are supplied by OpenSceneGraph.
+	auto grid = py::class_<
+		osgx::Grid,
+		osg::Geometry,
+		osg::ref_ptr<osgx::Grid>
+	>(m, "Grid");
+
+	py::enum_<osgx::Grid::EdgeMode>(grid, "EdgeMode")
+		.value("EDGE_ASIS", osgx::Grid::EDGE_ASIS)
+		.value("EDGE_HIDE", osgx::Grid::EDGE_HIDE)
+		.value("EDGE_NUDGE", osgx::Grid::EDGE_NUDGE)
+		.export_values()
+	;
+
+	py::enum_<osgx::Grid::LineMode>(grid, "LineMode")
+		.value("LINE_SCREEN_PIXELS", osgx::Grid::LINE_SCREEN_PIXELS)
+		.value("LINE_GRID_UNITS", osgx::Grid::LINE_GRID_UNITS)
+		.export_values()
+	;
+
+	grid
+		.def(py::init<>())
+		.def(py::init<const osg::Vec3&, const osg::Vec3&, const osg::Vec3&>(),
+			"corner"_a, "width_vec"_a, "height_vec"_a
+		)
+		.def_property("canvasSize", &osgx::Grid::getCanvasSize, &osgx::Grid::setCanvasSize)
+		.def_property("gridInterval", &osgx::Grid::getGridInterval, &osgx::Grid::setGridInterval)
+		.def_property(
+			"gridIntervalStrong",
+			&osgx::Grid::getGridIntervalStrong,
+			&osgx::Grid::setGridIntervalStrong
+		)
+		.def_property("lineWidthPx", &osgx::Grid::getLineWidthPx, &osgx::Grid::setLineWidthPx)
+		.def_property("lineWidth", &osgx::Grid::getLineWidth, &osgx::Grid::setLineWidth)
+		.def_property("edgeMode", &osgx::Grid::getEdgeMode, &osgx::Grid::setEdgeMode)
+		.def_property("lineMode", &osgx::Grid::getLineMode, &osgx::Grid::setLineMode)
+		.def_property("colorBg", &osgx::Grid::getColorBg, &osgx::Grid::setColorBg)
+		.def_property("colorLine", &osgx::Grid::getColorLine, &osgx::Grid::setColorLine)
+		.def_property(
+			"colorLineStrong",
+			&osgx::Grid::getColorLineStrong,
+			&osgx::Grid::setColorLineStrong
+		)
+		.def("orthoCamera", &osgx::Grid::orthoCamera)
+		.def_static("createOrthoCamera", py::overload_cast<>(&osgx::Grid::createOrthoCamera))
+		.def_static(
+			"createOrthoCamera",
+			py::overload_cast<const osg::Vec3&, const osg::Vec3&, const osg::Vec3&>(
+				&osgx::Grid::createOrthoCamera
+			),
+			"corner"_a, "width_vec"_a, "height_vec"_a
+		)
+	;
+
 	// osgDebug::imgui -- deliberately NOT a general ImGui wrapper (that's pyimgui's
 	// job elsewhere). Just enough to build quick debugging knobs inside a
 	// Widget::addSection() callback: a handful of stateless functions returning
@@ -171,16 +226,9 @@ PYBIND11_MODULE(osgDebug, m) {
 	// from Python rather than adding more positional args to addSection itself.
 	py::class_<osgDebug::imgui::SectionOptions>(m_imgui, "SectionOptions")
 		.def(
-			py::init([](bool expand, bool defaultOpen) {
-				osgDebug::imgui::SectionOptions opts;
-
-				opts.expand = expand;
-				opts.defaultOpen = defaultOpen;
-
-				return opts;
-			}),
+			py::init(&osgDebug::imgui::makeSectionOptions),
 			"expand"_a = false,
-			"default_open"_a = true
+			"default_open"_a = false
 		)
 		.def_readwrite("expand", &osgDebug::imgui::SectionOptions::expand)
 		.def_readwrite("default_open", &osgDebug::imgui::SectionOptions::defaultOpen)
@@ -213,40 +261,40 @@ PYBIND11_MODULE(osgDebug, m) {
 		// Widget no longer holds a Viewer/View reference of its own (see the C++
 		// class comment), so these now take one explicitly instead of reusing
 		// whatever Widget was constructed with.
-		.def("addStatsSection", &osgDebug::imgui::Widget::addStatsSection, "viewer"_a)
+		.def(
+			"addStatsSection",
+			&osgDebug::imgui::Widget::addStatsSection,
+			"viewer"_a,
+			"default_open"_a = false
+		)
 		.def(
 			"addProfilerSection",
 			&osgDebug::imgui::Widget::addProfilerSection,
 			"view"_a,
-			"sceneRoot"_a
+			"sceneRoot"_a,
+			"default_open"_a = false
 		)
 		.def(
 			"addTextureSection",
-			py::overload_cast<osgViewer::View&, osg::Node*>(&osgDebug::imgui::Widget::addTextureSection),
+			py::overload_cast<osgViewer::View&, osg::Node*, bool>(
+				&osgDebug::imgui::Widget::addTextureSection
+			),
 			"view"_a,
-			"root"_a
+			"root"_a,
+			"default_open"_a = false
 		)
 		.def(
 			"addTextureSection",
-			py::overload_cast<osgViewer::View&>(&osgDebug::imgui::Widget::addTextureSection),
-			"view"_a
+			py::overload_cast<osgViewer::View&, bool>(&osgDebug::imgui::Widget::addTextureSection),
+			"view"_a,
+			"default_open"_a = false
 		)
 	;
 
 	m_imgui
 		.def(
 			"slider_float",
-			[](const std::string& label, float value, float min, float max, const char* format) {
-				// Narrower than ImGui's own default item width -- Widget is meant to
-				// live in a fairly narrow docked sidebar (see Options::dock), where the
-				// label text (often several words, e.g. "Light Orbit Radius") needs
-				// more room than the slider bar itself does.
-				ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.3f);
-
-				bool changed = ImGui::SliderFloat(label.c_str(), &value, min, max, format);
-
-				return py::make_tuple(changed, value);
-			},
+			&osgDebug::imgui::sliderFloat,
 			"label"_a,
 			"value"_a,
 			"min"_a,
@@ -255,48 +303,7 @@ PYBIND11_MODULE(osgDebug, m) {
 		)
 		.def(
 			"slider_float_nudge",
-			[](
-				const std::string& label,
-				float value,
-				float min,
-				float max,
-				float stepPct,
-				const char* format
-			) {
-				// Same-width narrowing rationale as slider_float, minus the space
-				// eaten by the two nudge buttons on either side.
-				const float buttonWidth = ImGui::GetFrameHeight();
-				const float avail = ImGui::GetContentRegionAvail().x * 0.3f;
-				const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-				const float step = (max - min) * stepPct;
-
-				bool changed = false;
-
-				ImGui::PushID(label.c_str());
-
-				if(ImGui::Button("-", ImVec2(buttonWidth, 0.0f))) {
-					value = std::clamp(value - step, min, max);
-					changed = true;
-				}
-
-				ImGui::SameLine(0.0f, spacing);
-				ImGui::SetNextItemWidth(std::max(avail - 2.0f * (buttonWidth + spacing), 1.0f));
-
-				if(ImGui::SliderFloat("##slider", &value, min, max, format)) changed = true;
-
-				ImGui::SameLine(0.0f, spacing);
-
-				if(ImGui::Button("+", ImVec2(buttonWidth, 0.0f))) {
-					value = std::clamp(value + step, min, max);
-					changed = true;
-				}
-
-				ImGui::PopID();
-				ImGui::SameLine();
-				ImGui::TextUnformatted(label.c_str());
-
-				return py::make_tuple(changed, value);
-			},
+			&osgDebug::imgui::sliderFloatNudge,
 			"label"_a,
 			"value"_a,
 			"min"_a,
@@ -304,34 +311,17 @@ PYBIND11_MODULE(osgDebug, m) {
 			"step_pct"_a = 0.01f,
 			"format"_a = "%.3f"
 		)
-		.def("text", [](const std::string& s) { ImGui::TextUnformatted(s.c_str()); }, "text"_a)
-		.def("separator", []() { ImGui::Separator(); })
+		.def("text", &osgDebug::imgui::text, "text"_a)
+		.def("separator", &osgDebug::imgui::separator)
 		.def(
 			"checkbox",
-			[](const std::string& label, bool value) {
-				bool changed = ImGui::Checkbox(label.c_str(), &value);
-
-				return py::make_tuple(changed, value);
-			},
+			&osgDebug::imgui::checkbox,
 			"label"_a,
 			"value"_a
 		)
 		.def(
 			"input_text",
-			[](const std::string& label, std::string value, int maxLength, bool enterReturnsTrue) {
-				value.resize(static_cast<std::size_t>(maxLength));
-
-				ImGuiInputTextFlags flags = enterReturnsTrue
-					? ImGuiInputTextFlags_EnterReturnsTrue
-					: ImGuiInputTextFlags_None
-				;
-
-				bool changed = ImGui::InputText(label.c_str(), value.data(), value.size(), flags);
-
-				value.resize(std::strlen(value.c_str()));
-
-				return py::make_tuple(changed, value);
-			},
+			&osgDebug::imgui::inputText,
 			"label"_a,
 			"value"_a,
 			"max_length"_a = 256,
@@ -339,19 +329,7 @@ PYBIND11_MODULE(osgDebug, m) {
 		)
 		.def(
 			"radio_group",
-			[](int value, const std::vector<std::string>& labels, bool sameLine) {
-				bool changed = false;
-
-				for(std::size_t i = 0; i < labels.size(); i++) {
-					int v = static_cast<int>(i);
-
-					if(ImGui::RadioButton(labels[i].c_str(), &value, v)) changed = true;
-
-					if(sameLine && i + 1 < labels.size()) ImGui::SameLine();
-				}
-
-				return py::make_tuple(changed, value);
-			},
+			&osgDebug::imgui::radioGroup,
 			"value"_a,
 			"labels"_a,
 			"same_line"_a = true

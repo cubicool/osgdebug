@@ -28,10 +28,14 @@ that that applications like *Nsight* and *APITrace* support.
 - `PickCameraSync`, `PickHoverCallback`, and `PickHandler` wire pick cameras and readback state into viewer camera updates, hover transitions, and mouse input.
 - `MultiCameraManipulator` routes input to one active manipulator while letting each target drive either the main viewer camera or its own camera, useful for RTT and multi-view tools.
 - `Ortho2DManipulator` is an orthographic 2D camera manipulator with pan, geometric zoom, pixel-nudge zoom, optional Ctrl-drag 3D tilt, and automatic near/far projection setup.
+- `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
+- `osgx::pbr` and `osgx::ibl` provide reusable PBR/IBL GLSL snippets plus helpers for BRDF LUT baking, prefiltered environment maps, and diffuse irradiance.
 
 # `osgDebug.hpp` Systems
 
 `osgDebug.hpp` provides three independent systems that can be used together or separately.
+
+It also includes `osgDebug::Widget`, a Dear ImGui overlay for viewer tools with pluggable sections and built-in GPU-profiler, OSG-stats, and scene-texture views.
 
 ---
 
