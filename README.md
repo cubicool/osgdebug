@@ -5,7 +5,42 @@ that that applications like *Nsight* and *APITrace* support.
 
 # `osgx.hpp` Extras
 
-`osgx.hpp` is the small C++20 convenience layer that sits beside `osgDebug.hpp`; it keeps common OpenSceneGraph setup code shorter and adds a few modern range/span/lambda-friendly wrappers.
+`osgx.hpp` is the umbrella header for a small C++20 OpenSceneGraph utility layer that sits beside `osgDebug.hpp`. It keeps common setup code shorter and adds modern range/span/lambda-friendly wrappers.
+
+Its public headers are organized by concern:
+
+- `osgx/Shader.hpp` — generic, line-oriented GLSL library expansion.
+- `osgx/PBR.hpp` — PBR BRDF snippets and `OrbitLightRig`.
+- `osgx/IBL.hpp` — prefiltered cubemaps, BRDF-LUT baking, and SH9 diffuse irradiance.
+- `osgx.hpp` — convenience umbrella that includes all osgx facilities.
+
+## Shader libraries
+
+`osgx/Shader.hpp` provides a reusable GLSL-snippet catalog rather than a project-specific
+search-and-replace pass. Register one or more catalogs, then expand pragmas in shader source:
+
+```cpp
+osgx::pbr::registerShaderLibs();
+osgx::ibl::registerShaderLibs();
+
+const osgx::ShaderLib appLibs[] = {
+	{"common", {}, COMMON_GLSL},
+	{"lighting", "appLighting", LIGHTING_GLSL}
+};
+
+osgx::registerShaderLibs("myApp", appLibs);
+
+auto glsl = osgx::resolveShaderLibs(R"GLSL(
+#pragma myApp common, lighting
+#pragma osgx::pbr F_SCHLICK, IBL_SPECULAR
+#pragma osgx::ibl *
+)GLSL");
+```
+
+Registered namespace and library names are case-insensitive. A pragma accepts comma-separated
+library names, optional GLSL-function aliases, and `*` to expand the entire catalog in
+registration order. Unknown names in a registered namespace fail immediately; unrelated pragmas
+are left intact for other shader tooling or the GLSL compiler.
 
 - `OSGX_DISABLE_WARNINGS` / `OSGX_ENABLE_WARNINGS` silence noisy OSG headers with compiler-specific diagnostic push/pop macros.
 - `ObjectPath` is a simple dotted path accumulator used by scene-description visitors.
@@ -29,7 +64,8 @@ that that applications like *Nsight* and *APITrace* support.
 - `MultiCameraManipulator` routes input to one active manipulator while letting each target drive either the main viewer camera or its own camera, useful for RTT and multi-view tools.
 - `Ortho2DManipulator` is an orthographic 2D camera manipulator with pan, geometric zoom, pixel-nudge zoom, optional Ctrl-drag 3D tilt, and automatic near/far projection setup.
 - `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
-- `osgx::pbr` and `osgx::ibl` provide reusable PBR/IBL GLSL snippets plus helpers for BRDF LUT baking, prefiltered environment maps, and diffuse irradiance.
+- `osgx::pbr` provides reusable BRDF GLSL snippets and `OrbitLightRig` for direct-light uniforms.
+- `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking, prefiltered environment maps, and SH9 diffuse irradiance.
 
 # `osgDebug.hpp` Systems
 

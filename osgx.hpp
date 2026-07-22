@@ -7,4 +7,6 @@
 #include "osgx/Picking.hpp"
 #include "osgx/Manipulators.hpp"
 #include "osgx/Grid.hpp"
+#include "osgx/Shader.hpp"
 #include "osgx/PBR.hpp"
+#include "osgx/IBL.hpp"

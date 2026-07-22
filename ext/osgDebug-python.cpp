@@ -17,6 +17,9 @@ namespace pyx = pybind11x;
 PYBIND11_MODULE(osgDebug, m) {
 	auto py_osg = py::module_::import("OpenSceneGraph");
 
+	osgx::pbr::registerShaderLibs();
+	osgx::ibl::registerShaderLibs();
+
 	py::class_<
 		osgDebug::GraphicsOperation,
 		osg::GraphicsOperation,
@@ -202,11 +205,11 @@ PYBIND11_MODULE(osgDebug, m) {
 	// osgx::pbr / osgx::ibl -- exposed here for the same reason as osgx::Grid above (osgDebug is
 	// the project-level Python module). Ported from the STATIC path of pyosg-lighting/09-ibl.py
 	// and already proven in osgSlug's osgslug-pbr-ibl.cpp; the goal is for Python demos to reuse
-	// this toolkit (GLSL snippets + resolveLibs() + the cubemap/BRDF-LUT/SH9 host-side helpers)
-	// instead of re-deriving the shader/UBO plumbing from scratch each time.
+	// this toolkit (GLSL snippets + resolveShaderLibs() + the cubemap/BRDF-LUT/SH9 host-side
+	// helpers) instead of re-deriving the shader/UBO plumbing from scratch each time.
 	m.def(
-		"resolveLibs",
-		&osgx::resolveLibs,
+		"resolveShaderLibs",
+		&osgx::resolveShaderLibs,
 		"src"_a,
 		"Expand '#pragma osgx::pbr ...' / '#pragma osgx::ibl ...' lines into their GLSL source."
 	);
