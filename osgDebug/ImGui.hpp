@@ -13,7 +13,9 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <imgui.h>
+#ifndef OSGDEBUG_IMGUI_EXTERNAL_BACKEND
 #include <backends/imgui_impl_opengl3.h>
+#endif
 #include <cstring>
 #endif
 
@@ -534,9 +536,9 @@ class ProfilerSection {
 public:
 	// Only ever touches view.getCamera(), transiently, right here -- nothing to
 	// hold onto afterward, so this never stored a Viewer/View reference at all.
-	ProfilerSection(osgViewer::View& view, osg::Node* sceneRoot) {
-		ProfilerVisitor<> pv;
-		sceneRoot->accept(pv);
+	ProfilerSection(osgViewer::View& view, osg::Node* sceneRoot):
+	_sceneRoot(sceneRoot) {
+		refresh();
 
 		_finalCb = new ProfilerFinalCallback<>(0);
 
@@ -547,7 +549,17 @@ public:
 		);
 	}
 
-	void operator()(osg::RenderInfo& ri) const {
+	// Re-scan a dynamic scene graph. Existing profiler callbacks are updated in
+	// place, while newly paged/attached drawables receive callbacks for the first
+	// time. Useful for terrain engines and streaming scene loaders.
+	void refresh() {
+		if(!_sceneRoot.valid()) return;
+
+		ProfilerVisitor<> visitor;
+		_sceneRoot->accept(visitor);
+	}
+
+	void operator()(osg::RenderInfo& ri) {
 		const auto& stats = profilerStats(ri.getState()->getContextID());
 		const auto frameNum = ri.getState()->getFrameStamp()
 			? ri.getState()->getFrameStamp()->getFrameNumber()
@@ -561,6 +573,12 @@ public:
 		ImGui::SameLine();
 
 		if(ImGui::RadioButton("ASYNC", &modeIdx, 1)) _finalCb->setMode(QueryMode::ASYNC);
+
+		ImGui::SameLine();
+		ImGui::TextDisabled("|");
+		ImGui::SameLine();
+
+		if(ImGui::Button("Refresh")) refresh();
 
 		GLuint64 totalNs = 0;
 
@@ -616,10 +634,88 @@ public:
 	}
 
 private:
+	osg::observer_ptr<osg::Node> _sceneRoot;
 	ProfilerFinalCallback<>* _finalCb = nullptr;
 };
 
+// Reusable osgDebug content for an application-owned Dear ImGui frame. Panel
+// deliberately creates no ImGui context, backend, window, or event handler:
+// call draw() after the host has begun the window that should contain these
+// sections. Widget below is the convenience driver that supplies those pieces.
+class Panel {
+public:
+	void addSection(std::string label, std::function<void(osg::RenderInfo&)> fn, SectionOptions options={}) {
+		_sections.push_back({std::move(label), std::move(fn), options});
+	}
+
+	void removeSection(const std::string& label) {
+		std::erase_if(_sections, [&](const auto& section) { return section.label == label; });
+	}
+
+	void clearSections() {
+		_sections.clear();
+	}
+
+	void addProfilerSection(osgViewer::View& view, osg::Node* sceneRoot, bool defaultOpen=false) {
+		addSection("Profiler", ProfilerSection(view, sceneRoot), {
+			.expand = true, .defaultOpen = defaultOpen
+		});
+	}
+
+	void addStatsSection(osgViewer::Viewer& viewer, bool defaultOpen=false) {
+		addSection("Stats", StatsSection(viewer), {.defaultOpen = defaultOpen});
+	}
+
+	void addTextureSection(osgViewer::View& view, osg::Node* root, bool defaultOpen=false) {
+		addSection("Textures", TextureSection(view, root), {.defaultOpen = defaultOpen});
+	}
+
+	void addTextureSection(osgViewer::View& view, bool defaultOpen=false) {
+		addSection("Textures", TextureSection(view), {.defaultOpen = defaultOpen});
+	}
+
+	void draw(osg::RenderInfo& ri) {
+		int rem = static_cast<int>(std::count_if(
+			_sections.begin(), _sections.end(),
+			[](const auto& section) { return section.options.expand; }
+		));
+
+		for(auto& section : _sections) {
+			const bool open = ImGui::CollapsingHeader(
+				section.label.c_str(),
+				section.options.defaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None
+			);
+
+			if(section.options.expand) {
+				if(open) {
+					ImGui::PushID(section.label.c_str());
+					ImGui::BeginChild(
+						"##expand",
+						ImVec2(0.0f, ImGui::GetContentRegionAvail().y / static_cast<float>(rem)),
+						ImGuiChildFlags_Border
+					);
+					section.fn(ri);
+					ImGui::EndChild();
+					ImGui::PopID();
+				}
+				rem--;
+			}
+			else if(open) section.fn(ri);
+		}
+	}
+
+private:
+	struct Section {
+		std::string label;
+		std::function<void(osg::RenderInfo&)> fn;
+		SectionOptions options;
+	};
+
+	std::vector<Section> _sections;
+};
+
 // Owns the ImGui lifecycle for one viewer window.
+#ifndef OSGDEBUG_IMGUI_PANEL_ONLY
 // Requires the viewer already be osgViewer::Viewer::SingleThreaded (Dear ImGui's
 // single global ImGuiContext/IO state isn't safe to touch from more than one OSG
 // draw thread) -- same requirement as osgEarth's own ImGuiEventHandler, which
@@ -650,52 +746,15 @@ public:
 		view.getEventHandlers().push_front(this);
 	}
 
-	void addSection(std::string label, std::function<void(osg::RenderInfo&)> fn, SectionOptions options={}) {
-		_sections.push_back({std::move(label), std::move(fn), options});
-	}
-
-	// Removes every section matching label (there's nothing preventing duplicate
-	// labels via repeated addSection() calls, so this drops all of them). Safe to
-	// call at any time -- _sections is only ever read from render(), which runs
-	// on this same thread via the camera's PostDrawCallback between frames, never
-	// concurrently with application code.
-	void removeSection(const std::string& label) {
-		std::erase_if(_sections, [&](const auto& section) { return section.label == label; });
-	}
-
-	// Drops every section at once -- the bin-shaped reset: rebuild whatever
-	// sections you still want rather than removing them one at a time.
-	void clearSections() {
-		_sections.clear();
-	}
-
-	// These take view/viewer explicitly rather than reusing whatever Widget was
-	// constructed with -- Widget itself no longer holds one (just a cached
-	// master camera, see below), so there's nothing here to forward silently.
-	// Profiler defaults to expand=true: it's the one section whose natural
-	// content (a scrolling GPU-timing table) actually wants the room. It still
-	// starts collapsed unless the caller explicitly opens it.
-	void addProfilerSection(osgViewer::View& view, osg::Node* sceneRoot, bool defaultOpen=false) {
-		addSection("Profiler", ProfilerSection(view, sceneRoot), {
-			.expand = true,
-			.defaultOpen = defaultOpen
-		});
-	}
-
-	// StatsSection genuinely needs ViewerBase (getViewerStats()/getCameras() are
-	// declared there, not on osg::View), so this is the one convenience method
-	// that can't narrow below osgViewer::Viewer&.
-	void addStatsSection(osgViewer::Viewer& viewer, bool defaultOpen=false) {
-		addSection("Stats", StatsSection(viewer), {.defaultOpen = defaultOpen});
-	}
-
-	void addTextureSection(osgViewer::View& view, osg::Node* root, bool defaultOpen=false) {
-		addSection("Textures", TextureSection(view, root), {.defaultOpen = defaultOpen});
-	}
-
-	void addTextureSection(osgViewer::View& view, bool defaultOpen=false) {
-		addSection("Textures", TextureSection(view), {.defaultOpen = defaultOpen});
-	}
+	Panel& panel() { return _panel; }
+	const Panel& panel() const { return _panel; }
+	void addSection(std::string label, std::function<void(osg::RenderInfo&)> fn, SectionOptions options={}) { _panel.addSection(std::move(label), std::move(fn), options); }
+	void removeSection(const std::string& label) { _panel.removeSection(label); }
+	void clearSections() { _panel.clearSections(); }
+	void addProfilerSection(osgViewer::View& view, osg::Node* root, bool defaultOpen=false) { _panel.addProfilerSection(view, root, defaultOpen); }
+	void addStatsSection(osgViewer::Viewer& viewer, bool defaultOpen=false) { _panel.addStatsSection(viewer, defaultOpen); }
+	void addTextureSection(osgViewer::View& view, osg::Node* root, bool defaultOpen=false) { _panel.addTextureSection(view, root, defaultOpen); }
+	void addTextureSection(osgViewer::View& view, bool defaultOpen=false) { _panel.addTextureSection(view, defaultOpen); }
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
 		if(!_initialized) {
@@ -793,14 +852,7 @@ private:
 	bool _initialized = false;
 	bool _firstFrame = true;
 	double _time = 0.0;
-
-	struct Section {
-		std::string label;
-		std::function<void(osg::RenderInfo&)> fn;
-		SectionOptions options;
-	};
-
-	std::vector<Section> _sections;
+	Panel _panel;
 
 	void newFrame(osg::RenderInfo& ri) {
 		if(_firstFrame) {
@@ -857,7 +909,11 @@ private:
 			ImGui::SetNextWindowPos(ImVec2(x, 0.0f), ImGuiCond_Always);
 			ImGui::SetNextWindowSize(ImVec2(_opts.dockWidth, io.DisplaySize.y), ImGuiCond_Always);
 
-			flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+			// Keep a docked panel pinned and fixed-width, but leave Dear ImGui's
+			// standard title-bar collapse button enabled.  A comparison viewport
+			// needs a quick way to clear the overlay without losing its controls:
+			// click the title-bar triangle to collapse it, then click again to reopen.
+			flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
 		}
 
 		if(ImGui::Begin("osgDebug", nullptr, flags)) {
@@ -882,50 +938,7 @@ private:
 				ImGui::Separator();
 			}
 
-			// expand sections divide whatever's left AFTER constrain sections have
-			// already drawn at their natural height -- computed as "available right
-			// now / how many expand sections (including this one) are still coming,"
-			// so each gets an equal share of what's ACTUALLY left, not a naive 1/N of
-			// the original total. A collapsed expand section draws nothing (skipped
-			// entirely below, same as any collapsed header) and still decrements the
-			// counter, so it doesn't dilute the sections after it.
-			int rem = static_cast<int>(std::count_if(
-				_sections.begin(),
-				_sections.end(),
-				[](const auto& section) { return section.options.expand; }
-			));
-
-			for(auto& section : _sections) {
-				const bool open = ImGui::CollapsingHeader(
-					section.label.c_str(),
-					section.options.defaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None
-				);
-
-				if(section.options.expand) {
-					if(open) {
-						// const float share = ImGui::GetContentRegionAvail().y / static_cast<float>(rem);
-
-						ImGui::PushID(section.label.c_str());
-						ImGui::BeginChild(
-							"##expand",
-							ImVec2(
-								0.0f,
-								ImGui::GetContentRegionAvail().y / static_cast<float>(rem)
-							),
-							ImGuiChildFlags_Border
-						);
-
-						section.fn(ri);
-
-						ImGui::EndChild();
-						ImGui::PopID();
-					}
-
-					rem--;
-				}
-
-				else if(open) section.fn(ri);
-			}
+			_panel.draw(ri);
 		}
 
 		ImGui::End();
@@ -949,6 +962,8 @@ private:
 		void operator()(osg::RenderInfo& ri) const override { _w.render(ri); }
 	};
 };
+
+#endif // OSGDEBUG_IMGUI_PANEL_ONLY
 
 
 }

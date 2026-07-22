@@ -37,6 +37,17 @@ if(IMGUI_FOUND)
 	target_compile_definitions(osgdebug-imgui PRIVATE OSGDEBUG_IMGUI)
     target_include_directories(osgdebug-imgui PRIVATE ${IMGUI_INCLUDE_DIRS})
     target_link_libraries(osgdebug-imgui PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
+
+    add_executable(osgdebug-imgui-external
+        "osgdebug-imgui-external.cpp"
+        "../osgx.hpp"
+        "../osgDebug.hpp"
+    )
+
+    osgdebug_compile_options(osgdebug-imgui-external)
+    target_compile_definitions(osgdebug-imgui-external PRIVATE OSGDEBUG_IMGUI)
+    target_include_directories(osgdebug-imgui-external PRIVATE ${IMGUI_INCLUDE_DIRS})
+    target_link_libraries(osgdebug-imgui-external PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
 else()
     message(STATUS "ImGui not found via pkg-config; skipping osgdebug-imgui")
 endif()

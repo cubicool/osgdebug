@@ -7,6 +7,7 @@
 #include "pybind11x.hpp"
 
 #include <pybind11/functional.h>
+#include <pybind11/stl.h>
 
 #include <cstring>
 
@@ -198,6 +199,118 @@ PYBIND11_MODULE(osgDebug, m) {
 		)
 	;
 
+	// osgx::pbr / osgx::ibl -- exposed here for the same reason as osgx::Grid above (osgDebug is
+	// the project-level Python module). Ported from the STATIC path of pyosg-lighting/09-ibl.py
+	// and already proven in osgSlug's osgslug-pbr-ibl.cpp; the goal is for Python demos to reuse
+	// this toolkit (GLSL snippets + resolveLibs() + the cubemap/BRDF-LUT/SH9 host-side helpers)
+	// instead of re-deriving the shader/UBO plumbing from scratch each time.
+	m.def(
+		"resolveLibs",
+		&osgx::resolveLibs,
+		"src"_a,
+		"Expand '#pragma osgx::pbr ...' / '#pragma osgx::ibl ...' lines into their GLSL source."
+	);
+
+	auto m_pbr = m.def_submodule("pbr", "osgx::pbr -- BRDF math GLSL snippets + direct-light rig");
+
+	m_pbr.attr("D_GGX") = osgx::pbr::D_GGX;
+	m_pbr.attr("G_SCHLICK") = osgx::pbr::G_SCHLICK;
+	m_pbr.attr("G_SMITH") = osgx::pbr::G_SMITH;
+	m_pbr.attr("F_SCHLICK") = osgx::pbr::F_SCHLICK;
+	m_pbr.attr("F_SCHLICK_ROUGHNESS") = osgx::pbr::F_SCHLICK_ROUGHNESS;
+	m_pbr.attr("DIRECT_SPECULAR") = osgx::pbr::DIRECT_SPECULAR;
+	m_pbr.attr("F_MULTISCATTER") = osgx::pbr::F_MULTISCATTER;
+	m_pbr.attr("IBL_SPECULAR") = osgx::pbr::IBL_SPECULAR;
+	m_pbr.attr("TONEMAP_PBR_NEUTRAL") = osgx::pbr::TONEMAP_PBR_NEUTRAL;
+
+	m_pbr.def("snippets", &osgx::pbr::snippets);
+
+	py::class_<osgx::pbr::OrbitLightRig::Orbit>(m_pbr, "Orbit")
+		.def(
+			py::init([](float radius, float height, float speed, float phase, float intensity) {
+				return osgx::pbr::OrbitLightRig::Orbit{radius, height, speed, phase, intensity};
+			}),
+			"radius"_a = 0.5f,
+			"height"_a = 0.5f,
+			"speed"_a = 0.5f,
+			"phase"_a = 0.0f,
+			"intensity"_a = 1.0f
+		)
+		.def_readwrite("radius", &osgx::pbr::OrbitLightRig::Orbit::radius)
+		.def_readwrite("height", &osgx::pbr::OrbitLightRig::Orbit::height)
+		.def_readwrite("speed", &osgx::pbr::OrbitLightRig::Orbit::speed)
+		.def_readwrite("phase", &osgx::pbr::OrbitLightRig::Orbit::phase)
+		.def_readwrite("intensity", &osgx::pbr::OrbitLightRig::Orbit::intensity)
+	;
+
+	py::class_<
+		osgx::pbr::OrbitLightRig,
+		osg::NodeCallback,
+		osg::ref_ptr<osgx::pbr::OrbitLightRig>
+	>(m_pbr, "OrbitLightRig")
+		.def(py::init<>())
+		.def_readwrite("ss", &osgx::pbr::OrbitLightRig::ss)
+		.def_readwrite("center", &osgx::pbr::OrbitLightRig::center)
+		.def_readwrite("intensity", &osgx::pbr::OrbitLightRig::intensity)
+		.def_readwrite("uniformName", &osgx::pbr::OrbitLightRig::uniformName)
+		.def_readwrite("orbits", &osgx::pbr::OrbitLightRig::orbits)
+	;
+
+	auto m_ibl = m.def_submodule("ibl", "osgx::ibl -- prefiltered cubemap + BRDF LUT + SH9 diffuse");
+
+	m_ibl.attr("FULLSCREEN_VERT") = osgx::ibl::FULLSCREEN_VERT;
+	m_ibl.attr("BRDF_LUT_FRAG") = osgx::ibl::BRDF_LUT_FRAG;
+	m_ibl.attr("SH_IRRADIANCE") = osgx::ibl::SH_IRRADIANCE;
+
+	py::class_<
+		osgx::ibl::RunOnceCallback,
+		osg::NodeCallback,
+		osg::ref_ptr<osgx::ibl::RunOnceCallback>
+	>(m_ibl, "RunOnceCallback")
+		.def(py::init<>())
+		.def("rebake", &osgx::ibl::RunOnceCallback::rebake, "node"_a)
+	;
+
+	m_ibl
+		.def(
+			"loadPrefilterCubemap",
+			&osgx::ibl::loadPrefilterCubemap,
+			"path"_a,
+			"Loads a pre-baked GGX-prefiltered cubemap (.ktx2); returns None (and logs OSG_WARN) "
+			"if the path doesn't load as a TextureCubeMap."
+		)
+		.def(
+			"makeBRDFLUTCamera",
+			&osgx::ibl::makeBRDFLUTCamera,
+			"lutSize"_a,
+			"lut"_a,
+			"Configures `lut` in-place (size/format/filters) and returns a PRE_RENDER camera that "
+			"bakes the split-sum BRDF LUT into it exactly once (see RunOnceCallback)."
+		)
+	;
+
+	py::class_<osgx::ibl::SH9>(m_ibl, "SH9")
+		.def(py::init<>())
+		.def("__len__", [](const osgx::ibl::SH9&) { return 9; })
+		.def("__getitem__", [](const osgx::ibl::SH9& self, size_t i) {
+			if(i >= 9) throw py::index_error();
+
+			return self.coeffs[i];
+		})
+		.def("__setitem__", [](osgx::ibl::SH9& self, size_t i, const osg::Vec3f& v) {
+			if(i >= 9) throw py::index_error();
+
+			self.coeffs[i] = v;
+		})
+	;
+
+	m_ibl.def(
+		"computeSH",
+		&osgx::ibl::computeSH,
+		"image"_a,
+		"Projects an equirectangular HDR/LDR osg.Image onto SH9 diffuse irradiance coefficients."
+	);
+
 	// osgDebug::imgui -- deliberately NOT a general ImGui wrapper (that's pyimgui's
 	// job elsewhere). Just enough to build quick debugging knobs inside a
 	// Widget::addSection() callback: a handful of stateless functions returning
@@ -232,6 +345,18 @@ PYBIND11_MODULE(osgDebug, m) {
 		)
 		.def_readwrite("expand", &osgDebug::imgui::SectionOptions::expand)
 		.def_readwrite("default_open", &osgDebug::imgui::SectionOptions::defaultOpen)
+	;
+
+	py::class_<osgDebug::imgui::Panel>(m_imgui, "Panel")
+		.def(py::init<>())
+		.def("addSection", &osgDebug::imgui::Panel::addSection, "label"_a, "fn"_a, "options"_a = osgDebug::imgui::SectionOptions())
+		.def("removeSection", &osgDebug::imgui::Panel::removeSection, "label"_a)
+		.def("clearSections", &osgDebug::imgui::Panel::clearSections)
+		.def("addStatsSection", &osgDebug::imgui::Panel::addStatsSection, "viewer"_a, "default_open"_a = false)
+		.def("addProfilerSection", &osgDebug::imgui::Panel::addProfilerSection, "view"_a, "sceneRoot"_a, "default_open"_a = false)
+		.def("addTextureSection", py::overload_cast<osgViewer::View&, osg::Node*, bool>(&osgDebug::imgui::Panel::addTextureSection), "view"_a, "root"_a, "default_open"_a = false)
+		.def("addTextureSection", py::overload_cast<osgViewer::View&, bool>(&osgDebug::imgui::Panel::addTextureSection), "view"_a, "default_open"_a = false)
+		.def("draw", &osgDebug::imgui::Panel::draw, "render_info"_a)
 	;
 
 	py::class_<
