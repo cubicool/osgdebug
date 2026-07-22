@@ -108,10 +108,41 @@ vec3 osgx_DirectSpecular(vec3 N, vec3 V, vec3 L, float NdotV, float roughness, v
 }
 )GLSL";
 
-// Split-sum IBL specular (Karis 2013): samples the prefiltered cubemap along the reflection
-// vector and combines with the baked BRDF LUT. Handles the OSG (Z-up) -> baked-cubemap (Y-up)
-// face remap internally. Self-contained -- does not require snippets() (the split-sum combine
-// folds Fresnel into brdfLUT rather than calling F_SCHLICK_ROUGHNESS directly).
+// Multi-scattering energy-compensated Fresnel (Fdez-Aguera 2019, "A Multiple-Scattering
+// Microfacet Model for Real-Time Image-based Lighting"), the same formula the official Khronos
+// glTF-Sample-Viewer uses (ported from OpenSceneGraph.py/examples/pyosg-khronos-viewer.py's
+// fresnel(), which was itself written to match that viewer's IBL.glsl exactly -- confirmed
+// pixel-parity against github.khronos.org/glTF-Sample-Viewer-Release/ on 2026-07-22).
+//
+// The classic single-scatter split-sum approximation (Karis 2013 -- what IBL_SPECULAR below
+// used before this was added) loses energy at higher roughness because it only accounts for
+// light bouncing off the microfacet surface once; this adds back an estimate of what multiple
+// internal bounces would have contributed, using the same split-sum LUT (ab.x/ab.y) the
+// single-scatter term already samples -- no extra texture reads, just more math on the same
+// two numbers. Most visible on rough metals/dielectrics, which the single-scatter version
+// renders measurably too dark/desaturated.
+inline constexpr const char* F_MULTISCATTER = R"GLSL(
+vec3 osgx_F_MultiScatter(vec3 N, vec3 V, float roughness, vec3 F0, sampler2D brdfLUT) {
+	float NdotV = max(dot(N, V), 0.0);
+	vec2 ab = texture(brdfLUT, clamp(vec2(NdotV, roughness), 0.0, 1.0)).rg;
+
+	// Single-scatter Fresnel (Schlick, roughness-aware) and its split-sum-combined result.
+	vec3 Fss = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
+	vec3 FssCombined = Fss * ab.x + ab.y;
+
+	// Energy lost to single-scatter, and the average Fresnel across all angles -- both from
+	// Fdez-Aguera's derivation; feeds a geometric-series estimate of the multi-bounce term.
+	float Ems = 1.0 - (ab.x + ab.y);
+	vec3 Favg = F0 + (1.0 - F0) / 21.0;
+
+	return FssCombined + Ems * FssCombined * Favg / (1.0 - Favg * Ems);
+}
+)GLSL";
+
+// Split-sum IBL specular: samples the prefiltered cubemap along the reflection vector and
+// combines with the baked BRDF LUT via the multi-scatter energy-compensated Fresnel above (not
+// the plain Karis 2013 single-scatter combine this used to be). Handles the OSG (Z-up) ->
+// baked-cubemap (Y-up) face remap internally. Requires F_MULTISCATTER already in scope.
 inline constexpr const char* IBL_SPECULAR = R"GLSL(
 vec3 osgx_IBLSpecular(
 	vec3 N,
@@ -123,16 +154,15 @@ vec3 osgx_IBLSpecular(
 	float envMaxMip
 ) {
 	vec3 R = reflect(-V, N);
-	float NdotV = max(dot(N, V), 0.0);
 
 	// OSG world space is Z-up; the baked cubemap's faces are Y-up -- without this remap we'd
 	// sample a direction that doesn't correspond to R at all.
 	vec3 R_gl = vec3(R.x, R.z, -R.y);
 
 	vec3 prefilt = textureLod(envMap, R_gl, roughness * envMaxMip).rgb;
-	vec2 brdf = texture(brdfLUT, vec2(NdotV, roughness)).rg;
+	vec3 F = osgx_F_MultiScatter(N, V, roughness, F0, brdfLUT);
 
-	return prefilt * (F0 * brdf.x + brdf.y);
+	return prefilt * F;
 }
 )GLSL";
 
@@ -567,13 +597,15 @@ inline std::vector<std::string_view> splitShaderLibNames(std::string_view names)
 }
 
 inline const auto& pbrShaderLibs() {
-	static const std::array<ShaderLibEntry, 8> libs = {{
+	static const std::array<ShaderLibEntry, 9> libs = {{
 		{"D_GGX", "osgx_D_GGX", pbr::D_GGX},
 		{"G_SCHLICK", "osgx_G_Schlick", pbr::G_SCHLICK},
 		{"G_SMITH", "osgx_G_Smith", pbr::G_SMITH},
 		{"F_SCHLICK", "osgx_F_Schlick", pbr::F_SCHLICK},
 		{"F_SCHLICK_ROUGHNESS", "osgx_F_Schlick_roughness", pbr::F_SCHLICK_ROUGHNESS},
 		{"DIRECT_SPECULAR", "osgx_DirectSpecular", pbr::DIRECT_SPECULAR},
+		// Must precede IBL_SPECULAR: osgx_IBLSpecular() calls osgx_F_MultiScatter().
+		{"F_MULTISCATTER", "osgx_F_MultiScatter", pbr::F_MULTISCATTER},
 		{"IBL_SPECULAR", "osgx_IBLSpecular", pbr::IBL_SPECULAR},
 		{"TONEMAP_PBR_NEUTRAL", "osgx_TonemapPBRNeutral", pbr::TONEMAP_PBR_NEUTRAL}
 	}};
