@@ -16,6 +16,8 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <sstream>
 
 // TODO: Make some macro wrappers for pushGroup/insertMessage that use __FUNCTION__, __FILE__, etc.
@@ -33,6 +35,23 @@ enum class CullState {
 	VISIBLE,
 	CULLED
 };
+
+// Under threading models that pipeline cull and draw across threads (anything but
+// SingleThreaded), the cull traversal for frame N+1 runs concurrently with the draw
+// traversal for frame N -- so by the time draw(N) reads a path's cullFrame, cull has
+// typically already moved on and stamped it with N+1 (or later). cullFrame >= frameNum
+// is therefore normal, not staleness; only a cullFrame that has fallen genuinely BEHIND
+// frameNum (the path hasn't actually been visited by cull in a while) indicates the
+// cullState can no longer be trusted.
+inline constexpr unsigned int CULL_STALE_TOLERANCE = 2;
+
+inline bool isCullStale(
+	unsigned int cullFrame,
+	unsigned int frameNum,
+	unsigned int tolerance=CULL_STALE_TOLERANCE
+) {
+	return frameNum > cullFrame && (frameNum - cullFrame) > tolerance;
+}
 
 enum class Severity: GLenum {
 	DONT_CARE = 0x1100,
@@ -350,6 +369,22 @@ namespace detail {
 		std::vector<Entry> freeList;
 		Stats stats;
 
+		// stats is written from the cull traversal (markCull()) and read/written from
+		// the draw traversal (_drain(), and readers via snapshot()/profilerStats()).
+		// Under any threading model that pipelines cull and draw across threads
+		// (i.e. anything but SingleThreaded), those overlap -- a plain unordered_map
+		// isn't safe for that. unique_ptr (not a bare mutex) keeps FrameAccumulator
+		// move-constructible, which osg::buffered_object's vector needs when it grows.
+		std::unique_ptr<std::mutex> statsMutex = std::make_unique<std::mutex>();
+
+		// Thread-safe copy for readers (e.g. the ImGui profiler table) that shouldn't
+		// hold the lock -- and therefore block the cull thread -- while rendering.
+		Stats snapshot() const {
+			std::lock_guard<std::mutex> lock(*statsMutex);
+
+			return stats;
+		}
+
 		Entry alloc(osg::GLExtensions* ext) {
 			if(!freeList.empty()) {
 				auto e = std::move(freeList.back());
@@ -372,6 +407,7 @@ namespace detail {
 		}
 
 		void markCull(const std::string& path, CullState state, unsigned int frameNum) {
+			std::lock_guard<std::mutex> lock(*statsMutex);
 			auto& s = stats[path];
 
 			s.cullState = state;
@@ -417,18 +453,29 @@ namespace detail {
 				ext->glGetQueryObjectui64v(e.end, GL_QUERY_RESULT, &t1);
 
 				const GLuint64 gpuNs = t1 - t0;
-				auto& s = stats[e.path];
+				bool shouldPrint = false;
+				GLuint64 avgNs = 0;
 
-				s.gpuBuffer.add(gpuNs, sampleWindow);
-				s.samplesSincePrint++;
+				{
+					std::lock_guard<std::mutex> lock(*statsMutex);
+					auto& s = stats[e.path];
 
-				if(printEvery > 0 && s.samplesSincePrint >= printEvery) {
-					s.samplesSincePrint = 0;
+					s.gpuBuffer.add(gpuNs, sampleWindow);
+					s.samplesSincePrint++;
 
+					if(printEvery > 0 && s.samplesSincePrint >= printEvery) {
+						s.samplesSincePrint = 0;
+						shouldPrint = true;
+						avgNs = s.gpuBuffer.average(printEvery);
+					}
+				}
+
+				// Kept outside the lock -- notify()/stdout shouldn't hold up the cull thread.
+				if(shouldPrint) {
 					// TODO: This is annoyingly AWFUL and should be fixed; SOON!
 					notify(
 						"osgDebug::Profiler | [", e.path, "] GPU: ", gpuNs / 1000u, "us",
-						" | avg: ", s.gpuBuffer.average(printEvery) / 1000u, "us",
+						" | avg: ", avgNs / 1000u, "us",
 						" Frame: ", frameNum
 					);
 				}
@@ -443,12 +490,16 @@ namespace detail {
 	inline osg::buffered_object<FrameAccumulator> _accumulators;
 }
 
-// Read-only view of per-path GPU timing stats for the given GL context.
-// Populated by ProfilerFinalCallback at the end of each frame.
-// Safe to call from onDraw (POST_DRAW fires before FINAL_DRAW in OSG, so you
-// see the previous frame's data - ring-buffer averaging makes that irrelevant).
-inline const detail::FrameAccumulator::Stats& profilerStats(unsigned int contextID) {
-	return detail::_accumulators[contextID].stats;
+// Thread-safe snapshot of per-path GPU timing stats for the given GL context.
+// Populated by ProfilerFinalCallback at the end of each frame, and by
+// ProfilerCullCallback during the cull traversal. Returns a copy (not a
+// reference) because those two writers can run concurrently with this call
+// under any threading model that pipelines cull and draw across threads --
+// safe to call from onDraw regardless (POST_DRAW fires before FINAL_DRAW in
+// OSG, so you see the previous frame's data - ring-buffer averaging makes
+// that irrelevant).
+inline detail::FrameAccumulator::Stats profilerStats(unsigned int contextID) {
+	return detail::_accumulators[contextID].snapshot();
 }
 
 inline void pushGroup(Source source, GLuint id, const std::string& message) {

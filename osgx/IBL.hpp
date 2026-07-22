@@ -279,13 +279,29 @@ vec3 osgx_SHIrradiance(vec3 N, vec3 shCoeffs[9]) {
 }
 )GLSL";
 
+// Flat two-color "sky above / ground below" ambient term -- no cubemap, BRDF LUT, or SH bake
+// needed, so a shader can have *some* ambient response with zero asset loading. This is the
+// fallback path 09-ibl.py's evaluateIBL() takes when iblEnabled == 0; pulled out standalone here
+// since a quick REPL/demo shader frequently wants exactly this and nothing else -- reach for the
+// real SH_IRRADIANCE/IBL_SPECULAR pair above once an actual environment is worth loading.
+inline constexpr const char* HEMISPHERE_AMBIENT = R"GLSL(
+vec3 osgx_HemisphereAmbient(vec3 N, vec3 up, vec3 albedo, float ao, vec3 skyColor, vec3 groundColor) {
+	float hemi = dot(N, up) * 0.5 + 0.5;
+
+	return mix(groundColor, skyColor, hemi) * albedo * ao;
+}
+)GLSL";
+
 }
 
 
 namespace ibl {
 
 inline void registerShaderLibs() {
-	static constexpr ShaderLib libs[] = {{"SH_IRRADIANCE", "osgx_SHIrradiance", ibl::SH_IRRADIANCE}};
+	static constexpr ShaderLib libs[] = {
+		{"SH_IRRADIANCE", "osgx_SHIrradiance", ibl::SH_IRRADIANCE},
+		{"HEMISPHERE_AMBIENT", "osgx_HemisphereAmbient", ibl::HEMISPHERE_AMBIENT}
+	};
 	::osgx::registerShaderLibs("osgx::ibl", libs);
 }
 

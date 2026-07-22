@@ -10,3 +10,4 @@
 #include "osgx/Shader.hpp"
 #include "osgx/PBR.hpp"
 #include "osgx/IBL.hpp"
+#include "osgx/GLTF.hpp"

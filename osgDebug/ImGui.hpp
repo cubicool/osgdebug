@@ -584,7 +584,7 @@ public:
 
 		for(const auto& [path, ps] : stats) {
 			const bool unknown = ps.cullState == CullState::UNKNOWN;
-			const bool visibleThisFrame = ps.cullFrame == frameNum && ps.cullState == CullState::VISIBLE;
+			const bool visibleThisFrame = !isCullStale(ps.cullFrame, frameNum) && ps.cullState == CullState::VISIBLE;
 
 			if(unknown || visibleThisFrame) totalNs += ps.gpuBuffer.average();
 		}
@@ -607,7 +607,7 @@ public:
 				const GLuint64 avgNs = ps.gpuBuffer.average();
 				const double avgUs = static_cast<double>(avgNs) / 1000.0;
 				const bool culled = ps.cullState != CullState::UNKNOWN
-					&& (ps.cullFrame != frameNum || ps.cullState == CullState::CULLED)
+					&& (isCullStale(ps.cullFrame, frameNum) || ps.cullState == CullState::CULLED)
 				;
 				const float fraction = totalNs > 0
 					? static_cast<float>(avgNs) / static_cast<float>(totalNs)
@@ -617,15 +617,30 @@ public:
 				char pctLabel[16];
 				std::snprintf(pctLabel, sizeof(pctLabel), "%.1f%%", fraction * 100.0f);
 
+				// ProgressBar rows are taller than plain-text rows (it's a framed
+				// widget); AlignTextToFramePadding() lines the plain-text cells up
+				// with that height instead of sitting top-left in the extra space.
 				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(path.c_str());
+				ImGui::TableSetColumnIndex(0);
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(path.c_str());
 
 				if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
 
-				ImGui::TableSetColumnIndex(1); ImGui::Text("%.2f", avgUs);
+				ImGui::TableSetColumnIndex(1);
+				ImGui::AlignTextToFramePadding();
+
+				// Dimmed (not zeroed/blanked) when culled: this is the last measured
+				// value, not a live one, but it's not zero-cost either.
+				if(culled) ImGui::TextDisabled("%.2f", avgUs);
+				else ImGui::Text("%.2f", avgUs);
+
 				ImGui::TableSetColumnIndex(2);
 
-				if(culled) ImGui::TextDisabled("CULLED");
+				if(culled) {
+					ImGui::AlignTextToFramePadding();
+					ImGui::TextDisabled("CULLED");
+				}
 				else ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), pctLabel);
 			}
 

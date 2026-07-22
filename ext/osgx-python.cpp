@@ -17,6 +17,7 @@ PYBIND11_MODULE(osgx, m) {
 
 	osgx::pbr::registerShaderLibs();
 	osgx::ibl::registerShaderLibs();
+	osgx::gltf::registerShaderLibs();
 
 	auto grid = py::class_<
 		osgx::Grid,
@@ -180,5 +181,44 @@ PYBIND11_MODULE(osgx, m) {
 		&osgx::ibl::computeSH,
 		"image"_a,
 		"Projects an equirectangular HDR/LDR osg.Image onto SH9 diffuse irradiance coefficients."
+	);
+
+	auto m_gltf = m.def_submodule(
+		"gltf",
+		"osgx::gltf - glTF material-reading glue (osgGLTF_Material UBO contract) + one-call "
+		"full PBR/IBL setup"
+	);
+
+	m_gltf.attr("MATERIAL_INPUTS") = osgx::gltf::MATERIAL_INPUTS;
+	m_gltf.attr("GET_MATERIAL") = osgx::gltf::GET_MATERIAL;
+	m_gltf.attr("SHADING_NORMAL") = osgx::gltf::SHADING_NORMAL;
+	m_gltf.attr("EMISSIVE") = osgx::gltf::EMISSIVE;
+	m_gltf.attr("ALPHA_COVERAGE") = osgx::gltf::ALPHA_COVERAGE;
+
+	py::class_<osgx::gltf::FullPBRSetup>(m_gltf, "FullPBRSetup")
+		.def(py::init<>())
+		.def_readwrite("lutCamera", &osgx::gltf::FullPBRSetup::lutCamera)
+		.def_readwrite("envMap", &osgx::gltf::FullPBRSetup::envMap)
+		.def_readwrite("brdfLUT", &osgx::gltf::FullPBRSetup::brdfLUT)
+		.def("valid", &osgx::gltf::FullPBRSetup::valid)
+	;
+
+	m_gltf.def(
+		"setupFullPBR",
+		&osgx::gltf::setupFullPBR,
+		"node"_a,
+		"ktx2Path"_a,
+		"hdrPath"_a,
+		"iblIntensity"_a=0.8f,
+		"lightDir"_a=osg::Vec3(0.45f, -0.75f, 0.9f),
+		"lightDistance"_a=2.5f,
+		"lightColor"_a=osg::Vec3(4.0f, 4.0f, 3.8f),
+		"lightRadiusScale"_a=4.0f,
+		"lutSize"_a=512,
+		"One-call full PBR/IBL setup against an already-loaded glTF node: loads the prefiltered "
+		"cubemap + HDR-derived SH9 diffuse irradiance, bakes the BRDF LUT, and wires the shader + "
+		"every uniform/texture unit it needs onto node's StateSet (OVERRIDE'd). Returns a "
+		"FullPBRSetup -- add .lutCamera to the scene graph (required for the LUT to actually bake) "
+		"and check .valid() if either asset path might be wrong."
 	);
 }

@@ -10,6 +10,7 @@ set(OSGDEBUG_EXAMPLES
 	"viewer"
 	"visitor"
 	"grid"
+	"gltf"
 )
 
 foreach(example IN LISTS OSGDEBUG_EXAMPLES)

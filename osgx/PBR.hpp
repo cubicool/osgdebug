@@ -79,6 +79,19 @@ vec3 osgx_F_Schlick_roughness(float cosTheta, vec3 F0, float roughness) {
 }
 )GLSL";
 
+// Plain PBR material bundle -- source-agnostic (a glTF loader populates one via
+// osgx::gltf::GET_MATERIAL, but nothing here assumes glTF): everything DIRECT_SPECULAR,
+// F_MULTISCATTER/IBL_SPECULAR, and a hemisphere/SH ambient term need to shade a fragment.
+inline constexpr const char* MATERIAL_STRUCT = R"GLSL(
+struct osgx_Material {
+	vec3 albedo;
+	float ao;
+	float roughness;
+	float metallic;
+	vec3 F0;
+};
+)GLSL";
+
 // All five snippets, concatenated in dependency order (G_SMITH calls osgx_G_Schlick, so
 // G_SCHLICK must precede it). Convenience for callers that want the whole BRDF toolkit;
 // reach for the individual constants instead if only part of it is needed.
@@ -247,6 +260,7 @@ inline void registerShaderLibs() {
 		{"G_SMITH", "osgx_G_Smith", pbr::G_SMITH},
 		{"F_SCHLICK", "osgx_F_Schlick", pbr::F_SCHLICK},
 		{"F_SCHLICK_ROUGHNESS", "osgx_F_Schlick_roughness", pbr::F_SCHLICK_ROUGHNESS},
+		{"MATERIAL_STRUCT", "osgx_Material", pbr::MATERIAL_STRUCT},
 		{"DIRECT_SPECULAR", "osgx_DirectSpecular", pbr::DIRECT_SPECULAR},
 		{"F_MULTISCATTER", "osgx_F_MultiScatter", pbr::F_MULTISCATTER},
 		{"IBL_SPECULAR", "osgx_IBLSpecular", pbr::IBL_SPECULAR},
