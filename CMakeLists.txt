@@ -106,6 +106,22 @@ if(Python3_Development_FOUND)
 	# TODO: Make this an option too!
 	add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
 
+	pybind11_add_module(osgx_python "ext/osgx-python.cpp")
+
+	set_target_properties(osgx_python PROPERTIES OUTPUT_NAME "osgx")
+	target_include_directories(osgx_python PRIVATE
+		"${CMAKE_CURRENT_SOURCE_DIR}"
+		${OPENSCENEGRAPH_INCLUDE_DIRS}
+		"/home/cubicool/dev/OpenSceneGraph.py"
+		"/home/cubicool/dev/OpenSceneGraph.py/etc"
+	)
+	target_link_libraries(osgx_python PRIVATE
+		pybind11::module
+		${OPENSCENEGRAPH_LIBRARIES}
+	)
+	target_compile_features(osgx_python PUBLIC cxx_std_20)
+	set_target_properties(osgx_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 	pybind11_add_module(osgDebug_python "ext/osgDebug-python.cpp")
 
 	set_target_properties(osgDebug_python PROPERTIES OUTPUT_NAME "osgDebug")
