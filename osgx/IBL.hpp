@@ -71,9 +71,15 @@ vec3 importanceSampleGGX(vec2 Xi, float roughness) {
 	return vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
 }
 
-float G_GGX_IBL(float NdotX, float roughness) {
-	float k = (roughness * roughness) / 2.0;
-	return NdotX / (NdotX * (1.0 - k) + k);
+// Correlated Smith visibility, written exactly as the validated Python reference viewer's
+// `smith(nv, nl, r)`. This is the visibility term already divided by 4*NdotL*NdotV for the
+// split-sum integral; it is not interchangeable with a pair of Schlick G terms.
+float smithVisibility(float NdotV, float NdotL, float roughness) {
+	float alpha2 = pow(roughness, 4.0);
+	float gv = NdotL * sqrt(NdotV * NdotV * (1.0 - alpha2) + alpha2);
+	float gl = NdotV * sqrt(NdotL * NdotL * (1.0 - alpha2) + alpha2);
+
+	return 0.5 / (gv + gl);
 }
 
 void main() {
@@ -82,7 +88,7 @@ void main() {
 	vec3 V = vec3(sqrt(1.0 - NdotV * NdotV), 0.0, NdotV);
 
 	float scale = 0.0, bias = 0.0;
-	const uint SAMPLES = 1024u;
+	const uint SAMPLES = 512u;
 
 	for(uint i = 0u; i < SAMPLES; i++) {
 		vec2 Xi = hammersley(i, SAMPLES);
@@ -93,8 +99,7 @@ void main() {
 		float VdotH = max(dot(V, H), 0.0);
 
 		if(NdotL > 0.0) {
-			float G = G_GGX_IBL(NdotV, roughness) * G_GGX_IBL(NdotL, roughness);
-			float G_vis = G * VdotH / max(NdotH * NdotV, 0.001);
+			float G_vis = smithVisibility(NdotV, NdotL, roughness) * VdotH * NdotL / NdotH;
 			float Fc = pow(1.0 - VdotH, 5.0);
 
 			scale += (1.0 - Fc) * G_vis;
@@ -102,7 +107,7 @@ void main() {
 		}
 	}
 
-	fragColor = vec4(scale / float(SAMPLES), bias / float(SAMPLES), 0.0, 1.0);
+	fragColor = vec4(4.0 * scale / float(SAMPLES), 4.0 * bias / float(SAMPLES), 0.0, 1.0);
 }
 )GLSL";
 
@@ -266,14 +271,22 @@ inline SH9 computeSH(const osg::Image* img) {
 // GLSL evaluation of an SH9 environment at world-space normal N. shCoeffs is a 9-element array
 // uniform (or local) -- caller declares and binds it under whatever name fits their shader
 // (e.g. `uniform vec3 iblSH[9];`), then calls osgx_SHIrradiance(N, iblSH).
+//
+// Each shCoeffs[i] is A_l * L_lm (the cosine-lobe weight A_l already baked in by computeSH()'s
+// projection - see its own comment). Reconstructing irradiance requires multiplying back in the
+// SAME per-band Y_lm(n) normalization constant used during projection (0.282095/0.488603/
+// 1.092548/0.315392/0.546274 below) - omitting them (as a prior revision of this function did)
+// isn't "SH9 just being low-frequency," it's a real scale bug: band 0 alone comes out ~3.5x too
+// bright without its 0.282095 factor. Matches OpenSceneGraph.py/pyosg-lighting/09-ibl.py's own
+// sh_irradiance() constant-for-constant.
 inline constexpr const char* SH_IRRADIANCE = R"GLSL(
 vec3 osgx_SHIrradiance(vec3 N, vec3 shCoeffs[9]) {
 	return max(
-		shCoeffs[0]
-		+ shCoeffs[1] * N.y + shCoeffs[2] * N.z + shCoeffs[3] * N.x
-		+ shCoeffs[4] * N.x * N.y + shCoeffs[5] * N.y * N.z
-		+ shCoeffs[6] * (3.0 * N.z * N.z - 1.0)
-		+ shCoeffs[7] * N.x * N.z + shCoeffs[8] * (N.x * N.x - N.y * N.y),
+		shCoeffs[0] * 0.282095
+		+ shCoeffs[1] * (0.488603 * N.y) + shCoeffs[2] * (0.488603 * N.z) + shCoeffs[3] * (0.488603 * N.x)
+		+ shCoeffs[4] * (1.092548 * N.x * N.y) + shCoeffs[5] * (1.092548 * N.y * N.z)
+		+ shCoeffs[6] * (0.315392 * (3.0 * N.z * N.z - 1.0))
+		+ shCoeffs[7] * (1.092548 * N.x * N.z) + shCoeffs[8] * (0.546274 * (N.x * N.x - N.y * N.y)),
 		vec3(0.0)
 	);
 }
@@ -324,12 +337,38 @@ inline osg::Vec3f cubeFaceDirection(int face, float s, float t) {
 	}
 }
 
+// Read-only view of a GL_RGB/GL_FLOAT osg::Image, with the row stride pre-derived once. Passing
+// this instead of an osg::Image* is the actual fix for the hot-loop cost sampleEquirect() below
+// used to pay: osg::Image::data(x,y) LOOKS like a cheap header-inlined pointer computation, but it
+// internally calls getPixelSizeInBits()/getRowStepInBytes(), which call
+// computePixelSizeInBits()/computeRowWidthInBytes() - both declared `static` in the header but
+// DEFINED out-of-line in libosg's Image.cpp, each running its own multi-case switch on
+// pixelFormat/dataType/packing. Those values never change for a given image, so deriving them
+// once here (instead of ~25 million times, once per bilinear tap per sample) is the difference
+// that actually matters - not just swapping which OSG accessor gets called.
+struct EquirectView {
+	const float* data;
+	int width, height;
+	int rowStrideFloats; // == getRowStepInBytes() / sizeof(float); may exceed width*3 if padded
+
+	explicit EquirectView(const osg::Image* img):
+		data(reinterpret_cast<const float*>(img->data())),
+		width(img->s()),
+		height(img->t()),
+		rowStrideFloats(static_cast<int>(img->getRowStepInBytes() / sizeof(float)))
+	{
+	}
+};
+
 // Bilinear sample of an equirectangular HDR image along a world-space (Z-up) direction -- same
 // theta/phi convention computeSH() uses per-texel, but continuous, since Monte Carlo sample
 // directions don't land on exact source pixels. Ported from sample_hdr() in the Python original.
-inline osg::Vec3f sampleEquirect(const osg::Image* img, const osg::Vec3f& dir) {
-	const int W = img->s();
-	const int H = img->t();
+// Requires `view` to wrap a real HDR-loaded (GL_RGB/GL_FLOAT) osg::Image, same requirement
+// computeSH() already documents for its own input -- exactly what osgDB's own HDR (Radiance)
+// reader always produces (see ReaderWriterHDR.cpp).
+inline osg::Vec3f sampleEquirect(const EquirectView& view, const osg::Vec3f& dir) {
+	const int W = view.width;
+	const int H = view.height;
 
 	double phi = std::atan2(double(dir.y()), double(dir.x())) / (2.0 * osg::PI);
 
@@ -349,15 +388,25 @@ inline osg::Vec3f sampleEquirect(const osg::Image* img, const osg::Vec3f& dir) {
 	const int y0 = int(std::floor(y));
 	const int y1 = std::min(y0 + 1, H - 1);
 
-	const auto c00 = img->getColor(unsigned(x0), unsigned(y0));
-	const auto c10 = img->getColor(unsigned(x1), unsigned(y0));
-	const auto c01 = img->getColor(unsigned(x0), unsigned(y1));
-	const auto c11 = img->getColor(unsigned(x1), unsigned(y1));
-	const auto a = c00 * float(1.0 - fx) + c10 * float(fx);
-	const auto b = c01 * float(1.0 - fx) + c11 * float(fx);
-	const auto result = a * float(1.0 - fy) + b * float(fy);
+	// OpenCV (the Python reference) addresses the Radiance panorama top-to-bottom. OSG images
+	// address rows bottom-to-top; ReaderWriterHDR preserves that GL/OSG orientation when it loads
+	// the file. Convert the sampled top-origin y coordinates back to OSG's row order here.
+	const std::size_t row0Index = std::size_t(H - 1 - y0);
+	const std::size_t row1Index = std::size_t(H - 1 - y1);
+	const float* row0 = view.data + row0Index * std::size_t(view.rowStrideFloats);
+	const float* row1 = view.data + row1Index * std::size_t(view.rowStrideFloats);
+	const float* p00 = row0 + std::size_t(x0) * 3;
+	const float* p10 = row0 + std::size_t(x1) * 3;
+	const float* p01 = row1 + std::size_t(x0) * 3;
+	const float* p11 = row1 + std::size_t(x1) * 3;
+	const osg::Vec3f c00(p00[0], p00[1], p00[2]);
+	const osg::Vec3f c10(p10[0], p10[1], p10[2]);
+	const osg::Vec3f c01(p01[0], p01[1], p01[2]);
+	const osg::Vec3f c11(p11[0], p11[1], p11[2]);
+	const osg::Vec3f a = c00 * float(1.0 - fx) + c10 * float(fx);
+	const osg::Vec3f b = c01 * float(1.0 - fx) + c11 * float(fx);
 
-	return osg::Vec3f(result.r(), result.g(), result.b());
+	return a * float(1.0 - fy) + b * float(fy);
 }
 
 }
@@ -365,7 +414,7 @@ inline osg::Vec3f sampleEquirect(const osg::Image* img, const osg::Vec3f& dir) {
 // O(6 * size * size * samples) bilinear HDR samples -- meant to run once at startup (or once per
 // environment swap), same contract as computeSH(). `hdrImg` must be a real HDR-loaded osg::Image
 // (not LDR-clamped), same requirement as computeSH().
-inline osg::ref_ptr<osg::TextureCubeMap> computeLambertianCubemap(
+inline osg::ref_ptr<osg::TextureCubeMap> computeLambertianCubeMap(
 	const osg::Image* hdrImg,
 	int size = 64,
 	int samples = 256
@@ -377,6 +426,27 @@ inline osg::ref_ptr<osg::TextureCubeMap> computeLambertianCubemap(
 		osg::TextureCubeMap::POSITIVE_Y, osg::TextureCubeMap::NEGATIVE_Y,
 		osg::TextureCubeMap::POSITIVE_Z, osg::TextureCubeMap::NEGATIVE_Z
 	};
+
+	// The tangent-space sample direction for sample `i` depends only on `i`/`samples` - not on the
+	// texel or face it'll be transformed into - so it's computed exactly `samples` times here,
+	// once, instead of redone from scratch (radicalInverseVdC() + sin/cos/sqrt) inside the
+	// per-texel loop below (which would repeat identical work 6*size*size times over, unused
+	// libm/bit-twiddling work that dwarfed the actual per-texel HDR sampling). Matches
+	// make_lambertian_environment()'s own `sequence`/`phi`/`local` precomputed once up top.
+	std::vector<osg::Vec3f> localSamples(static_cast<std::size_t>(samples));
+	const detail::EquirectView hdrView(hdrImg);
+
+	for(int i = 0; i < samples; i++) {
+		const double xi2 = detail::radicalInverseVdC(static_cast<std::uint32_t>(i));
+		const double phi = 2.0 * osg::PI * double(i) / double(samples);
+		const double r = std::sqrt(xi2);
+
+		localSamples[static_cast<std::size_t>(i)] = osg::Vec3f(
+			float(r * std::cos(phi)),
+			float(r * std::sin(phi)),
+			float(std::sqrt(std::max(0.0, 1.0 - xi2)))
+		);
+	}
 
 	for(int face = 0; face < 6; face++) {
 		auto image = make_ref<osg::Image>();
@@ -410,18 +480,9 @@ inline osg::ref_ptr<osg::TextureCubeMap> computeLambertianCubemap(
 				osg::Vec3d accum(0.0, 0.0, 0.0);
 
 				for(int i = 0; i < samples; i++) {
-					const double xi2 = detail::radicalInverseVdC(static_cast<std::uint32_t>(i));
-					const double phi = 2.0 * osg::PI * double(i) / double(samples);
-					const double r = std::sqrt(xi2);
-
-					const osg::Vec3f local(
-						float(r * std::cos(phi)),
-						float(r * std::sin(phi)),
-						float(std::sqrt(std::max(0.0, 1.0 - xi2)))
-					);
-
+					const osg::Vec3f& local = localSamples[static_cast<std::size_t>(i)];
 					const osg::Vec3f dir = T * local.x() + B * local.y() + n * local.z();
-					const osg::Vec3f c = detail::sampleEquirect(hdrImg, dir);
+					const osg::Vec3f c = detail::sampleEquirect(hdrView, dir);
 
 					accum += osg::Vec3d(double(c.x()), double(c.y()), double(c.z()));
 				}
@@ -446,7 +507,7 @@ inline osg::ref_ptr<osg::TextureCubeMap> computeLambertianCubemap(
 
 // GLSL evaluation of a baked Lambertian cubemap at world-space normal N -- applies the same
 // GL-cube-face axis remap IBL_SPECULAR's R_gl uses, so `diffuseEnv` must be sampled with a plain
-// `samplerCube` bound to a cubemap baked by computeLambertianCubemap() above (or an equivalent
+// `samplerCube` bound to a cubemap baked by computeLambertianCubeMap() above (or an equivalent
 // Y-up-convention bake).
 inline constexpr const char* LAMBERTIAN_IRRADIANCE = R"GLSL(
 vec3 osgx_LambertianIrradiance(vec3 N, samplerCube diffuseEnv) {

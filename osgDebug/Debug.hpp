@@ -25,7 +25,6 @@ OSGX_ENABLE_WARNINGS
 
 namespace osgDebug {
 
-
 using namespace osgx::literals;
 
 inline constexpr size_t DEFAULT_BUFFER_SIZE = 60;

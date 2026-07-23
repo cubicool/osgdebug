@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
 	osgViewer::Viewer viewer(args);
 
 	args.getApplicationUsage()->setCommandLineUsage(
-		std::string(args.getApplicationName()) + " <model.gltf> --ktx2 <path> --hdr <path>"
+		std::string(args.getApplicationName()) + " <model.gltf> --ktx2 <path> --hdr <path> [--debug mode]"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--ktx2 <path>",
@@ -39,11 +39,16 @@ int main(int argc, char** argv) {
 		"--hdr <path>",
 		"Source HDR environment (for SH9 diffuse irradiance)"
 	);
+	args.getApplicationUsage()->addCommandLineOption(
+		"--debug <mode>",
+		"combined, diffuse, specular, base-color, roughness, metallic, normal-texture, normal-texture-raw, geometry-normal, shading-normal, geometry-tangent, bitangent, linear-diffuse, linear-specular, or linear-combined"
+	);
 
-	std::string ktx2Path, hdrPath;
+	std::string ktx2Path, hdrPath, debugName = "combined";
 
 	const bool haveKtx2 = args.read("--ktx2", ktx2Path);
 	const bool haveHdr = args.read("--hdr", hdrPath);
+	args.read("--debug", debugName);
 
 	if(args.argc() < 2 || !haveKtx2 || !haveHdr) {
 		args.getApplicationUsage()->write(std::cerr);
@@ -73,6 +78,23 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	const std::map<std::string, int> debugModes = {
+		{"combined", 0}, {"diffuse", 1}, {"specular", 2},
+		{"base-color", 3}, {"roughness", 4}, {"metallic", 5},
+		{"normal-texture", 6}, {"normal-texture-raw", 7}, {"geometry-normal", 8},
+		{"shading-normal", 9}, {"geometry-tangent", 10}, {"bitangent", 11},
+		{"linear-diffuse", 12}, {"linear-specular", 13}, {"linear-combined", 14}
+	};
+	const auto debug = debugModes.find(debugName);
+
+	if(debug == debugModes.end()) {
+		std::cerr << "Unknown --debug mode: " << debugName << std::endl;
+
+		return 1;
+	}
+
+	pis.debugMode->set(debug->second);
+
 	auto root = osgx::make_ref<osg::Group>();
 
 	root->addChild(pis.lutCamera);
@@ -81,16 +103,19 @@ int main(int argc, char** argv) {
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 	viewer.addEventHandler(new osgViewer::StatsHandler());
+	viewer.getCamera()->setClearColor(osg::Vec4(48.0 / 255.0, 53.0 / 255.0, 66.0 / 255.0, 1.0)); // #303542
 
 	// Diagnostics, ported from pyosg-khronos-viewer.py: 1/2/3 pick debugMode, N/R toggle the
-	// normal/roughness maps.
+	// normal/roughness maps. D toggles the diffuse IBL source (baked Lambertian cubemap vs.
+	// SH9) for A/B screenshot comparisons -- see createPBRIBLScene()'s console output at
+	// startup for how much longer the cubemap bake took vs. the SH9 projection.
 	std::cout <<
 		"Diagnostics: 1=combined 2=diffuse 3=specular N=toggle normal map "
-		"R=toggle roughness map" << std::endl
+		"R=toggle roughness map D=toggle diffuse IBL source (cubemap/SH9)" << std::endl
 	;
 
 	viewer.addEventHandler(new osgx::LambdaKeyHandler(
-		{'1', '2', '3', 'n', 'N', 'r', 'R'},
+		{'1', '2', '3', 'n', 'N', 'r', 'R', 'd', 'D'},
 		[pis](const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter&, int key) {
 			switch(key) {
 				case '1': {
@@ -135,6 +160,17 @@ int main(int argc, char** argv) {
 					pis.disableRoughnessMap->set(1 - v);
 
 					std::cout << "[diagnostic] roughness map " << (v ? "on" : "off") << std::endl;
+
+					break;
+				}
+
+				case 'd': case 'D': {
+					int v = 0;
+
+					pis.diffuseIBLMode->get(v);
+					pis.diffuseIBLMode->set(1 - v);
+
+					std::cout << "[diagnostic] diffuse IBL source: " << (v ? "cubemap" : "SH9") << std::endl;
 
 					break;
 				}

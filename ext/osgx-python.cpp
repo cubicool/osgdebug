@@ -188,8 +188,8 @@ PYBIND11_MODULE(osgx, m) {
 	);
 
 	m_ibl.def(
-		"computeLambertianCubemap",
-		&osgx::ibl::computeLambertianCubemap,
+		"computeLambertianCubeMap",
+		&osgx::ibl::computeLambertianCubeMap,
 		"image"_a,
 		"size"_a = 64,
 		"samples"_a = 256,
@@ -219,6 +219,7 @@ PYBIND11_MODULE(osgx, m) {
 		.def_readwrite("debugMode", &osgx::gltf::PBRIBLScene::debugMode)
 		.def_readwrite("disableNormalMap", &osgx::gltf::PBRIBLScene::disableNormalMap)
 		.def_readwrite("disableRoughnessMap", &osgx::gltf::PBRIBLScene::disableRoughnessMap)
+		.def_readwrite("diffuseIBLMode", &osgx::gltf::PBRIBLScene::diffuseIBLMode)
 		.def("valid", &osgx::gltf::PBRIBLScene::valid)
 	;
 
@@ -228,11 +229,13 @@ PYBIND11_MODULE(osgx, m) {
 		"node"_a,
 		"ktx2Path"_a,
 		"hdrPath"_a,
-		"iblIntensity"_a=0.8f,
+		"iblIntensity"_a=1.0f,
 		"lutSize"_a=512,
 		"One-call full PBR/IBL setup against an already-loaded glTF node: loads the prefiltered "
-		"cubemap + HDR-derived SH9 diffuse irradiance, bakes the BRDF LUT, and wires the shader + "
-		"every uniform/texture unit it needs onto node's StateSet (OVERRIDE'd). Returns a "
+		"cubemap, bakes the BRDF LUT, and bakes BOTH a Lambertian diffuse irradiance cubemap and "
+		"SH9 from the same HDR image (toggle at runtime via .diffuseIBLMode -- 0=cubemap [default], "
+		"1=SH9 -- for A/B comparison; bake time for each is printed via OSG_NOTICE), and wires the "
+		"shader + every uniform/texture unit it needs onto node's StateSet (OVERRIDE'd). Returns a "
 		"PBRIBLScene -- add .lutCamera to the scene graph (required for the LUT to actually bake) "
 		"and check .valid() if either asset path might be wrong."
 	);

@@ -51,9 +51,8 @@ uniform float osgGLTF_alphaMode;
 uniform float osgGLTF_alphaCutoff;
 )GLSL";
 
-// Reads MATERIAL_INPUTS (+ current shading normal N, for the specular-AA roughness clamp below)
-// into an osgx_Material (osgx::pbr::MATERIAL_STRUCT). Requires MATERIAL_INPUTS and MATERIAL_STRUCT
-// already in scope.
+// Reads MATERIAL_INPUTS into an osgx_Material (osgx::pbr::MATERIAL_STRUCT). Requires
+// MATERIAL_INPUTS and MATERIAL_STRUCT already in scope.
 //
 // Every texture read here is conditioned on the matching `has*Map` flag rather than sampled
 // unconditionally: a factor-only material (no baseColorTexture/metallicRoughnessTexture/
@@ -78,14 +77,6 @@ osgx_Material osgx_GLTFGetMaterial(vec2 uv, vec3 N) {
 		: osgGLTF_material.metallicFactor
 	;
 
-	// Specular AA: clamp roughness by how fast the shading normal rotates per pixel, so a bevel/
-	// crease baked into a normal map doesn't render as an over-sharp aliased highlight.
-	float normalDelta = max(
-		max(abs(dFdx(N.x)), abs(dFdx(N.y))),
-		max(abs(dFdy(N.x)), abs(dFdy(N.y)))
-	);
-
-	mat.roughness = max(mat.roughness, normalDelta);
 	mat.F0 = mix(vec3(0.04), mat.albedo, mat.metallic);
 
 	return mat;
@@ -105,7 +96,9 @@ vec3 osgx_GLTFShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 uv) {
 
 	if(!bool(osgGLTF_material.hasNormalMap)) return Nb;
 
-	vec3 tangentNormal = texture(osgGLTF_textures.normal, uv).rgb * 2.0 - 1.0;
+	// The Khronos reference normalizes in tangent space before applying TBN. Keeping that
+	// normalization here matters when interpolation leaves TBN slightly non-orthonormal.
+	vec3 tangentNormal = normalize(texture(osgGLTF_textures.normal, uv).rgb * 2.0 - 1.0);
 	vec3 T, B;
 
 	// TODO: How much is this conditional hurting us? It might be worth looking into having two
@@ -182,11 +175,13 @@ namespace gltf {
 // one Python) call. A genuine C++ API first, same as everything else in this header - no
 // pybind11 involved here at all; see ext/osgx-python.cpp for the separate binding.
 //
-// Uses osgx::ibl's baked Lambertian cubemap (computeLambertianCubemap()) for diffuse IBL, not
-// SH9 - pixel-parity with the Khronos glTF-Sample-Viewer reference was the explicit goal here
+// Defaults to osgx::ibl's baked Lambertian cubemap (computeLambertianCubeMap()) for diffuse IBL,
+// not SH9 - pixel-parity with the Khronos glTF-Sample-Viewer reference was the explicit goal here
 // (see TODO.md), and SH9's low-frequency basis measurably diverges from it in this environment.
-// SH9/computeSH() are untouched and still the right call for a hand-assembled shader that wants
-// the cheaper path.
+// Both are baked and uploaded regardless (see `diffuseIBLMode` below) so a caller can A/B the two
+// at runtime without reloading anything - useful for comparing bake cost and visual quality
+// side-by-side. `PBRIBLScene::diffuseIBLMode` selects which one the shader actually samples:
+// 0 = baked cubemap (default), 1 = SH9.
 //
 // IBL only, deliberately - no direct/punctual lights. A prior revision carried one ad hoc direct
 // light (lightPos/lightColor/lightRadius uniforms); removed until osgx::pbr's *LightRig system
@@ -235,9 +230,9 @@ inline constexpr const char* FULL_PBR_FRAGMENT_SHADER_SRC = R"GLSL(
 
 const float PI = 3.14159265359;
 
-#pragma osgx::pbr MATERIAL_STRUCT, F_SCHLICK_ROUGHNESS, F_MULTISCATTER, IBL_SPECULAR, TONEMAP_PBR_NEUTRAL
+#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, TONEMAP_PBR_NEUTRAL
 #pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
-#pragma osgx::ibl LAMBERTIAN_IRRADIANCE
+#pragma osgx::ibl LAMBERTIAN_IRRADIANCE, SH_IRRADIANCE
 
 in vec3 vNGeom;
 in vec3 vPosition;
@@ -251,14 +246,17 @@ uniform samplerCube envMap; // unit 5
 uniform sampler2D brdfLUT; // unit 6
 uniform samplerCube diffuseEnv; // unit 7
 uniform float iblIntensity;
+uniform vec3 iblSH[9];
 
 // Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
 // handler - lets a caller (see osgdebug-gltf.cpp) key-toggle which term is actually
 // contributing to a surface, useful for isolating why a render looks wrong. debugMode:
-// 0=combined, 1=diffuse only, 2=specular only.
+// 0=combined, 1=diffuse only, 2=specular only. diffuseIBLMode picks the diffuse IBL source
+// for A/B comparison: 0=baked Lambertian cubemap (diffuseEnv, default), 1=SH9 (iblSH).
 uniform int debugMode;
 uniform int disableNormalMap;
 uniform int disableRoughnessMap;
+uniform int diffuseIBLMode;
 
 out vec4 fragColor;
 
@@ -267,20 +265,46 @@ struct Lighting {
 	vec3 specular;
 };
 
-Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V, float NdotV) {
+vec3 osgx_ZUpToGltf(vec3 d) { return vec3(d.x, d.z, -d.y); }
+vec3 osgx_LinearToSRGB(vec3 c) {
+	return mix(12.92 * c, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
+		step(vec3(0.0031308), c));
+}
+
+Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
 	Lighting result;
 	mat3 invView = transpose(mat3(osg_ViewMatrix));
 	vec3 N_world = invView * N;
 	vec3 V_world = invView * V;
 
-	vec3 F_ibl = osgx_F_Schlick_roughness(NdotV, mat.F0, mat.roughness);
-	vec3 kD_ibl = (1.0 - F_ibl) * (1.0 - mat.metallic);
+	vec3 diffuseIrradiance = diffuseIBLMode == 0
+		? osgx_LambertianIrradiance(N_world, diffuseEnv)
+		: osgx_SHIrradiance(N_world, iblSH)
+	;
 
-	result.diffuse = osgx_LambertianIrradiance(N_world, diffuseEnv) * mat.albedo * kD_ibl * mat.ao * iblIntensity;
+	// The KTX2 prefilter has a terminal level that is not part of the Khronos GGX chain.
+	// Match the reference viewer: roughness 1 selects the last filtered level, not that
+	// terminal level.
+	float maxMip = float(max(textureQueryLevels(envMap) - 2, 0));
+	vec3 R = reflect(-V_world, N_world);
+	vec3 R_gl = vec3(R.x, R.z, -R.y);
+	vec3 prefiltered = textureLod(envMap, R_gl, mat.roughness * maxMip).rgb;
 
-	float maxMip = float(textureQueryLevels(envMap) - 1);
+	// Matches pyosg-khronos-viewer.py's fresnel()/fd/fm/mix(...) exactly: two independent
+	// multiscatter-Fresnel evaluations (dielectric F0=0.04, metal F0=albedo), mixed by metallic
+	// AFTER Fresnel - NOT a single Fresnel evaluation of a pre-blended F0=mix(0.04,albedo,metallic).
+	// The two are not equivalent: F_MultiScatter is nonlinear in F0 (see its Favg/(1-roughness)
+	// clamp terms), so mixing F0 first and evaluating Fresnel once diverges from evaluating
+	// Fresnel twice and mixing the result - most visible on partially-metallic materials at
+	// grazing angles/higher roughness. This was the actual source of a real, camera-independent
+	// specular mismatch found comparing BoomBox's handle (non-trivial metallic in its
+	// metallicRoughnessTexture) against the Khronos reference.
+	vec3 Fd = osgx_F_MultiScatter(N_world, V_world, mat.roughness, vec3(0.04), brdfLUT);
+	vec3 Fm = osgx_F_MultiScatter(N_world, V_world, mat.roughness, mat.albedo, brdfLUT);
+	vec3 kD_ibl = (1.0 - Fd) * (1.0 - mat.metallic);
 
-	result.specular = osgx_IBLSpecular(N_world, V_world, mat.F0, mat.roughness, envMap, brdfLUT, maxMip) * mat.ao * iblIntensity;
+	result.diffuse = diffuseIrradiance * mat.albedo * kD_ibl * mat.ao * iblIntensity;
+	result.specular = prefiltered * mix(Fd, Fm, mat.metallic) * mat.ao * iblIntensity;
 
 	return result;
 }
@@ -299,17 +323,49 @@ void main() {
 
 	if(disableRoughnessMap != 0) mat.roughness = osgGLTF_material.roughnessFactor;
 
-	float NdotV = max(dot(N, V), 0.0);
+	// Match pyosg-khronos-viewer.py's material/coordinate diagnostics. These deliberately return
+	// before lighting so a channel can be compared without IBL, Fresnel, or tonemapping involved.
+	mat3 invView = transpose(mat3(osg_ViewMatrix));
+	vec3 NgeomWorld = normalize(invView * vNGeom);
+	vec3 Nworld = normalize(invView * N);
 
-	Lighting ambient = evaluateIBL(mat, N, V, NdotV);
+	if(debugMode == 3) { fragColor = vec4(osgx_LinearToSRGB(mat.albedo), alpha); return; }
+	if(debugMode == 4) { fragColor = vec4(vec3(mat.roughness), alpha); return; }
+	if(debugMode == 5) { fragColor = vec4(vec3(mat.metallic), alpha); return; }
+	if(debugMode == 6) {
+		vec3 raw = texture(osgGLTF_textures.normal, vUV).rgb;
+		fragColor = vec4(bool(osgGLTF_material.hasNormalMap) ? normalize(raw * 2.0 - 1.0) * 0.5 + 0.5 : vec3(1.0), alpha);
+		return;
+	}
+	if(debugMode == 7) {
+		fragColor = vec4(bool(osgGLTF_material.hasNormalMap) ? texture(osgGLTF_textures.normal, vUV).rgb : vec3(1.0), alpha);
+		return;
+	}
+	if(debugMode == 8) { fragColor = vec4(osgx_ZUpToGltf(NgeomWorld) * 0.5 + 0.5, alpha); return; }
+	if(debugMode == 9) { fragColor = vec4(osgx_ZUpToGltf(Nworld) * 0.5 + 0.5, alpha); return; }
+	vec3 tangentWorld = normalize(invView * vTangent.xyz);
+	vec3 bitangentWorld = normalize(cross(NgeomWorld, tangentWorld)) * vTangent.w;
+	if(debugMode == 10) { fragColor = vec4(osgx_ZUpToGltf(tangentWorld) * 0.5 + 0.5, alpha); return; }
+	if(debugMode == 11) { fragColor = vec4(osgx_ZUpToGltf(bitangentWorld) * 0.5 + 0.5, alpha); return; }
+
+	Lighting ambient = evaluateIBL(mat, N, V);
 	vec3 emissive = debugMode == 0 ? osgx_GLTFEmissive(vUV, emissiveFactor) : vec3(0.0);
 
-	vec3 surface = debugMode == 1
+	vec3 surface = (debugMode == 1 || debugMode == 12)
 		? ambient.diffuse
-		: debugMode == 2 ? ambient.specular : ambient.diffuse + ambient.specular
+		: (debugMode == 2 || debugMode == 13) ? ambient.specular : ambient.diffuse + ambient.specular
 	;
 
-	vec3 color = surface + emissive;
+	vec3 color = surface + ((debugMode == 0 || debugMode == 14) ? osgx_GLTFEmissive(vUV, emissiveFactor) : vec3(0.0));
+
+	// These three modes intentionally bypass PBR Neutral and gamma. They expose the linear
+	// values immediately before output, so a comparison is not hidden by tone compression.
+	if(debugMode >= 12) {
+		fragColor = vec4(color, alpha);
+
+		return;
+	}
+
 	color = osgx_TonemapPBRNeutral(color);
 	color = pow(color, vec3(1.0 / 2.2));
 
@@ -335,6 +391,7 @@ struct PBRIBLScene {
 	osg::ref_ptr<osg::Uniform> debugMode;
 	osg::ref_ptr<osg::Uniform> disableNormalMap;
 	osg::ref_ptr<osg::Uniform> disableRoughnessMap;
+	osg::ref_ptr<osg::Uniform> diffuseIBLMode; // 0 = baked Lambertian cubemap, 1 = SH9
 
 	// False if either asset failed to load (see OSG_WARN for which) - createPBRIBLScene() still
 	// returns normally rather than throwing (matches loadPrefilterCubemap()'s own
@@ -358,7 +415,7 @@ inline PBRIBLScene createPBRIBLScene(
 	const std::string& ktx2Path,
 	const std::string& hdrPath,
 	float iblIntensity = 1.0f, // matches pyosg-khronos-viewer.py's hardcoded 1.0 for parity
-	int lutSize = 512
+	int lutSize = 1024 // matches pyosg-khronos-viewer.py
 ) {
 	// Idempotent (registerShaderLibs() no-ops on an identical re-registration - see
 	// Shader.hpp) - called here so this really is a one-call helper. The Python
@@ -395,13 +452,36 @@ inline PBRIBLScene createPBRIBLScene(
 		return pis;
 	}
 
-	pis.diffuseEnv = ibl::computeLambertianCubemap(hdrImage);
+	// Poor man's profiling - both diffuse IBL techniques are baked from the same already-loaded
+	// hdrImage (no extra I/O) so a caller can A/B them at runtime via `diffuseIBLMode` below
+	// without reloading anything. computeSH() is a single O(W*H) pass over hdrImage directly;
+	// computeLambertianCubeMap() is a real Monte Carlo convolution (O(6*size*size*samples)
+	// bilinear samples) and is the slower of the two by design - this print is just to see how
+	// much slower, in practice, for the environment actually being loaded.
+	const osg::Timer_t shStart = tick();
+	const ibl::SH9 sh = ibl::computeSH(hdrImage);
+	const osg::Timer_t shEnd = tick();
+
+	pis.diffuseEnv = ibl::computeLambertianCubeMap(hdrImage);
+
+	const osg::Timer_t cubemapEnd = tick();
+
+	OSG_NOTICE
+		<< "osgx::gltf::createPBRIBLScene: computeSH() took "
+		<< osg::Timer::instance()->delta_s(shStart, shEnd) << "s, computeLambertianCubeMap() took "
+		<< osg::Timer::instance()->delta_s(shEnd, cubemapEnd) << "s"
+		<< std::endl
+	;
 
 	auto* ss = node->getOrCreateStateSet();
 
 	auto prog = make_ref<osg::Program>();
 
 	prog->setName("osgx_gltf_PBRIBLScene");
+	// osgGLTF stores glTF's optional TANGENT accessor in generic vertex attribute 7.
+	// Bind it before linking, exactly as pyosg-khronos-viewer.py does; otherwise GLSL may
+	// assign osg_Tangent to another generic attribute and normal mapping reads a default value.
+	prog->addBindAttribLocation("osg_Tangent", 7);
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
@@ -417,6 +497,12 @@ inline PBRIBLScene createPBRIBLScene(
 	ss->addUniform(new osg::Uniform("diffuseEnv", 7));
 	ss->addUniform(new osg::Uniform("iblIntensity", iblIntensity));
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
+
+	auto* shUniform = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblSH", 9);
+
+	for(unsigned int i = 0; i < 9; i++) shUniform->setElement(i, sh.coeffs[i]);
+
+	ss->addUniform(shUniform);
 
 	// osgGLTF's GLTFReader binds the actual baseColor/normal/orm/emissive Texture2Ds to units
 	// 0-3 per-geometry (GLTFReader.hpp's applyMaterial()), but deliberately stays shader-agnostic
@@ -434,10 +520,12 @@ inline PBRIBLScene createPBRIBLScene(
 	pis.debugMode = new osg::Uniform("debugMode", 0);
 	pis.disableNormalMap = new osg::Uniform("disableNormalMap", 0);
 	pis.disableRoughnessMap = new osg::Uniform("disableRoughnessMap", 0);
+	pis.diffuseIBLMode = new osg::Uniform("diffuseIBLMode", 0);
 
 	ss->addUniform(pis.debugMode);
 	ss->addUniform(pis.disableNormalMap);
 	ss->addUniform(pis.disableRoughnessMap);
+	ss->addUniform(pis.diffuseIBLMode);
 
 	ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
 
