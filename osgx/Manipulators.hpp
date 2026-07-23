@@ -116,7 +116,7 @@ public:
 
 		if(!target || !target->manipulator.valid()) return;
 
-		setupMainCamera(mainCamera);
+		_updateCamera(mainCamera);
 
 		if(target->camera.valid()) target->manipulator->updateCamera(*target->camera);
 		else target->manipulator->updateCamera(mainCamera);
@@ -183,10 +183,10 @@ public:
 	}
 
 private:
-	void setupMainCamera(osg::Camera& mainCamera) {
-		if(_mainCameraSetup) return;
+	void _updateCamera(osg::Camera& mainCamera) {
+		if(_mainCameraUpdated) return;
 
-		_mainCameraSetup = true;
+		_mainCameraUpdated = true;
 
 		for(auto& candidate : _targets) {
 			if(!candidate.camera.valid() && candidate.manipulator.valid()) {
@@ -205,7 +205,7 @@ private:
 	unsigned int _active = 0;
 	int _toggleKey = 'x';
 	bool _hasActive = false;
-	bool _mainCameraSetup = false;
+	bool _mainCameraUpdated = false;
 };
 
 // ================================================================================================

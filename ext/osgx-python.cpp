@@ -128,11 +128,15 @@ PYBIND11_MODULE(osgx, m) {
 		.def_readwrite("orbits", &osgx::pbr::OrbitLightRig::orbits)
 	;
 
-	auto m_ibl = m.def_submodule("ibl", "osgx::ibl - prefiltered cubemap + BRDF LUT + SH9 diffuse");
+	auto m_ibl = m.def_submodule(
+		"ibl",
+		"osgx::ibl - prefiltered cubemap + BRDF LUT + SH9/baked-Lambertian diffuse"
+	);
 
 	m_ibl.attr("FULLSCREEN_VERT") = osgx::ibl::FULLSCREEN_VERT;
 	m_ibl.attr("BRDF_LUT_FRAG") = osgx::ibl::BRDF_LUT_FRAG;
 	m_ibl.attr("SH_IRRADIANCE") = osgx::ibl::SH_IRRADIANCE;
+	m_ibl.attr("LAMBERTIAN_IRRADIANCE") = osgx::ibl::LAMBERTIAN_IRRADIANCE;
 
 	py::class_<
 		osgx::ibl::RunOnceCallback,
@@ -183,6 +187,17 @@ PYBIND11_MODULE(osgx, m) {
 		"Projects an equirectangular HDR/LDR osg.Image onto SH9 diffuse irradiance coefficients."
 	);
 
+	m_ibl.def(
+		"computeLambertianCubemap",
+		&osgx::ibl::computeLambertianCubemap,
+		"image"_a,
+		"size"_a = 64,
+		"samples"_a = 256,
+		"Bakes a cosine-weighted Monte Carlo diffuse irradiance cubemap from an equirectangular "
+		"HDR/LDR osg.Image -- more accurate than SH9 (see computeSH), at the cost of a real bake "
+		"instead of 9 coefficients. Sample with LAMBERTIAN_IRRADIANCE's osgx_LambertianIrradiance()."
+	);
+
 	auto m_gltf = m.def_submodule(
 		"gltf",
 		"osgx::gltf - glTF material-reading glue (osgGLTF_Material UBO contract) + one-call "
@@ -195,30 +210,30 @@ PYBIND11_MODULE(osgx, m) {
 	m_gltf.attr("EMISSIVE") = osgx::gltf::EMISSIVE;
 	m_gltf.attr("ALPHA_COVERAGE") = osgx::gltf::ALPHA_COVERAGE;
 
-	py::class_<osgx::gltf::FullPBRSetup>(m_gltf, "FullPBRSetup")
+	py::class_<osgx::gltf::PBRIBLScene>(m_gltf, "PBRIBLScene")
 		.def(py::init<>())
-		.def_readwrite("lutCamera", &osgx::gltf::FullPBRSetup::lutCamera)
-		.def_readwrite("envMap", &osgx::gltf::FullPBRSetup::envMap)
-		.def_readwrite("brdfLUT", &osgx::gltf::FullPBRSetup::brdfLUT)
-		.def("valid", &osgx::gltf::FullPBRSetup::valid)
+		.def_readwrite("lutCamera", &osgx::gltf::PBRIBLScene::lutCamera)
+		.def_readwrite("envMap", &osgx::gltf::PBRIBLScene::envMap)
+		.def_readwrite("brdfLUT", &osgx::gltf::PBRIBLScene::brdfLUT)
+		.def_readwrite("diffuseEnv", &osgx::gltf::PBRIBLScene::diffuseEnv)
+		.def_readwrite("debugMode", &osgx::gltf::PBRIBLScene::debugMode)
+		.def_readwrite("disableNormalMap", &osgx::gltf::PBRIBLScene::disableNormalMap)
+		.def_readwrite("disableRoughnessMap", &osgx::gltf::PBRIBLScene::disableRoughnessMap)
+		.def("valid", &osgx::gltf::PBRIBLScene::valid)
 	;
 
 	m_gltf.def(
-		"setupFullPBR",
-		&osgx::gltf::setupFullPBR,
+		"createPBRIBLScene",
+		&osgx::gltf::createPBRIBLScene,
 		"node"_a,
 		"ktx2Path"_a,
 		"hdrPath"_a,
 		"iblIntensity"_a=0.8f,
-		"lightDir"_a=osg::Vec3(0.45f, -0.75f, 0.9f),
-		"lightDistance"_a=2.5f,
-		"lightColor"_a=osg::Vec3(4.0f, 4.0f, 3.8f),
-		"lightRadiusScale"_a=4.0f,
 		"lutSize"_a=512,
 		"One-call full PBR/IBL setup against an already-loaded glTF node: loads the prefiltered "
 		"cubemap + HDR-derived SH9 diffuse irradiance, bakes the BRDF LUT, and wires the shader + "
 		"every uniform/texture unit it needs onto node's StateSet (OVERRIDE'd). Returns a "
-		"FullPBRSetup -- add .lutCamera to the scene graph (required for the LUT to actually bake) "
+		"PBRIBLScene -- add .lutCamera to the scene graph (required for the LUT to actually bake) "
 		"and check .valid() if either asset path might be wrong."
 	);
 }

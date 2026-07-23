@@ -6,7 +6,7 @@
 namespace osgx {
 
 // ================================================================================================
-// osgx::gltf -- the glue between osgGLTF's ReaderWriterGLTF (applyMaterial() in GLTFReader.hpp)
+// osgx::gltf - the glue between osgGLTF's ReaderWriterGLTF (applyMaterial() in GLTFReader.hpp)
 // and osgx::pbr's material-agnostic BRDF math: reads the UBO/texture-unit contract the C++ loader
 // populates per primitive into an osgx_Material (see osgx::pbr::MATERIAL_STRUCT), plus a couple
 // of small glTF-specific fragment helpers (shading normal, emissive, alpha coverage) that need
@@ -17,7 +17,7 @@ namespace osgx {
 // to OpenSceneGraph.py/examples/pyosg-voxelize.py's trimmed no-IBL-required PBR fallback shader --
 // the same UBO-reading code was about to get copy-pasted a third time, which is exactly what
 // osgx exists to avoid. MATERIAL_INPUTS is the fixed external contract (field order/types must
-// match GLTFReader.hpp's std140 layout exactly) -- everything else here is just GLSL glue on top.
+// match GLTFReader.hpp's std140 layout exactly) - everything else here is just GLSL glue on top.
 // ================================================================================================
 
 namespace gltf {
@@ -57,7 +57,7 @@ uniform float osgGLTF_alphaCutoff;
 //
 // Every texture read here is conditioned on the matching `has*Map` flag rather than sampled
 // unconditionally: a factor-only material (no baseColorTexture/metallicRoughnessTexture/
-// occlusionTexture -- common in the glTF-Sample-Models conformance set, e.g. Fox ships
+// occlusionTexture - common in the glTF-Sample-Models conformance set, e.g. Fox ships
 // roughnessFactor=0.58 with no texture at all) would otherwise read an unbound texture unit as
 // black/zero and silently discard the authored factor instead of falling back to it.
 inline constexpr const char* GET_MATERIAL = R"GLSL(
@@ -93,7 +93,7 @@ osgx_Material osgx_GLTFGetMaterial(vec2 uv, vec3 N) {
 )GLSL";
 
 // TBN reconstructed per-pixel from screen-space derivatives of position/UV (Christian Schuler's
-// "normal mapping without precomputed tangents" -- http://www.thetenthplanet.de/archives/1180)
+// "normal mapping without precomputed tangents" - http://www.thetenthplanet.de/archives/1180)
 // when the mesh's own TANGENT is degenerate/absent, falling back to the vertex TANGENT otherwise.
 // glTF's TANGENT accessor is optional and frequently absent (DamagedHelmet, MetalRoughSpheres,
 // Fox in glTF-Sample-Models all ship without one); an unbound osg_Tangent attribute reads OpenGL's
@@ -139,7 +139,7 @@ vec3 osgx_GLTFEmissive(vec2 uv, vec3 emissiveFactor) {
 )GLSL";
 
 // MASK-mode coverage test input (caller still does `if(osgGLTF_alphaMode == 1.0 && alpha <
-// osgGLTF_alphaCutoff) discard;` itself -- kept as a plain value here, not baked into a
+// osgGLTF_alphaCutoff) discard;` itself - kept as a plain value here, not baked into a
 // discard, since some callers want the alpha for BLEND instead). Requires MATERIAL_INPUTS
 // already in scope.
 inline constexpr const char* ALPHA_COVERAGE = R"GLSL(
@@ -174,25 +174,33 @@ inline void registerShaderLibs() {
 namespace gltf {
 
 // ================================================================================================
-// setupFullPBR -- the one-call convenience helper requested after proving out, live, that
-// osgx::gltf + osgx::pbr's full IBL_SPECULAR/F_MULTISCATTER + osgx::ibl's SH_IRRADIANCE compose
-// correctly against a real osgDB::readNodeFile()'d glTF model (confirmed against Batman +
+// createPBRIBLScene - the one-call convenience helper requested after proving out, live, that
+// osgx::gltf + osgx::pbr's full IBL_SPECULAR/F_MULTISCATTER + osgx::ibl's LAMBERTIAN_IRRADIANCE
+// compose correctly against a real osgDB::readNodeFile()'d glTF model (confirmed against Batman +
 // papermill.ktx2/papermill.hdr from OpenSceneGraph.py's pyosg-lighting/data, 2026-07-22). That
 // prototype was ~90 lines of Python + GLSL wiring; this collapses it to one C++ (and, via bindings,
-// one Python) call. A genuine C++ API first, same as everything else in this header -- no
+// one Python) call. A genuine C++ API first, same as everything else in this header - no
 // pybind11 involved here at all; see ext/osgx-python.cpp for the separate binding.
 //
-// Deliberately narrower than what a hand-assembled shader can do (ONE direct light, fixed uniform
-// names/texture units) -- reach for the pattern this was built from (see
-// OpenSceneGraph.py/examples/pyosg-voxelize.py's PBR_FALLBACK_FRAGMENT_SHADER_SRC, or the Python
-// prototype this function replaces) if a scene needs more lights or different wiring.
+// Uses osgx::ibl's baked Lambertian cubemap (computeLambertianCubemap()) for diffuse IBL, not
+// SH9 - pixel-parity with the Khronos glTF-Sample-Viewer reference was the explicit goal here
+// (see TODO.md), and SH9's low-frequency basis measurably diverges from it in this environment.
+// SH9/computeSH() are untouched and still the right call for a hand-assembled shader that wants
+// the cheaper path.
+//
+// IBL only, deliberately - no direct/punctual lights. A prior revision carried one ad hoc direct
+// light (lightPos/lightColor/lightRadius uniforms); removed until osgx::pbr's *LightRig system
+// (see OrbitLightRig in PBR.hpp) is finished and can plug in here as a proper, modular hook instead
+// of a second hardcoded light source living next to it. Reach for the pattern this was built from
+// (see OpenSceneGraph.py/examples/pyosg-voxelize.py's PBR_FALLBACK_FRAGMENT_SHADER_SRC, or the
+// Python prototype this function replaces) if a scene needs direct lighting in the meantime.
 // ================================================================================================
 
 namespace detail {
 
 // Full vertex/fragment shader pair, NOT registered as pragma-includable ShaderLib snippets (these
 // are complete shaders with their own main(), not function-body fragments meant to be concatenated
-// into a caller's shader) -- resolved via resolveShaderLibs() at setup time inside setupFullPBR()
+// into a caller's shader) - resolved via resolveShaderLibs() at setup time inside createPBRIBLScene()
 // below, same mechanism a caller assembling their own shader by hand would use.
 inline constexpr const char* FULL_PBR_VERTEX_SHADER = R"GLSL(
 #version 460 core
@@ -227,9 +235,9 @@ inline constexpr const char* FULL_PBR_FRAGMENT_SHADER_SRC = R"GLSL(
 
 const float PI = 3.14159265359;
 
-#pragma osgx::pbr MATERIAL_STRUCT, D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, F_SCHLICK_ROUGHNESS, DIRECT_SPECULAR, F_MULTISCATTER, IBL_SPECULAR, TONEMAP_PBR_NEUTRAL
+#pragma osgx::pbr MATERIAL_STRUCT, F_SCHLICK_ROUGHNESS, F_MULTISCATTER, IBL_SPECULAR, TONEMAP_PBR_NEUTRAL
 #pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
-#pragma osgx::ibl SH_IRRADIANCE
+#pragma osgx::ibl LAMBERTIAN_IRRADIANCE
 
 in vec3 vNGeom;
 in vec3 vPosition;
@@ -241,61 +249,67 @@ uniform mat4 osg_ViewMatrix;
 
 uniform samplerCube envMap; // unit 5
 uniform sampler2D brdfLUT; // unit 6
-uniform vec3 iblSH[9];
+uniform samplerCube diffuseEnv; // unit 7
 uniform float iblIntensity;
 
-uniform vec3 lightPos;
-uniform vec3 lightColor;
-uniform float lightRadius;
+// Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
+// handler - lets a caller (see osgdebug-gltf.cpp) key-toggle which term is actually
+// contributing to a surface, useful for isolating why a render looks wrong. debugMode:
+// 0=combined, 1=diffuse only, 2=specular only.
+uniform int debugMode;
+uniform int disableNormalMap;
+uniform int disableRoughnessMap;
 
 out vec4 fragColor;
 
-vec3 evaluateDirectLighting(osgx_Material mat, vec3 N, vec3 V, float NdotV) {
-	vec3 lEye = (osg_ViewMatrix * vec4(lightPos, 1.0)).xyz;
-	vec3 lVec = lEye - vPosition;
-	float dist = length(lVec);
-	vec3 L = lVec / dist;
-	float atten = 1.0 / (1.0 + (dist * dist) / (lightRadius * lightRadius));
-	float NdotL = max(dot(N, L), 0.0);
-	vec3 H = normalize(L + V);
-	float HdotV = max(dot(H, V), 0.0);
-	vec3 F = osgx_F_Schlick(HdotV, mat.F0);
-	vec3 kD = (vec3(1.0) - F) * (1.0 - mat.metallic);
-	vec3 diffuse = kD * mat.albedo / PI * NdotL;
-	vec3 specular = osgx_DirectSpecular(N, V, L, NdotV, mat.roughness, mat.F0);
+struct Lighting {
+	vec3 diffuse;
+	vec3 specular;
+};
 
-	return (diffuse + specular) * lightColor * atten;
-}
-
-vec3 evaluateIBL(osgx_Material mat, vec3 N, vec3 V, float NdotV) {
+Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V, float NdotV) {
+	Lighting result;
 	mat3 invView = transpose(mat3(osg_ViewMatrix));
 	vec3 N_world = invView * N;
 	vec3 V_world = invView * V;
 
 	vec3 F_ibl = osgx_F_Schlick_roughness(NdotV, mat.F0, mat.roughness);
 	vec3 kD_ibl = (1.0 - F_ibl) * (1.0 - mat.metallic);
-	vec3 diffIBL = osgx_SHIrradiance(N_world, iblSH) * mat.albedo * kD_ibl;
+
+	result.diffuse = osgx_LambertianIrradiance(N_world, diffuseEnv) * mat.albedo * kD_ibl * mat.ao * iblIntensity;
 
 	float maxMip = float(textureQueryLevels(envMap) - 1);
-	vec3 specIBL = osgx_IBLSpecular(N_world, V_world, mat.F0, mat.roughness, envMap, brdfLUT, maxMip);
 
-	return (diffIBL + specIBL) * mat.ao * iblIntensity;
+	result.specular = osgx_IBLSpecular(N_world, V_world, mat.F0, mat.roughness, envMap, brdfLUT, maxMip) * mat.ao * iblIntensity;
+
+	return result;
 }
 
 void main() {
 	float alpha = osgx_GLTFAlphaCoverage(vUV);
+
 	if(osgGLTF_alphaMode == 1.0 && alpha < osgGLTF_alphaCutoff) discard;
 
-	vec3 N = osgx_GLTFShadingNormal(vNGeom, vTangent, vPosition, vUV);
+	vec3 N = disableNormalMap != 0
+		? normalize(vNGeom)
+		: osgx_GLTFShadingNormal(vNGeom, vTangent, vPosition, vUV)
+	;
 	vec3 V = normalize(-vPosition);
 	osgx_Material mat = osgx_GLTFGetMaterial(vUV, N);
+
+	if(disableRoughnessMap != 0) mat.roughness = osgGLTF_material.roughnessFactor;
+
 	float NdotV = max(dot(N, V), 0.0);
 
-	vec3 Lo = evaluateDirectLighting(mat, N, V, NdotV);
-	vec3 ambient = evaluateIBL(mat, N, V, NdotV);
-	vec3 emissive = osgx_GLTFEmissive(vUV, emissiveFactor);
+	Lighting ambient = evaluateIBL(mat, N, V, NdotV);
+	vec3 emissive = debugMode == 0 ? osgx_GLTFEmissive(vUV, emissiveFactor) : vec3(0.0);
 
-	vec3 color = ambient + Lo + emissive;
+	vec3 surface = debugMode == 1
+		? ambient.diffuse
+		: debugMode == 2 ? ambient.specular : ambient.diffuse + ambient.specular
+	;
+
+	vec3 color = surface + emissive;
 	color = osgx_TonemapPBRNeutral(color);
 	color = pow(color, vec3(1.0 / 2.2));
 
@@ -305,85 +319,89 @@ void main() {
 
 }
 
-// Everything a caller gets back from setupFullPBR() -- `lutCamera` MUST be added to the scene
-// graph (anywhere, it's ABSOLUTE_RF -- see makeBRDFLUTCamera()) or the BRDF LUT never actually
-// bakes and every surface reads black split-sum values. `envMap`/`brdfLUT` are returned too in
-// case the caller wants to reuse the same environment elsewhere (e.g. a skybox).
-struct FullPBRSetup {
+// Everything a caller gets back from createPBRIBLScene() - `lutCamera` MUST be added to the scene
+// graph (anywhere, it's ABSOLUTE_RF - see makeBRDFLUTCamera()) or the BRDF LUT never actually
+// bakes and every surface reads black split-sum values. `envMap`/`brdfLUT`/`diffuseEnv` are
+// returned too in case the caller wants to reuse the same environment elsewhere (e.g. a skybox).
+struct PBRIBLScene {
 	osg::ref_ptr<osg::Camera> lutCamera;
 	osg::ref_ptr<osg::TextureCubeMap> envMap;
 	osg::ref_ptr<osg::Texture2D> brdfLUT;
+	osg::ref_ptr<osg::TextureCubeMap> diffuseEnv;
 
-	// False if either asset failed to load (see OSG_WARN for which) -- setupFullPBR() still
+	// Debug-mode uniforms (see FULL_PBR_FRAGMENT_SHADER_SRC) - returned so a caller can wire
+	// up a diagnostic key handler (osgdebug-gltf.cpp does this) without doing a
+	// getStateSet()->getUniform() lookup by name.
+	osg::ref_ptr<osg::Uniform> debugMode;
+	osg::ref_ptr<osg::Uniform> disableNormalMap;
+	osg::ref_ptr<osg::Uniform> disableRoughnessMap;
+
+	// False if either asset failed to load (see OSG_WARN for which) - createPBRIBLScene() still
 	// returns normally rather than throwing (matches loadPrefilterCubemap()'s own
 	// warn-and-return-null convention for asset loading, as opposed to registerShaderLibs()'s
 	// throw-on-programmer-error convention, which this still goes through unchanged).
-	bool valid() const { return lutCamera.valid() && envMap.valid() && brdfLUT.valid(); }
+	bool valid() const {
+		return lutCamera.valid() && envMap.valid() && brdfLUT.valid() && diffuseEnv.valid();
+	}
 };
 
 // One-call "get PBR/IBL going from scratch" against an already-loaded glTF node: applies the full
 // PBR/IBL shader above (material/lighting glue entirely from osgx::gltf/osgx::pbr/osgx::ibl, zero
-// hand-copied GLSL), loads the prefiltered cubemap + computes SH9 diffuse irradiance from the given
-// paths, bakes the BRDF LUT, and wires every uniform/texture unit the shader needs. `node` is
-// modified in place (StateSet gets the Program + uniforms, OVERRIDE'd same as
+// hand-copied GLSL), loads the prefiltered cubemap + bakes a Lambertian diffuse irradiance cubemap
+// from the given paths, bakes the BRDF LUT, and wires every uniform/texture unit the shader
+// needs. `node` is modified in place (StateSet gets the Program + uniforms, OVERRIDE'd same as
 // apply_gltf_fallback_pbr() in pyosg-voxelize.py); the caller still owns adding `node` itself and
 // the returned `lutCamera` to the scene graph.
 //
-// `lightDir`/`lightDistance` position the one direct light relative to `node->getBound()` (not
-// absolute world coordinates), so the same defaults land reasonably regardless of the model's own
-// scale -- same reasoning as pyosg-voxelize.py's apply_gltf_fallback_pbr().
-inline FullPBRSetup setupFullPBR(
+inline PBRIBLScene createPBRIBLScene(
 	osg::Node* node,
 	const std::string& ktx2Path,
 	const std::string& hdrPath,
-	float iblIntensity = 0.8f,
-	const osg::Vec3& lightDir = osg::Vec3(0.45f, -0.75f, 0.9f),
-	float lightDistance = 2.5f,
-	const osg::Vec3& lightColor = osg::Vec3(4.0f, 4.0f, 3.8f),
-	float lightRadiusScale = 4.0f,
+	float iblIntensity = 1.0f, // matches pyosg-khronos-viewer.py's hardcoded 1.0 for parity
 	int lutSize = 512
 ) {
-	// Idempotent (registerShaderLibs() no-ops on an identical re-registration -- see
-	// Shader.hpp) -- called here so this really is a one-call helper. The Python
+	// Idempotent (registerShaderLibs() no-ops on an identical re-registration - see
+	// Shader.hpp) - called here so this really is a one-call helper. The Python
 	// bindings register these three at module-import time (ext/osgx-python.cpp), which
 	// is why a hand-assembled #pragma-based shader "just works" from Python without
 	// this; a plain C++ caller has no equivalent implicit trigger, so resolveShaderLibs()
 	// below would otherwise silently leave every #pragma osgx::* line unexpanded (no
-	// error -- see resolveShaderLibs()'s catalog-miss path in Shader.hpp) and hand raw,
+	// error - see resolveShaderLibs()'s catalog-miss path in Shader.hpp) and hand raw,
 	// uncompilable pragma text to the driver instead.
 	pbr::registerShaderLibs();
 	ibl::registerShaderLibs();
 	gltf::registerShaderLibs();
 
-	FullPBRSetup setup;
+	PBRIBLScene pis;
 
-	setup.envMap = ibl::loadPrefilterCubemap(ktx2Path);
+	pis.envMap = ibl::loadPrefilterCubemap(ktx2Path);
 
-	if(!setup.envMap) return setup; // already OSG_WARN'd by loadPrefilterCubemap()
+	if(!pis.envMap) return pis;
 
-	setup.envMap->setUseHardwareMipMapGeneration(false);
+	pis.envMap->setUseHardwareMipMapGeneration(false);
 
-	setup.brdfLUT = make_ref<osg::Texture2D>();
-	setup.lutCamera = ibl::makeBRDFLUTCamera(lutSize, setup.brdfLUT);
+	pis.brdfLUT = make_ref<osg::Texture2D>();
+	pis.lutCamera = ibl::makeBRDFLUTCamera(lutSize, pis.brdfLUT);
 
 	osg::ref_ptr<osg::Image> hdrImage = osgDB::readRefImageFile(hdrPath);
 
 	if(!hdrImage) {
-		OSG_WARN << "osgx::gltf::setupFullPBR: failed to load " << hdrPath << std::endl;
+		OSG_WARN << "osgx::gltf::createPBRIBLScene: failed to load " << hdrPath << std::endl;
 
-		setup.envMap = nullptr;
-		setup.brdfLUT = nullptr;
-		setup.lutCamera = nullptr;
+		pis.envMap = nullptr;
+		pis.brdfLUT = nullptr;
+		pis.lutCamera = nullptr;
 
-		return setup;
+		return pis;
 	}
 
-	const ibl::SH9 sh = ibl::computeSH(hdrImage);
+	pis.diffuseEnv = ibl::computeLambertianCubemap(hdrImage);
+
 	auto* ss = node->getOrCreateStateSet();
 
 	auto prog = make_ref<osg::Program>();
 
-	prog->setName("osgx_gltf_fullPBR");
+	prog->setName("osgx_gltf_PBRIBLScene");
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
@@ -391,30 +409,39 @@ inline FullPBRSetup setupFullPBR(
 	));
 
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-	ss->setTextureAttributeAndModes(5, setup.envMap, osg::StateAttribute::ON);
-	ss->setTextureAttributeAndModes(6, setup.brdfLUT, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(5, pis.envMap, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(6, pis.brdfLUT, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(7, pis.diffuseEnv, osg::StateAttribute::ON);
 	ss->addUniform(new osg::Uniform("envMap", 5));
 	ss->addUniform(new osg::Uniform("brdfLUT", 6));
+	ss->addUniform(new osg::Uniform("diffuseEnv", 7));
 	ss->addUniform(new osg::Uniform("iblIntensity", iblIntensity));
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 
-	auto* shU = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblSH", 9);
+	// osgGLTF's GLTFReader binds the actual baseColor/normal/orm/emissive Texture2Ds to units
+	// 0-3 per-geometry (GLTFReader.hpp's applyMaterial()), but deliberately stays shader-agnostic
+	// and never sets the sampler *uniforms* that tell osgGLTF_textures which unit is which --
+	// that's the shader glue's job (see MATERIAL_INPUTS's "unit N" comments above). Without this,
+	// every sampler in the GLTFTextures struct silently defaults to unit 0 per the GLSL spec, so
+	// normal/orm/emissive all end up reading the baseColor texture instead - corrupted shading
+	// normals, scrambled roughness/metallic, and the whole baseColor image re-added as fake
+	// "emissive" light. Same fix pyosg-khronos-viewer.py applies via its own uniforms.update(...).
+	ss->addUniform(new osg::Uniform("osgGLTF_textures.baseColor", 0));
+	ss->addUniform(new osg::Uniform("osgGLTF_textures.normal", 1));
+	ss->addUniform(new osg::Uniform("osgGLTF_textures.orm", 2));
+	ss->addUniform(new osg::Uniform("osgGLTF_textures.emissive", 3));
 
-	for(unsigned int i = 0; i < 9; i++) shU->setElement(i, sh.coeffs[i]);
+	pis.debugMode = new osg::Uniform("debugMode", 0);
+	pis.disableNormalMap = new osg::Uniform("disableNormalMap", 0);
+	pis.disableRoughnessMap = new osg::Uniform("disableRoughnessMap", 0);
 
-	ss->addUniform(shU);
-
-	const osg::BoundingSphere bound = node->getBound();
-	const osg::Vec3 center = bound.valid() ? bound.center() : osg::Vec3(0, 0, 0);
-	const float radius = bound.valid() ? std::max(bound.radius(), 1e-3f) : 1.0f;
-
-	ss->addUniform(new osg::Uniform("lightPos", center + lightDir * (radius * lightDistance)));
-	ss->addUniform(new osg::Uniform("lightColor", lightColor));
-	ss->addUniform(new osg::Uniform("lightRadius", radius * lightRadiusScale));
+	ss->addUniform(pis.debugMode);
+	ss->addUniform(pis.disableNormalMap);
+	ss->addUniform(pis.disableRoughnessMap);
 
 	ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
 
-	return setup;
+	return pis;
 }
 
 }

@@ -13,7 +13,7 @@ Its public headers are organized by concern:
 - `osgx/PBR.hpp` — PBR BRDF snippets and `OrbitLightRig`.
 - `osgx/IBL.hpp` — prefiltered cubemaps, BRDF-LUT baking, and SH9 diffuse irradiance.
 - `osgx/GLTF.hpp` — glTF material-reading GLSL glue (the `osgGLTF_Material` UBO / texture-unit
-  contract osgGLTF's loader populates) plus `setupFullPBR()`, a one-call full PBR/IBL setup against
+  contract osgGLTF's loader populates) plus `createPBRIBLScene()`, a one-call full PBR/IBL setup against
   an already-loaded glTF node.
 - `osgx.hpp` — convenience umbrella that includes all osgx facilities.
 
@@ -69,7 +69,7 @@ are left intact for other shader tooling or the GLSL compiler.
 - `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
 - `osgx::pbr` provides reusable BRDF GLSL snippets and `OrbitLightRig` for direct-light uniforms.
 - `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking, prefiltered environment maps, and SH9 diffuse irradiance.
-- `osgx::gltf` provides the glTF loader's material-reading GLSL contract (material UBO + shading normal + emissive + alpha coverage) plus `setupFullPBR()`, a one-call full PBR/IBL setup (prefiltered cubemap + BRDF LUT + SH9 + one direct light) against an already-loaded glTF node.
+- `osgx::gltf` provides the glTF loader's material-reading GLSL contract (material UBO + shading normal + emissive + alpha coverage) plus `createPBRIBLScene()`, a one-call full PBR/IBL setup (prefiltered cubemap + BRDF LUT + SH9) against an already-loaded glTF node. IBL only, no direct/punctual lights yet -- see TODO.md.
 
 # `osgDebug.hpp` Systems
 
