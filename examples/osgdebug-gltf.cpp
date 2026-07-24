@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--hdr <path>",
-		"Source HDR environment (for SH9 diffuse irradiance)"
+		"Source HDR environment (for Lambertian diffuse irradiance)"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--debug [mode]",
@@ -113,17 +113,15 @@ int main(int argc, char** argv) {
 	viewer.addEventHandler(new osgViewer::StatsHandler());
 	viewer.getCamera()->setClearColor(osg::Vec4(48.0 / 255.0, 53.0 / 255.0, 66.0 / 255.0, 1.0)); // #303542
 
-	// Diagnostics, ported from pyosg-khronos-viewer.py: 1/2/3 pick debugMode, N/R toggle the
-	// normal/roughness maps. D toggles the diffuse IBL source (baked Lambertian cubemap vs.
-	// SH9) for A/B screenshot comparisons -- see createPBRIBLScene()'s console output at
-	// startup for how much longer the cubemap bake took vs. the SH9 projection.
+	// Diagnostics, ported from pyosg-khronos-viewer.py: 1/2/3 pick debugMode; N/R toggle the
+	// normal/roughness maps.
 	if(diagnostics) std::cout <<
 		"Diagnostics: 1=combined 2=diffuse 3=specular N=toggle normal map "
-		"R=toggle roughness map D=toggle diffuse IBL source (cubemap/SH9)" << std::endl
+		"R=toggle roughness map" << std::endl
 	;
 
 	if(diagnostics) viewer.addEventHandler(new osgx::LambdaKeyHandler(
-		{'1', '2', '3', 'n', 'N', 'r', 'R', 'd', 'D'},
+		{'1', '2', '3', 'n', 'N', 'r', 'R'},
 		[pis](const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter&, int key) {
 			switch(key) {
 				case '1': {
@@ -168,17 +166,6 @@ int main(int argc, char** argv) {
 					pis.disableRoughnessMap->set(1 - v);
 
 					std::cout << "[diagnostic] roughness map " << (v ? "on" : "off") << std::endl;
-
-					break;
-				}
-
-				case 'd': case 'D': {
-					int v = 0;
-
-					pis.diffuseIBLMode->get(v);
-					pis.diffuseIBLMode->set(1 - v);
-
-					std::cout << "[diagnostic] diffuse IBL source: " << (v ? "cubemap" : "SH9") << std::endl;
 
 					break;
 				}

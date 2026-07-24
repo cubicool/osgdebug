@@ -175,12 +175,11 @@ namespace gltf {
 // one Python) call. A genuine C++ API first, same as everything else in this header - no
 // pybind11 involved here at all; see ext/osgx-python.cpp for the separate binding.
 //
-// Defaults to osgx::ibl's baked Lambertian cubemap (computeLambertianCubeMap()) for diffuse IBL,
-// not SH9 - pixel-parity with the Khronos glTF-Sample-Viewer reference was the explicit goal here
-// (see TODO.md), and SH9's low-frequency basis measurably diverges from it in this environment.
-// With diagnostics enabled, SH9 is also baked/uploaded so a caller can A/B the two at runtime.
-// `PBRIBLScene::diffuseIBLMode` then selects 0 = baked cubemap (default), 1 = SH9. Production
-// mode skips that extra bake and does not compile the diagnostic branches or uniforms.
+// Uses osgx::ibl's baked Lambertian cubemap (computeLambertianCubeMap()) for diffuse IBL.
+// Pixel-parity with the Khronos glTF-Sample-Viewer reference is the explicit goal here, and SH9's
+// low-frequency basis measurably washes out the high-contrast environments used by this helper.
+// SH9 remains available as an independent osgx::ibl utility for callers that prefer its compact,
+// low-cost representation; it is deliberately not part of this reference-quality convenience path.
 //
 // IBL only, deliberately - no direct/punctual lights. A prior revision carried one ad hoc direct
 // light (lightPos/lightColor/lightRadius uniforms); removed until osgx::pbr's *LightRig system
@@ -232,7 +231,7 @@ const float PI = 3.14159265359;
 
 #pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, TONEMAP_PBR_NEUTRAL
 #pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
-#pragma osgx::ibl LAMBERTIAN_IRRADIANCE, SH_IRRADIANCE
+#pragma osgx::ibl LAMBERTIAN_IRRADIANCE
 
 in vec3 vNGeom;
 in vec3 vPosition;
@@ -247,17 +246,13 @@ uniform sampler2D brdfLUT; // unit 6
 uniform samplerCube diffuseEnv; // unit 7
 uniform float iblIntensity;
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
-uniform vec3 iblSH[9];
-
 // Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
 // handler - lets a caller (see osgdebug-gltf.cpp) key-toggle which term is actually
 // contributing to a surface, useful for isolating why a render looks wrong. debugMode:
-// 0=combined, 1=diffuse only, 2=specular only. diffuseIBLMode picks the diffuse IBL source
-// for A/B comparison: 0=baked Lambertian cubemap (diffuseEnv, default), 1=SH9 (iblSH).
+// 0=combined, 1=diffuse only, 2=specular only.
 uniform int debugMode;
 uniform int disableNormalMap;
 uniform int disableRoughnessMap;
-uniform int diffuseIBLMode;
 #endif
 
 out vec4 fragColor;
@@ -280,10 +275,6 @@ Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
 	vec3 V_world = invView * V;
 
 	vec3 diffuseIrradiance = osgx_LambertianIrradiance(N_world, diffuseEnv);
-
-#ifdef OSGX_PBRIBL_DIAGNOSTICS
-	if(diffuseIBLMode != 0) diffuseIrradiance = osgx_SHIrradiance(N_world, iblSH);
-#endif
 
 	// The KTX2 prefilter has a terminal level that is not part of the Khronos GGX chain.
 	// Match the reference viewer: roughness 1 selects the last filtered level, not that
@@ -404,7 +395,6 @@ struct PBRIBLScene {
 	osg::ref_ptr<osg::Uniform> debugMode;
 	osg::ref_ptr<osg::Uniform> disableNormalMap;
 	osg::ref_ptr<osg::Uniform> disableRoughnessMap;
-	osg::ref_ptr<osg::Uniform> diffuseIBLMode; // 0 = baked Lambertian cubemap, 1 = SH9
 
 	// False if either asset failed to load (see OSG_WARN for which) - createPBRIBLScene() still
 	// returns normally rather than throwing (matches loadPrefilterCubemap()'s own
@@ -422,8 +412,8 @@ struct PBRIBLScene {
 // needs. `node` is modified in place (StateSet gets the Program + uniforms, OVERRIDE'd same as
 // apply_gltf_fallback_pbr() in pyosg-voxelize.py); the caller still owns adding `node` itself and
 // the returned `lutCamera` to the scene graph. `diagnostics=false` is the production path;
-// setting it true compiles the debug channels, creates their uniforms, and also computes SH9 for
-// the diffuse-cubemap/SH A/B switch. The four diagnostic uniform pointers are null in production.
+// setting it true compiles the debug channels and creates their uniforms. The three diagnostic
+// uniform pointers are null in production.
 //
 inline PBRIBLScene createPBRIBLScene(
 	osg::Node* node,
@@ -468,26 +458,7 @@ inline PBRIBLScene createPBRIBLScene(
 		return pis;
 	}
 
-	// Poor man's profiling - both diffuse IBL techniques are baked from the same already-loaded
-	// hdrImage (no extra I/O) so a caller can A/B them at runtime via `diffuseIBLMode` below
-	// without reloading anything. computeSH() is a single O(W*H) pass over hdrImage directly;
-	// computeLambertianCubeMap() is a real Monte Carlo convolution (O(6*size*size*samples)
-	// bilinear samples) and is the slower of the two by design - this print is just to see how
-	// much slower, in practice, for the environment actually being loaded.
-	const osg::Timer_t shStart = tick();
-	ibl::SH9 sh;
-
-	if(diagnostics) sh = ibl::computeSH(hdrImage);
-	const osg::Timer_t shEnd = tick();
-
 	pis.diffuseEnv = ibl::computeLambertianCubeMap(hdrImage);
-
-	const osg::Timer_t cubemapEnd = tick();
-
-	if(diagnostics) OSG_NOTICE
-		<< "osgx::gltf::createPBRIBLScene: computeSH() took "
-		<< osg::Timer::instance()->delta_s(shStart, shEnd) << "s, computeLambertianCubeMap() took "
-		<< osg::Timer::instance()->delta_s(shEnd, cubemapEnd) << "s" << std::endl;
 
 	auto* ss = node->getOrCreateStateSet();
 
@@ -519,14 +490,6 @@ inline PBRIBLScene createPBRIBLScene(
 	ss->addUniform(new osg::Uniform("iblIntensity", iblIntensity));
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 
-	if(diagnostics) {
-		auto* shUniform = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblSH", 9);
-
-		for(unsigned int i = 0; i < 9; i++) shUniform->setElement(i, sh.coeffs[i]);
-
-		ss->addUniform(shUniform);
-	}
-
 	// osgGLTF's GLTFReader binds the actual baseColor/normal/orm/emissive Texture2Ds to units
 	// 0-3 per-geometry (GLTFReader.hpp's applyMaterial()), but deliberately stays shader-agnostic
 	// and never sets the sampler *uniforms* that tell osgGLTF_textures which unit is which --
@@ -544,12 +507,10 @@ inline PBRIBLScene createPBRIBLScene(
 		pis.debugMode = new osg::Uniform("debugMode", 0);
 		pis.disableNormalMap = new osg::Uniform("disableNormalMap", 0);
 		pis.disableRoughnessMap = new osg::Uniform("disableRoughnessMap", 0);
-		pis.diffuseIBLMode = new osg::Uniform("diffuseIBLMode", 0);
 
 		ss->addUniform(pis.debugMode);
 		ss->addUniform(pis.disableNormalMap);
 		ss->addUniform(pis.disableRoughnessMap);
-		ss->addUniform(pis.diffuseIBLMode);
 	}
 
 	ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);

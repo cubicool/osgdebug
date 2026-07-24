@@ -219,7 +219,6 @@ PYBIND11_MODULE(osgx, m) {
 		.def_readwrite("debugMode", &osgx::gltf::PBRIBLScene::debugMode)
 		.def_readwrite("disableNormalMap", &osgx::gltf::PBRIBLScene::disableNormalMap)
 		.def_readwrite("disableRoughnessMap", &osgx::gltf::PBRIBLScene::disableRoughnessMap)
-		.def_readwrite("diffuseIBLMode", &osgx::gltf::PBRIBLScene::diffuseIBLMode)
 		.def("valid", &osgx::gltf::PBRIBLScene::valid)
 	;
 
@@ -237,6 +236,6 @@ PYBIND11_MODULE(osgx, m) {
 		"shader + every uniform/texture unit it needs onto node's StateSet (OVERRIDE'd). Returns a "
 		"PBRIBLScene -- add .lutCamera to the scene graph (required for the LUT to actually bake) "
 		"and check .valid() if either asset path might be wrong. diagnostics=True additionally "
-		"compiles the debug channels and bakes SH9 for the diffuseIBLMode A/B switch."
+		"compiles the debug channels."
 	);
 }
