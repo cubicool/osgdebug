@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
 	osgViewer::Viewer viewer(args);
 
 	args.getApplicationUsage()->setCommandLineUsage(
-		std::string(args.getApplicationName()) + " <model.gltf> --ktx2 <path> --hdr <path> [--debug mode]"
+		std::string(args.getApplicationName()) + " <model.gltf> --ktx2 <path> --hdr <path> [--debug [mode]]"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--ktx2 <path>",
@@ -40,15 +40,30 @@ int main(int argc, char** argv) {
 		"Source HDR environment (for SH9 diffuse irradiance)"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
-		"--debug <mode>",
+		"--debug [mode]",
 		"combined, diffuse, specular, base-color, roughness, metallic, normal-texture, normal-texture-raw, geometry-normal, shading-normal, geometry-tangent, bitangent, linear-diffuse, linear-specular, or linear-combined"
 	);
 
 	std::string ktx2Path, hdrPath, debugName = "combined";
+	const std::map<std::string, int> debugModes = {
+		{"combined", 0}, {"diffuse", 1}, {"specular", 2},
+		{"base-color", 3}, {"roughness", 4}, {"metallic", 5},
+		{"normal-texture", 6}, {"normal-texture-raw", 7}, {"geometry-normal", 8},
+		{"shading-normal", 9}, {"geometry-tangent", 10}, {"bitangent", 11},
+		{"linear-diffuse", 12}, {"linear-specular", 13}, {"linear-combined", 14}
+	};
 
 	const bool haveKtx2 = args.read("--ktx2", ktx2Path);
 	const bool haveHdr = args.read("--hdr", hdrPath);
-	args.read("--debug", debugName);
+	const int debugPos = args.find("--debug");
+	const bool diagnostics = debugPos >= 0;
+
+	if(diagnostics) {
+		const bool hasMode = debugPos + 1 < args.argc() && debugModes.contains(args[debugPos + 1]);
+
+		if(hasMode) args.read(debugPos, "--debug", debugName);
+		else args.read(debugPos, "--debug");
+	}
 
 	if(args.argc() < 2 || !haveKtx2 || !haveHdr) {
 		args.getApplicationUsage()->write(std::cerr);
@@ -70,7 +85,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	auto pis = osgx::gltf::createPBRIBLScene(model.get(), ktx2Path, hdrPath);
+	auto pis = osgx::gltf::createPBRIBLScene(model.get(), ktx2Path, hdrPath, 1.0f, 1024, diagnostics);
 
 	if(!pis.valid()) {
 		std::cerr << "createPBRIBLScene failed to load " << ktx2Path << " / " << hdrPath << std::endl;
@@ -78,22 +93,15 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	const std::map<std::string, int> debugModes = {
-		{"combined", 0}, {"diffuse", 1}, {"specular", 2},
-		{"base-color", 3}, {"roughness", 4}, {"metallic", 5},
-		{"normal-texture", 6}, {"normal-texture-raw", 7}, {"geometry-normal", 8},
-		{"shading-normal", 9}, {"geometry-tangent", 10}, {"bitangent", 11},
-		{"linear-diffuse", 12}, {"linear-specular", 13}, {"linear-combined", 14}
-	};
 	const auto debug = debugModes.find(debugName);
 
-	if(debug == debugModes.end()) {
+	if(diagnostics && debug == debugModes.end()) {
 		std::cerr << "Unknown --debug mode: " << debugName << std::endl;
 
 		return 1;
 	}
 
-	pis.debugMode->set(debug->second);
+	if(diagnostics) pis.debugMode->set(debug->second);
 
 	auto root = osgx::make_ref<osg::Group>();
 
@@ -109,12 +117,12 @@ int main(int argc, char** argv) {
 	// normal/roughness maps. D toggles the diffuse IBL source (baked Lambertian cubemap vs.
 	// SH9) for A/B screenshot comparisons -- see createPBRIBLScene()'s console output at
 	// startup for how much longer the cubemap bake took vs. the SH9 projection.
-	std::cout <<
+	if(diagnostics) std::cout <<
 		"Diagnostics: 1=combined 2=diffuse 3=specular N=toggle normal map "
 		"R=toggle roughness map D=toggle diffuse IBL source (cubemap/SH9)" << std::endl
 	;
 
-	viewer.addEventHandler(new osgx::LambdaKeyHandler(
+	if(diagnostics) viewer.addEventHandler(new osgx::LambdaKeyHandler(
 		{'1', '2', '3', 'n', 'N', 'r', 'R', 'd', 'D'},
 		[pis](const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter&, int key) {
 			switch(key) {

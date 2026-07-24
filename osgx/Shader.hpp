@@ -93,6 +93,10 @@ inline void registerShaderLibs(std::string_view namespaceName, std::span<const S
 }
 
 inline std::string resolveShaderLibs(std::string src) {
+	// Only pragmas whose namespace matches a registered osgx catalog are expanded.
+	// Other pragmas are intentionally preserved. In particular, this lets callers
+	// compose snippet expansion with OSG's state-driven shader variants, such as
+	// #pragma import_defines(...), #pragma import_modes(...), and #pragma requires(...).
 	std::string resolved;
 	resolved.reserve(src.size());
 	for(size_t pos = 0; pos < src.size();) {

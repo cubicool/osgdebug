@@ -178,10 +178,9 @@ namespace gltf {
 // Defaults to osgx::ibl's baked Lambertian cubemap (computeLambertianCubeMap()) for diffuse IBL,
 // not SH9 - pixel-parity with the Khronos glTF-Sample-Viewer reference was the explicit goal here
 // (see TODO.md), and SH9's low-frequency basis measurably diverges from it in this environment.
-// Both are baked and uploaded regardless (see `diffuseIBLMode` below) so a caller can A/B the two
-// at runtime without reloading anything - useful for comparing bake cost and visual quality
-// side-by-side. `PBRIBLScene::diffuseIBLMode` selects which one the shader actually samples:
-// 0 = baked cubemap (default), 1 = SH9.
+// With diagnostics enabled, SH9 is also baked/uploaded so a caller can A/B the two at runtime.
+// `PBRIBLScene::diffuseIBLMode` then selects 0 = baked cubemap (default), 1 = SH9. Production
+// mode skips that extra bake and does not compile the diagnostic branches or uniforms.
 //
 // IBL only, deliberately - no direct/punctual lights. A prior revision carried one ad hoc direct
 // light (lightPos/lightColor/lightRadius uniforms); removed until osgx::pbr's *LightRig system
@@ -227,6 +226,7 @@ void main() {
 
 inline constexpr const char* FULL_PBR_FRAGMENT_SHADER_SRC = R"GLSL(
 #version 460 core
+#pragma import_defines ( OSGX_PBRIBL_DIAGNOSTICS )
 
 const float PI = 3.14159265359;
 
@@ -246,6 +246,7 @@ uniform samplerCube envMap; // unit 5
 uniform sampler2D brdfLUT; // unit 6
 uniform samplerCube diffuseEnv; // unit 7
 uniform float iblIntensity;
+#ifdef OSGX_PBRIBL_DIAGNOSTICS
 uniform vec3 iblSH[9];
 
 // Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
@@ -257,6 +258,7 @@ uniform int debugMode;
 uniform int disableNormalMap;
 uniform int disableRoughnessMap;
 uniform int diffuseIBLMode;
+#endif
 
 out vec4 fragColor;
 
@@ -277,10 +279,11 @@ Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
 	vec3 N_world = invView * N;
 	vec3 V_world = invView * V;
 
-	vec3 diffuseIrradiance = diffuseIBLMode == 0
-		? osgx_LambertianIrradiance(N_world, diffuseEnv)
-		: osgx_SHIrradiance(N_world, iblSH)
-	;
+	vec3 diffuseIrradiance = osgx_LambertianIrradiance(N_world, diffuseEnv);
+
+#ifdef OSGX_PBRIBL_DIAGNOSTICS
+	if(diffuseIBLMode != 0) diffuseIrradiance = osgx_SHIrradiance(N_world, iblSH);
+#endif
 
 	// The KTX2 prefilter has a terminal level that is not part of the Khronos GGX chain.
 	// Match the reference viewer: roughness 1 selects the last filtered level, not that
@@ -314,13 +317,16 @@ void main() {
 
 	if(osgGLTF_alphaMode == 1.0 && alpha < osgGLTF_alphaCutoff) discard;
 
-	vec3 N = disableNormalMap != 0
-		? normalize(vNGeom)
-		: osgx_GLTFShadingNormal(vNGeom, vTangent, vPosition, vUV)
-	;
+	vec3 N = osgx_GLTFShadingNormal(vNGeom, vTangent, vPosition, vUV);
+
+#ifdef OSGX_PBRIBL_DIAGNOSTICS
+	if(disableNormalMap != 0) N = normalize(vNGeom);
+#endif
 	vec3 V = normalize(-vPosition);
 	osgx_Material mat = osgx_GLTFGetMaterial(vUV, N);
 
+
+#ifdef OSGX_PBRIBL_DIAGNOSTICS
 	if(disableRoughnessMap != 0) mat.roughness = osgGLTF_material.roughnessFactor;
 
 	// Match pyosg-khronos-viewer.py's material/coordinate diagnostics. These deliberately return
@@ -347,17 +353,23 @@ void main() {
 	vec3 bitangentWorld = normalize(cross(NgeomWorld, tangentWorld)) * vTangent.w;
 	if(debugMode == 10) { fragColor = vec4(osgx_ZUpToGltf(tangentWorld) * 0.5 + 0.5, alpha); return; }
 	if(debugMode == 11) { fragColor = vec4(osgx_ZUpToGltf(bitangentWorld) * 0.5 + 0.5, alpha); return; }
+#endif
 
 	Lighting ambient = evaluateIBL(mat, N, V);
-	vec3 emissive = debugMode == 0 ? osgx_GLTFEmissive(vUV, emissiveFactor) : vec3(0.0);
+	vec3 surface = ambient.diffuse + ambient.specular;
+	vec3 emissive = osgx_GLTFEmissive(vUV, emissiveFactor);
 
-	vec3 surface = (debugMode == 1 || debugMode == 12)
+#ifdef OSGX_PBRIBL_DIAGNOSTICS
+	surface = (debugMode == 1 || debugMode == 12)
 		? ambient.diffuse
 		: (debugMode == 2 || debugMode == 13) ? ambient.specular : ambient.diffuse + ambient.specular
 	;
+	emissive = (debugMode == 0 || debugMode == 14) ? emissive : vec3(0.0);
+#endif
 
-	vec3 color = surface + ((debugMode == 0 || debugMode == 14) ? osgx_GLTFEmissive(vUV, emissiveFactor) : vec3(0.0));
+	vec3 color = surface + emissive;
 
+#ifdef OSGX_PBRIBL_DIAGNOSTICS
 	// These three modes intentionally bypass PBR Neutral and gamma. They expose the linear
 	// values immediately before output, so a comparison is not hidden by tone compression.
 	if(debugMode >= 12) {
@@ -365,6 +377,7 @@ void main() {
 
 		return;
 	}
+#endif
 
 	color = osgx_TonemapPBRNeutral(color);
 	color = pow(color, vec3(1.0 / 2.2));
@@ -408,14 +421,17 @@ struct PBRIBLScene {
 // from the given paths, bakes the BRDF LUT, and wires every uniform/texture unit the shader
 // needs. `node` is modified in place (StateSet gets the Program + uniforms, OVERRIDE'd same as
 // apply_gltf_fallback_pbr() in pyosg-voxelize.py); the caller still owns adding `node` itself and
-// the returned `lutCamera` to the scene graph.
+// the returned `lutCamera` to the scene graph. `diagnostics=false` is the production path;
+// setting it true compiles the debug channels, creates their uniforms, and also computes SH9 for
+// the diffuse-cubemap/SH A/B switch. The four diagnostic uniform pointers are null in production.
 //
 inline PBRIBLScene createPBRIBLScene(
 	osg::Node* node,
 	const std::string& ktx2Path,
 	const std::string& hdrPath,
 	float iblIntensity = 1.0f, // matches pyosg-khronos-viewer.py's hardcoded 1.0 for parity
-	int lutSize = 1024 // matches pyosg-khronos-viewer.py
+	int lutSize = 1024, // matches pyosg-khronos-viewer.py
+	bool diagnostics = false
 ) {
 	// Idempotent (registerShaderLibs() no-ops on an identical re-registration - see
 	// Shader.hpp) - called here so this really is a one-call helper. The Python
@@ -459,19 +475,19 @@ inline PBRIBLScene createPBRIBLScene(
 	// bilinear samples) and is the slower of the two by design - this print is just to see how
 	// much slower, in practice, for the environment actually being loaded.
 	const osg::Timer_t shStart = tick();
-	const ibl::SH9 sh = ibl::computeSH(hdrImage);
+	ibl::SH9 sh;
+
+	if(diagnostics) sh = ibl::computeSH(hdrImage);
 	const osg::Timer_t shEnd = tick();
 
 	pis.diffuseEnv = ibl::computeLambertianCubeMap(hdrImage);
 
 	const osg::Timer_t cubemapEnd = tick();
 
-	OSG_NOTICE
+	if(diagnostics) OSG_NOTICE
 		<< "osgx::gltf::createPBRIBLScene: computeSH() took "
 		<< osg::Timer::instance()->delta_s(shStart, shEnd) << "s, computeLambertianCubeMap() took "
-		<< osg::Timer::instance()->delta_s(shEnd, cubemapEnd) << "s"
-		<< std::endl
-	;
+		<< osg::Timer::instance()->delta_s(shEnd, cubemapEnd) << "s" << std::endl;
 
 	auto* ss = node->getOrCreateStateSet();
 
@@ -488,6 +504,11 @@ inline PBRIBLScene createPBRIBLScene(
 		resolveShaderLibs(detail::FULL_PBR_FRAGMENT_SHADER_SRC)
 	));
 
+	// resolveShaderLibs() expands the osgx snippet pragmas but preserves OSG's
+	// import_defines pragma. Let OSG assemble/cache the diagnostic shader variant
+	// from render state so it can place the generated define safely after #version.
+	if(diagnostics) ss->setDefine("OSGX_PBRIBL_DIAGNOSTICS");
+
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 	ss->setTextureAttributeAndModes(5, pis.envMap, osg::StateAttribute::ON);
 	ss->setTextureAttributeAndModes(6, pis.brdfLUT, osg::StateAttribute::ON);
@@ -498,11 +519,13 @@ inline PBRIBLScene createPBRIBLScene(
 	ss->addUniform(new osg::Uniform("iblIntensity", iblIntensity));
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 
-	auto* shUniform = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblSH", 9);
+	if(diagnostics) {
+		auto* shUniform = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblSH", 9);
 
-	for(unsigned int i = 0; i < 9; i++) shUniform->setElement(i, sh.coeffs[i]);
+		for(unsigned int i = 0; i < 9; i++) shUniform->setElement(i, sh.coeffs[i]);
 
-	ss->addUniform(shUniform);
+		ss->addUniform(shUniform);
+	}
 
 	// osgGLTF's GLTFReader binds the actual baseColor/normal/orm/emissive Texture2Ds to units
 	// 0-3 per-geometry (GLTFReader.hpp's applyMaterial()), but deliberately stays shader-agnostic
@@ -517,15 +540,17 @@ inline PBRIBLScene createPBRIBLScene(
 	ss->addUniform(new osg::Uniform("osgGLTF_textures.orm", 2));
 	ss->addUniform(new osg::Uniform("osgGLTF_textures.emissive", 3));
 
-	pis.debugMode = new osg::Uniform("debugMode", 0);
-	pis.disableNormalMap = new osg::Uniform("disableNormalMap", 0);
-	pis.disableRoughnessMap = new osg::Uniform("disableRoughnessMap", 0);
-	pis.diffuseIBLMode = new osg::Uniform("diffuseIBLMode", 0);
+	if(diagnostics) {
+		pis.debugMode = new osg::Uniform("debugMode", 0);
+		pis.disableNormalMap = new osg::Uniform("disableNormalMap", 0);
+		pis.disableRoughnessMap = new osg::Uniform("disableRoughnessMap", 0);
+		pis.diffuseIBLMode = new osg::Uniform("diffuseIBLMode", 0);
 
-	ss->addUniform(pis.debugMode);
-	ss->addUniform(pis.disableNormalMap);
-	ss->addUniform(pis.disableRoughnessMap);
-	ss->addUniform(pis.diffuseIBLMode);
+		ss->addUniform(pis.debugMode);
+		ss->addUniform(pis.disableNormalMap);
+		ss->addUniform(pis.disableRoughnessMap);
+		ss->addUniform(pis.diffuseIBLMode);
+	}
 
 	ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
 

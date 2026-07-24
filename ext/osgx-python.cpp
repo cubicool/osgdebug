@@ -230,13 +230,13 @@ PYBIND11_MODULE(osgx, m) {
 		"ktx2Path"_a,
 		"hdrPath"_a,
 		"iblIntensity"_a=1.0f,
-		"lutSize"_a=512,
+		"lutSize"_a=1024,
+		"diagnostics"_a=false,
 		"One-call full PBR/IBL setup against an already-loaded glTF node: loads the prefiltered "
-		"cubemap, bakes the BRDF LUT, and bakes BOTH a Lambertian diffuse irradiance cubemap and "
-		"SH9 from the same HDR image (toggle at runtime via .diffuseIBLMode -- 0=cubemap [default], "
-		"1=SH9 -- for A/B comparison; bake time for each is printed via OSG_NOTICE), and wires the "
+		"cubemap, bakes the BRDF LUT and Lambertian diffuse irradiance cubemap, and wires the "
 		"shader + every uniform/texture unit it needs onto node's StateSet (OVERRIDE'd). Returns a "
 		"PBRIBLScene -- add .lutCamera to the scene graph (required for the LUT to actually bake) "
-		"and check .valid() if either asset path might be wrong."
+		"and check .valid() if either asset path might be wrong. diagnostics=True additionally "
+		"compiles the debug channels and bakes SH9 for the diffuseIBLMode A/B switch."
 	);
 }
