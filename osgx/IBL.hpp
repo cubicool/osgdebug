@@ -1,6 +1,31 @@
 #pragma once
 
 #include "Shader.hpp"
+#include "Core.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Camera>
+#include <osg/GL>
+#include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/Image>
+#include <osg/NodeCallback>
+#include <osg/NodeVisitor>
+#include <osg/Program>
+#include <osg/Shader>
+#include <osg/Texture2D>
+#include <osg/TextureCubeMap>
+#include <osgDB/ReadFile>
+
+OSGX_ENABLE_WARNINGS
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 namespace osgx {
 
@@ -489,7 +514,10 @@ inline osg::ref_ptr<osg::TextureCubeMap> computeLambertianCubeMap(
 
 				accum /= double(samples);
 
-				auto* px = reinterpret_cast<float*>(image->data(x, y));
+				auto* px = reinterpret_cast<float*>(image->data(
+					static_cast<unsigned int>(x),
+					static_cast<unsigned int>(y)
+				));
 
 				px[0] = float(accum.x());
 				px[1] = float(accum.y());

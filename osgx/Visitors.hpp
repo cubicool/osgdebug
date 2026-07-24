@@ -2,6 +2,25 @@
 
 #include "Core.hpp"
 
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Drawable>
+#include <osg/Geode>
+#include <osg/MatrixTransform>
+#include <osg/NodeVisitor>
+#include <osg/Notify>
+#include <osg/ShapeDrawable>
+#include <osgGA/GUIEventHandler>
+#include <osgViewer/Viewer>
+
+OSGX_ENABLE_WARNINGS
+
+#include <iostream>
+#include <map>
+#include <regex>
+#include <sstream>
+#include <vector>
+
 namespace osgx {
 
 // ------------------------------------------------------------------------------------------------

@@ -2,6 +2,27 @@
 
 #include "Core.hpp"
 
+OSGX_DISABLE_WARNINGS
+
+#include <osg/BlendFunc>
+#include <osg/Camera>
+#include <osg/GLExtensions>
+#include <osg/Image>
+#include <osg/NodeCallback>
+#include <osg/NodeVisitor>
+#include <osg/Program>
+#include <osg/RenderInfo>
+#include <osg/Shader>
+#include <osg/State>
+#include <osg/Texture2D>
+#include <osg/observer_ptr>
+#include <osgGA/GUIEventHandler>
+
+OSGX_ENABLE_WARNINGS
+
+#include <atomic>
+#include <cstdint>
+
 namespace osgx {
 
 // ================================================================================================

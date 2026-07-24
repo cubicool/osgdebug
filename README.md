@@ -3,6 +3,43 @@
 osgDebug provides easy access to the various *_debug_* OpenGL extensions, allowing the code to provide additional/informative messages and annotations
 that that applications like *Nsight* and *APITrace* support.
 
+# CMake
+
+osgDebug and osgx can be consumed directly from their source tree or as installed CMake packages.
+In either case, link the appropriate imported-style target and its OpenSceneGraph include and link
+requirements will be propagated to your target.
+
+To embed the source tree in another project:
+
+```cmake
+add_subdirectory(path/to/osgdebug EXCLUDE_FROM_ALL)
+target_link_libraries(my_target PRIVATE osgDebug::osgDebug)
+```
+
+When embedded, examples, utilities, Python modules, and installation rules are disabled by default.
+They can be enabled individually with `OSGX_BUILD_EXAMPLES`, `OSGX_BUILD_UTILS`,
+`OSGX_BUILD_PYTHON`, and `OSGX_INSTALL`.
+
+To install osgDebug and consume it as a package, first install an already-configured build tree:
+
+```console
+cmake --install BUILD --prefix /path/to/prefix
+```
+
+Then use the installed package from the consuming project:
+
+```cmake
+find_package(osgDebug CONFIG REQUIRED)
+target_link_libraries(my_target PRIVATE osgDebug::osgDebug)
+```
+
+Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project if the chosen
+prefix is not already in CMake's search path.
+
+Projects needing only osgx can use `osgx::core` for the low-level facilities or `osgx::osgx` for
+the complete utility layer. In installed mode, use `find_package(osgx CONFIG REQUIRED)` first.
+`osgx::osgx` includes `osgx::core`, and `osgDebug::osgDebug` includes the complete osgx layer.
+
 # `osgx.hpp` Extras
 
 `osgx.hpp` is the umbrella header for a small C++20 OpenSceneGraph utility layer that sits beside `osgDebug.hpp`. It keeps common setup code shorter and adds modern range/span/lambda-friendly wrappers.

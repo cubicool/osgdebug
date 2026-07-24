@@ -2,6 +2,17 @@
 
 #include "Core.hpp"
 
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Array>
+#include <osg/PrimitiveSet>
+
+OSGX_ENABLE_WARNINGS
+
+#include <initializer_list>
+#include <ranges>
+#include <span>
+
 namespace osgx {
 
 template<typename T>

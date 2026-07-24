@@ -1,0 +1,29 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(OpenSceneGraph REQUIRED COMPONENTS
+	osg
+	osgDB
+	osgGA
+	osgViewer
+	osgUtil
+	osgFX
+	osgText
+	osgWidget
+	osgAnimation
+)
+
+include("${CMAKE_CURRENT_LIST_DIR}/osgxTargets.cmake")
+
+# CMake's FindOpenSceneGraph module does not provide imported targets. Attach
+# the libraries it discovers to the installed core target here so the exported
+# package remains relocatable instead of recording this machine's library paths.
+set_property(TARGET osgx::core APPEND PROPERTY
+	INTERFACE_INCLUDE_DIRECTORIES "${OPENSCENEGRAPH_INCLUDE_DIRS}"
+)
+set_property(TARGET osgx::core APPEND PROPERTY
+	INTERFACE_LINK_LIBRARIES "${OPENSCENEGRAPH_LIBRARIES}"
+)
+
+check_required_components(osgx)

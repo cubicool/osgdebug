@@ -1,6 +1,14 @@
 #pragma once
 
-#include "Core.hpp"
+#include <algorithm>
+#include <cctype>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace osgx {
 

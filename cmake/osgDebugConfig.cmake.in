@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(osgx CONFIG REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/osgDebugTargets.cmake")
+
+check_required_components(osgDebug)

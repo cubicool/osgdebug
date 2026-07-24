@@ -1,6 +1,37 @@
 #pragma once
 
-#include "Common.hpp"
+#include "Warnings.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Node>
+#include <osg/Object>
+#include <osg/Referenced>
+#include <osg/Timer>
+#include <osg/Vec3>
+#include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
+
+#include <algorithm>
+#include <array>
+#include <concepts>
+#include <functional>
+#include <limits>
+#include <list>
+#include <numeric>
+#include <optional>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+// The same as `META_Object` but updated for modern C++ warnings.
+#define OSGX_META_Object(library,name) \
+	osg::Object* cloneType() const override { return new name (); } \
+	osg::Object* clone(const osg::CopyOp& copyop) const override { return new name (*this,copyop); } \
+	bool isSameKindAs(const osg::Object* obj) const override { return dynamic_cast<const name *>(obj)!=NULL; } \
+	const char* libraryName() const override { return #library; }\
+	const char* className() const override { return #name; }
 
 namespace osgx {
 

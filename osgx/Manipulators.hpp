@@ -2,6 +2,21 @@
 
 #include "Core.hpp"
 
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Camera>
+#include <osg/CullSettings>
+#include <osg/Matrix>
+#include <osg/observer_ptr>
+#include <osgGA/CameraManipulator>
+#include <osgGA/GUIActionAdapter>
+#include <osgGA/GUIEventAdapter>
+
+OSGX_ENABLE_WARNINGS
+
+#include <cmath>
+#include <vector>
+
 namespace osgx {
 
 // ================================================================================================

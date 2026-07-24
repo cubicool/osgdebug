@@ -2,6 +2,18 @@
 
 #include "Core.hpp"
 
+OSGX_DISABLE_WARNINGS
+
+#include <osg/BlendFunc>
+#include <osg/Camera>
+#include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/Program>
+#include <osg/Shader>
+#include <osg/Uniform>
+
+OSGX_ENABLE_WARNINGS
+
 namespace osgx {
 
 // ================================================================================================

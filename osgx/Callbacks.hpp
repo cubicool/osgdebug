@@ -2,6 +2,23 @@
 
 #include "Core.hpp"
 
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Camera>
+#include <osg/Drawable>
+#include <osg/Image>
+#include <osg/RenderInfo>
+#include <osg/Texture>
+#include <osgDB/WriteFile>
+#include <osgGA/GUIEventHandler>
+
+OSGX_ENABLE_WARNINGS
+
+#include <atomic>
+#include <initializer_list>
+#include <ranges>
+#include <vector>
+
 namespace osgx {
 
 class LambdaKeyHandler: public osgGA::GUIEventHandler {

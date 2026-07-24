@@ -1,6 +1,20 @@
 #pragma once
 
 #include "Shader.hpp"
+#include "Core.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/NodeCallback>
+#include <osg/NodeVisitor>
+#include <osg/StateSet>
+#include <osg/Uniform>
+
+OSGX_ENABLE_WARNINGS
+
+#include <cmath>
+#include <string>
+#include <vector>
 
 namespace osgx {
 
