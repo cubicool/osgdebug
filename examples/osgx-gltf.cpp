@@ -1,4 +1,4 @@
-// vimrun! ./examples/osgdebug-gltf model.gltf --ktx2 papermill.ktx2 --hdr papermill.hdr
+// vimrun! ./examples/osgx-gltf model.gltf --ktx2 papermill.ktx2 --hdr papermill.hdr
 //
 // Minimal proof that osgx/GLTF.hpp works from plain C++, not just via the Python
 // bindings (already confirmed against OpenSceneGraph.py/pyosg-lighting). One call
@@ -111,7 +111,12 @@ int main(int argc, char** argv) {
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 	viewer.addEventHandler(new osgViewer::StatsHandler());
-	viewer.getCamera()->setClearColor(osg::Vec4(48.0 / 255.0, 53.0 / 255.0, 66.0 / 255.0, 1.0)); // #303542
+	viewer.getCamera()->setClearColor(osg::Vec4f(
+		48.0f / 255.0f,
+		53.0f / 255.0f,
+		66.0f / 255.0f,
+		1.0f
+	)); // #303542
 
 	// Diagnostics, ported from pyosg-khronos-viewer.py: 1/2/3 pick debugMode; N/R toggle the
 	// normal/roughness maps.

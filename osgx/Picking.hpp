@@ -12,7 +12,7 @@ namespace osgx {
 // 3. Syncing the pick camera's view/projection to the main camera each update traversal (PickCameraSync).
 // 4. Adding PickHandler as a viewer event handler.
 //
-// See examples/osgdebug-picking.cpp for a complete worked example including all three FBO
+// See examples/osgx-picking.cpp for a complete worked example including all three FBO
 // modes (full WxH, --small-pick N, --pick-1x1 sub-frustum).
 //
 // NOTE: every RTT camera that owns its own view/projection matrices MUST call

@@ -193,6 +193,7 @@ PYBIND11_MODULE(osgx, m) {
 		"image"_a,
 		"size"_a = 64,
 		"samples"_a = 256,
+		py::call_guard<py::gil_scoped_release>(),
 		"Bakes a cosine-weighted Monte Carlo diffuse irradiance cubemap from an equirectangular "
 		"HDR/LDR osg.Image -- more accurate than SH9 (see computeSH), at the cost of a real bake "
 		"instead of 9 coefficients. Sample with LAMBERTIAN_IRRADIANCE's osgx_LambertianIrradiance()."

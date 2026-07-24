@@ -247,7 +247,7 @@ uniform samplerCube diffuseEnv; // unit 7
 uniform float iblIntensity;
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 // Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
-// handler - lets a caller (see osgdebug-gltf.cpp) key-toggle which term is actually
+// handler - lets a caller (see osgx-gltf.cpp) key-toggle which term is actually
 // contributing to a surface, useful for isolating why a render looks wrong. debugMode:
 // 0=combined, 1=diffuse only, 2=specular only.
 uniform int debugMode;
@@ -390,7 +390,7 @@ struct PBRIBLScene {
 	osg::ref_ptr<osg::TextureCubeMap> diffuseEnv;
 
 	// Debug-mode uniforms (see FULL_PBR_FRAGMENT_SHADER_SRC) - returned so a caller can wire
-	// up a diagnostic key handler (osgdebug-gltf.cpp does this) without doing a
+	// up a diagnostic key handler (osgx-gltf.cpp does this) without doing a
 	// getStateSet()->getUniform() lookup by name.
 	osg::ref_ptr<osg::Uniform> debugMode;
 	osg::ref_ptr<osg::Uniform> disableNormalMap;

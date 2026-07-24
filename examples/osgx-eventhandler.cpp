@@ -1,4 +1,4 @@
-//vimrun! ./examples/osgdebug-eventhandler
+//vimrun! ./examples/osgx-eventhandler
 
 #include "../osgx.hpp"
 

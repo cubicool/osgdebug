@@ -1,11 +1,11 @@
-// vimrun! ./examples/osgdebug-manipulator
+// vimrun! ./examples/osgx-manipulator
 //
 // Demonstrates osgx::Ortho2DManipulator.
 //
 // With no arguments, renders a grid of colored boxes in the XY plane.
 // Pass a model path to load and inspect it instead.
 
-#include "../osgDebug.hpp"
+#include "../osgx.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -1,6 +1,6 @@
-// vimrun! ./examples/osgdebug-culling
+// vimrun! ./examples/osgx-culling
 
-#include "../osgDebug.hpp"
+#include "../osgx.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
 
 	auto r = viewer.run();
 
-	// osgDB::writeNodeFile(*root, "osgdebug-culling.osgt");
+	// osgDB::writeNodeFile(*root, "osgx-culling.osgt");
 
 	return r;
 }

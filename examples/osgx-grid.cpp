@@ -1,4 +1,4 @@
-// vimrun! ./examples/osgdebug-grid
+// vimrun! ./examples/osgx-grid
 
 #include "../osgx.hpp"
 

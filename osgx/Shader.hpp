@@ -97,17 +97,22 @@ inline std::string resolveShaderLibs(std::string src) {
 	// Other pragmas are intentionally preserved. In particular, this lets callers
 	// compose snippet expansion with OSG's state-driven shader variants, such as
 	// #pragma import_defines(...), #pragma import_modes(...), and #pragma requires(...).
+	static constexpr char CARRIAGE_RETURN = 13;
+	static constexpr char LINE_FEED = 10;
+	static constexpr char LINE_ENDINGS[] = {CARRIAGE_RETURN, LINE_FEED, 0};
+	static constexpr char SHADER_WHITESPACE[] = {' ', 9, CARRIAGE_RETURN, LINE_FEED, 0};
+
 	std::string resolved;
 	resolved.reserve(src.size());
 	for(size_t pos = 0; pos < src.size();) {
-		const auto lineEnd = src.find_first_of("\r\n", pos);
+		const auto lineEnd = src.find_first_of(LINE_ENDINGS, pos);
 		const auto lineSize = lineEnd == std::string::npos ? src.size() - pos : lineEnd - pos;
 		const auto line = std::string_view(src.data() + pos, lineSize);
 		auto rest = detail::trimShaderText(line);
 		std::optional<std::string> replacement;
 		if(detail::startsWithIgnoringCase(rest, "#pragma")) {
 			rest = detail::trimShaderText(rest.substr(7));
-			const auto nsEnd = rest.find_first_of(" \t\r\n");
+			const auto nsEnd = rest.find_first_of(SHADER_WHITESPACE);
 			const auto namespaceName = rest.substr(0, nsEnd);
 			const auto names = nsEnd == std::string_view::npos ? std::string_view{} : rest.substr(nsEnd);
 			for(const auto& catalog : detail::shaderLibCatalogs()) {
@@ -124,7 +129,11 @@ inline std::string resolveShaderLibs(std::string src) {
 		}
 		if(replacement) resolved += *replacement; else resolved.append(line);
 		if(lineEnd == std::string::npos) break;
-		if(src[lineEnd] == '\r' && lineEnd + 1 < src.size() && src[lineEnd + 1] == '\n') { resolved += "\r\n"; pos = lineEnd + 2; }
+		if(src[lineEnd] == CARRIAGE_RETURN && lineEnd + 1 < src.size() && src[lineEnd + 1] == LINE_FEED) {
+			resolved += CARRIAGE_RETURN;
+			resolved += LINE_FEED;
+			pos = lineEnd + 2;
+		}
 		else { resolved += src[lineEnd]; pos = lineEnd + 1; }
 	}
 	return resolved;

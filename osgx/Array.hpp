@@ -24,8 +24,6 @@ public:
 	using BaseArray::end;
 	using BaseArray::assign;
 
-	OSGX_META_Object(osgx, Array)
-
 	Array() = default;
 
 	Array(const Array& arr, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
@@ -171,8 +169,6 @@ public:
 	using BaseElements::assign;
 	using BaseElements::push_back;
 	using BaseElements::reserve;
-
-	OSGX_META_Object(osgx, DrawElements)
 
 	// --------------------------------------------------------------------------------------------
 	// Constructors

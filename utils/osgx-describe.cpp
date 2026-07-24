@@ -1,6 +1,6 @@
-// vimrun! ./examples/osgdebug-visitor
+// vimrun! ./examples/osgx-visitor
 
-#include "../osgDebug.hpp"
+#include "../osgx.hpp"
 
 auto createSceneA() {
 	auto root = osgx::make_nref<osg::Group>("SceneA");

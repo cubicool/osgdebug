@@ -1,0 +1,160 @@
+//vimrun! ./examples/osgx-array
+
+#include "../osgx.hpp"
+
+#include <cassert>
+#include <filesystem>
+#include <iostream>
+#include <string_view>
+#include <type_traits>
+
+using namespace osgx::literals;
+// using osgx::literals::operator""_v;
+
+namespace {
+
+bool check(bool condition, std::string_view description) {
+	std::cout << (condition ? "PASS: " : "FAIL: ") << description << std::endl;
+
+	return condition;
+}
+
+}
+
+int main(int argc, char** argv) {
+	auto av3_3 = osgx::Vec3Array({
+		{1_v, 2_v, 3_v},
+		{10_v, 20_v, 30_v},
+		{100_v, 200_v, 300_v}
+	});
+
+	assert(av3_3.size() == 3);
+	assert(av3_3[0] == osg::Vec3(1_v, 2_v, 3_v));
+
+	av3_3.append_range({
+		{1000_v, 2000_v, 3000_v},
+		{10000_v, 20000_v, 30000_v}
+	});
+
+	assert(av3_3.size() == 5);
+	assert(av3_3[3] == osg::Vec3(1000_v, 2000_v, 3000_v));
+
+	auto nav3_2 = osgx::make_ref<osgx::Vec3Array>(
+		osg::Vec3(1_v, 2_v, 3_v),
+		osg::Vec3(4_v, 5_v, 6_v)
+	);
+
+	assert(nav3_2->size() == 2);
+	assert((*nav3_2)[1] == osg::Vec3(4_v, 5_v, 6_v));
+
+	nav3_2->append_n<1>({7_v, 8_v, 9_v});
+
+	assert(nav3_2->size() == 3);
+	assert((*nav3_2)[2] == osg::Vec3(7_v, 8_v, 9_v));
+
+	auto nav2_3 = osgx::make_ref<osgx::Vec2Array>(nullptr);
+
+	// nav2_3 = osgx::Vec2Array::create({
+	nav2_3 = new osgx::Vec2Array({
+		{11_v, 22_v},
+		{33_v, 44_v},
+		{55_v, 66_v},
+	});
+
+	assert(nav2_3->size() == 3);
+	assert((*nav2_3)[2] == osg::Vec2(55_v, 66_v));
+
+	// Interchangeability checks: osgx::Array should be usable anywhere its native OSG base is used,
+	// including OSG's runtime type system, cloning, and serialization.
+	static_assert(std::derived_from<osgx::Vec3Array, osg::Vec3Array>);
+
+	bool interchangeable = true;
+	auto native = osgx::make_ref<osg::Vec3Array>();
+	osg::ref_ptr<osg::Vec3Array> nativeView = nav3_2.get();
+
+	interchangeable &= check(nativeView.get() == nav3_2.get(), "converts to osg::Vec3Array without copying");
+	interchangeable &= check(
+		std::string_view(nav3_2->libraryName()) == native->libraryName(),
+		"reports the native OSG library name"
+	);
+	interchangeable &= check(
+		std::string_view(nav3_2->className()) == native->className(),
+		"reports the native OSG class name"
+	);
+
+	osg::ref_ptr<osg::Object> clone = nav3_2->clone(osg::CopyOp::DEEP_COPY_ALL);
+	auto* clonedArray = dynamic_cast<osg::Vec3Array*>(clone.get());
+
+	interchangeable &= check(clonedArray != nullptr, "clones as an osg::Vec3Array-compatible object");
+	interchangeable &= check(
+		clonedArray && clonedArray->size() == nav3_2->size() && (*clonedArray)[2] == (*nav3_2)[2],
+		"preserves values through a deep clone"
+	);
+
+	auto geometry = osgx::make_ref<osg::Geometry>();
+	geometry->setVertexArray(nav3_2.get());
+	auto elements = osgx::DrawElementsUShort::triangles(0, 1, 2);
+	auto nativeElements = osgx::make_ref<osg::DrawElementsUShort>();
+
+	interchangeable &= check(
+		std::string_view(elements->libraryName()) == nativeElements->libraryName() &&
+		std::string_view(elements->className()) == nativeElements->className(),
+		"DrawElements reports the native OSG identity"
+	);
+	interchangeable &= check(
+		dynamic_cast<osg::DrawElementsUShort*>(elements->clone(osg::CopyOp::DEEP_COPY_ALL)) != nullptr,
+		"DrawElements clones as a native-compatible object"
+	);
+
+	geometry->addPrimitiveSet(elements.get());
+
+	interchangeable &= check(
+		geometry->getVertexArray() == nav3_2.get(),
+		"works directly as an osg::Geometry vertex array"
+	);
+
+	auto geode = osgx::make_ref<osg::Geode>();
+	geode->addDrawable(geometry.get());
+
+	// Establish that the active OSG serializer can write the equivalent native array before using
+	// serialization as an interchangeability verdict.
+	static constexpr GLushort nativeIndices[] = {0, 1, 2};
+	auto nativeGeometry = osgx::make_ref<osg::Geometry>();
+	nativeGeometry->setVertexArray(new osg::Vec3Array(nav3_2->begin(), nav3_2->end()));
+	nativeGeometry->addPrimitiveSet(new osg::DrawElementsUShort(
+		GL_TRIANGLES,
+		std::begin(nativeIndices),
+		std::end(nativeIndices)
+	));
+	auto nativeGeode = osgx::make_ref<osg::Geode>();
+	nativeGeode->addDrawable(nativeGeometry.get());
+
+	const auto nativePath = std::filesystem::temp_directory_path() / "osg-array-native-control.osgt";
+	const bool nativeWrote = osgDB::writeNodeFile(*nativeGeode, nativePath.string());
+	check(nativeWrote, "native osg::Vec3Array serialization control");
+
+	const auto path = std::filesystem::temp_directory_path() / "osgx-array-interchange.osgt";
+	const bool wrote = osgDB::writeNodeFile(*geode, path.string());
+	osg::ref_ptr<osg::Node> restored = wrote ? osgDB::readRefNodeFile(path.string()) : nullptr;
+	auto* restoredGeode = restored ? restored->asGeode() : nullptr;
+	auto* restoredGeometry = restoredGeode && restoredGeode->getNumDrawables() > 0
+		? restoredGeode->getDrawable(0)->asGeometry()
+		: nullptr
+	;
+	auto* restoredArray = restoredGeometry
+		? dynamic_cast<osg::Vec3Array*>(restoredGeometry->getVertexArray())
+		: nullptr
+	;
+
+	interchangeable &= check(wrote, "serializes inside an OSG Geometry");
+	interchangeable &= check(
+		restoredArray && restoredArray->size() == nav3_2->size() && (*restoredArray)[2] == (*nav3_2)[2],
+		"round-trips through OSG serialization as a native-compatible array"
+	);
+
+	std::error_code ec;
+	std::filesystem::remove(path, ec);
+	std::filesystem::remove(nativePath, ec);
+
+	return interchangeable ? 0 : 1;
+}

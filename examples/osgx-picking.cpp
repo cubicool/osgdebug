@@ -1,4 +1,4 @@
-// vimrun! ./examples/osgdebug-picking --pick-1x1 --async
+// vimrun! ./examples/osgx-picking --pick-1x1 --async
 //
 // Texture-based (object ID) picking via RTT FBO, with two readback modes:
 //
@@ -21,7 +21,7 @@
 //
 // PickReadbackSync, PickReadbackAsync, PickCameraSync, and all pick helpers live in osgx.hpp.
 
-#include "../osgDebug.hpp"
+#include "../osgx.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
 
 	OSG_NOTICE
 		<< "Pick FBO: " << pickW << "x" << pickH
-		<< "  window: " << W << "x" << H << "\n"
+		<< "  window: " << W << "x" << H << std::endl
 		<< " readback: "
 		<< (
 			useAsync && pick1x1 ? "ASYNC (Texture2D + PBO, 1x1 sub-frustum, continuous hover)" :
@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
 			pick1x1             ? "SYNC (osg::Image, 1x1 sub-frustum, continuous)" :
 			smallPick           ? "SYNC (osg::Image, small FBO scaled coords)" :
 			                      "SYNC (osg::Image, full FBO)"
-		) << "\n"
+		) << std::endl
 		<< "   region: " << pickSize << "x" << pickSize
 		<< " -- left-click to pick"
 		<< std::endl;

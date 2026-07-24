@@ -1,4 +1,4 @@
-// vimrun! ./examples/osgdebug-hover
+// vimrun! ./examples/osgx-hover
 //
 // Demonstrates onEnter / onLeave hover state with scene graph visual feedback.
 //
@@ -14,7 +14,7 @@
 //
 // Scene: five spheres, pick IDs 1-5. ID 0 = background.
 
-#include "../osgDebug.hpp"
+#include "../osgx.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -104,7 +104,8 @@ int main(int argc, char** argv) {
 	OSG_NOTICE
 		<< "Hover readback: "
 		<< (async ? "ASYNC (Texture2D + PBO)" : "SYNC (osg::Image NodeCallback)")
-		<< "\nonEnter/onLeave always fired from update thread via PickHoverCallback"
+		<< std::endl
+		<< "onEnter/onLeave always fired from update thread via PickHoverCallback"
 		<< std::endl;
 
 	std::unordered_map<uint32_t, PickEntry> objects;

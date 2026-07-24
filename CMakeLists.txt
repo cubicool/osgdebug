@@ -88,14 +88,20 @@ function(OSGDEBUG_COMPILE_OPTIONS _target)
 	endif()
 endfunction()
 
-function(OSGDEBUG_ADD_EXECUTABLE _target)
-	add_executable("osgdebug-${_target}"
-		"osgdebug-${_target}.cpp"
+function(OSGDEBUG_ADD_EXECUTABLE _prefix_or_topic)
+	if(ARGC EQUAL 1)
+		set(_target "osgdebug-${_prefix_or_topic}")
+	else()
+		set(_target "${_prefix_or_topic}-${ARGV1}")
+	endif()
+
+	add_executable("${_target}"
+		"${_target}.cpp"
 		"../osgx.hpp"
 		"../osgDebug.hpp"
 	)
 
-	osgdebug_compile_options("osgdebug-${_target}")
+	osgdebug_compile_options("${_target}")
 endfunction()
 
 add_subdirectory("examples")

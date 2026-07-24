@@ -331,7 +331,10 @@ public:
 		}
 
 		catch(const std::regex_error& e) {
-			std::cerr << "Invalid regex pattern: " << patternStr << " (" << e.what() << ")\n";
+			std::cerr
+				<< "Invalid regex pattern: " << patternStr
+				<< " (" << e.what() << ")" << std::endl
+			;
 		}
 	}
 

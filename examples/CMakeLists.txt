@@ -1,54 +1,61 @@
-set(OSGDEBUG_EXAMPLES
-	"eventhandler"
+set(OSGX_EXAMPLES
 	"array"
-	"callback"
 	"culling"
-	"notifyfilter"
+	"eventhandler"
+	"gltf"
+	"grid"
 	"hover"
 	"manipulator"
 	"picking"
-	"viewer"
 	"visitor"
-	"grid"
-	"gltf"
 )
 
+set(OSGDEBUG_EXAMPLES
+	"callback"
+	"notifyfilter"
+	"viewer"
+)
+
+foreach(example IN LISTS OSGX_EXAMPLES)
+	osgdebug_add_executable("osgx" "${example}")
+endforeach()
+
 foreach(example IN LISTS OSGDEBUG_EXAMPLES)
-	osgdebug_add_executable("${example}")
+	osgdebug_add_executable("osgdebug" "${example}")
 endforeach()
 
 find_package(OpenGL REQUIRED)
-target_link_libraries(osgdebug-hover PRIVATE OpenGL::GL)
-target_link_libraries(osgdebug-picking PRIVATE OpenGL::GL)
+target_link_libraries(osgx-hover PRIVATE OpenGL::GL)
+target_link_libraries(osgx-picking PRIVATE OpenGL::GL)
 
 find_package(PkgConfig)
 
 if(PkgConfig_FOUND)
-    pkg_check_modules(IMGUI imgui)
+	pkg_check_modules(IMGUI imgui)
 endif()
 
 if(IMGUI_FOUND)
-    add_executable(osgdebug-imgui
-        "osgdebug-imgui.cpp"
-        "../osgx.hpp"
-        "../osgDebug.hpp"
-    )
+	add_executable(osgdebug-imgui
+		"osgdebug-imgui.cpp"
+		"../osgx.hpp"
+		"../osgDebug.hpp"
+	)
 
-    osgdebug_compile_options(osgdebug-imgui)
+	osgdebug_compile_options(osgdebug-imgui)
 	target_compile_definitions(osgdebug-imgui PRIVATE OSGDEBUG_IMGUI)
-    target_include_directories(osgdebug-imgui PRIVATE ${IMGUI_INCLUDE_DIRS})
-    target_link_libraries(osgdebug-imgui PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
+	target_include_directories(osgdebug-imgui PRIVATE ${IMGUI_INCLUDE_DIRS})
+	target_link_libraries(osgdebug-imgui PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
 
-    add_executable(osgdebug-imgui-external
-        "osgdebug-imgui-external.cpp"
-        "../osgx.hpp"
-        "../osgDebug.hpp"
-    )
+	add_executable(osgdebug-imgui-external
+		"osgdebug-imgui-external.cpp"
+		"../osgx.hpp"
+		"../osgDebug.hpp"
+	)
 
-    osgdebug_compile_options(osgdebug-imgui-external)
-    target_compile_definitions(osgdebug-imgui-external PRIVATE OSGDEBUG_IMGUI)
-    target_include_directories(osgdebug-imgui-external PRIVATE ${IMGUI_INCLUDE_DIRS})
-    target_link_libraries(osgdebug-imgui-external PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
+	osgdebug_compile_options(osgdebug-imgui-external)
+	target_compile_definitions(osgdebug-imgui-external PRIVATE OSGDEBUG_IMGUI)
+	target_include_directories(osgdebug-imgui-external PRIVATE ${IMGUI_INCLUDE_DIRS})
+	target_link_libraries(osgdebug-imgui-external PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
 else()
-    message(STATUS "ImGui not found via pkg-config; skipping osgdebug-imgui")
+	message(STATUS "ImGui not found via pkg-config; skipping osgdebug-imgui")
 endif()
