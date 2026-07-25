@@ -16,6 +16,30 @@ option(OSGX_BUILD_UTILS "Build the osgx and osgDebug utilities" ${OSGX_IS_TOP_LE
 option(OSGX_BUILD_PYTHON "Build the osgx and osgDebug Python modules" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_INSTALL "Generate osgx and osgDebug installation rules" ${OSGX_IS_TOP_LEVEL})
 
+if(WIN32)
+	set(OSGDEBUG_WARNING_OPTIONS
+		/W4
+		/WX
+		/wd4100
+		/analyze
+	)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	set(OSGDEBUG_WARNING_OPTIONS
+		-W
+		-Wall
+		-Wshadow
+		-Wconversion
+		-Wsign-conversion
+		-Wfloat-conversion
+		-Wpedantic
+		-Wextra
+		-Werror
+		-Wno-unused-parameter
+	)
+else()
+	set(OSGDEBUG_WARNING_OPTIONS)
+endif()
+
 # add_subdirectory("OSG") # EXCLUDE_FROM_ALL)
 
 find_package(OpenSceneGraph REQUIRED
@@ -76,17 +100,7 @@ set_target_properties(osgx PROPERTIES
 	POSITION_INDEPENDENT_CODE ON
 )
 
-if(NOT WIN32)
-	target_compile_options(osgx PRIVATE
-		-W
-		-Wall
-		-Werror
-		-Wshadow
-		-Wconversion
-		-Wpedantic
-		-Wno-unused-parameter
-	)
-endif()
+target_compile_options(osgx PRIVATE ${OSGDEBUG_WARNING_OPTIONS})
 
 add_library(osgDebug INTERFACE)
 add_library(osgDebug::osgDebug ALIAS osgDebug)
@@ -198,36 +212,7 @@ function(OSGDEBUG_COMPILE_OPTIONS _target)
 	target_compile_features("${_target}" PUBLIC cxx_std_20)
 	target_link_libraries("${_target}" PUBLIC ${OPENSCENEGRAPH_LIBRARIES})
 	target_include_directories("${_target}" PUBLIC ${OPENSCENEGRAPH_INCLUDE_DIRS})
-
-	if(WIN32)
-		# target_compile_options(osgDebug PRIVATE /W4 /wd4100)
-		# /Wall /wd4225 /wd4668) # /wd4244 /wd4146 /wd4267 /wd4996 /wd4334 /wd4311)
-
-		# #!/usr/bin/env bash
-		#
-		# pushd ~/local/bin
-		# cp ~/dev/Quick/osg/BUILD-wsl/Debug/osg.exe .
-		# ./osg.exe
-		# popd
-
-		# add_custom_target(osgDebug_sh
-		# 	COMMAND echo "${F}" > .osgDebug
-		# 	COMMENT "Generating WSL wrapper script"
-		# )
-
-		# target_compile_options(_target PRIVATE -DCHRONODE_ENABLED)
-
-	else(WIN32)
-		target_compile_options("${_target}" PRIVATE
-			-W
-			-Wall
-			-Werror
-			-Wshadow
-			-Wconversion
-			-Wpedantic
-			-Wno-unused-parameter
-		)
-	endif()
+	target_compile_options("${_target}" PRIVATE ${OSGDEBUG_WARNING_OPTIONS})
 endfunction()
 
 function(OSGDEBUG_ADD_EXECUTABLE _prefix_or_topic)

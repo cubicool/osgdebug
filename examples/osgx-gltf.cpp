@@ -17,19 +17,109 @@ OSGX_DISABLE_WARNINGS
 
 #include <osgDB/ReadFile>
 #include <osgDB/Registry>
-#include <osgGA/TrackballManipulator>
+#include <osgDB/WriteFile>
+#include <osg/DisplaySettings>
 #include <osgViewer/ViewerEventHandlers>
 
 OSGX_ENABLE_WARNINGS
 
+#include <atomic>
 #include <iostream>
 
+namespace {
+
+class FramebufferPNG: public osg::Camera::DrawCallback {
+public:
+	FramebufferPNG(osg::Camera* camera, std::string filename):
+		_camera(camera),
+		_filename(std::move(filename)) {}
+
+	void operator()(osg::RenderInfo&) const override {
+		if(_started.exchange(true, std::memory_order_acq_rel)) return;
+
+		const auto* viewport = _camera->getViewport();
+
+		if(!viewport || !viewport->valid()) {
+			OSG_WARN << "Capture camera has no viewport" << std::endl;
+			_done.store(true, std::memory_order_release);
+
+			return;
+		}
+
+		auto image = osgx::make_ref<osg::Image>();
+
+		image->readPixels(
+			static_cast<int>(viewport->x()),
+			static_cast<int>(viewport->y()),
+			static_cast<int>(viewport->width()),
+			static_cast<int>(viewport->height()),
+			GL_RGB,
+			GL_UNSIGNED_BYTE
+		);
+		_success.store(osgDB::writeImageFile(*image, _filename), std::memory_order_relaxed);
+		_done.store(true, std::memory_order_release);
+
+		if(_success.load(std::memory_order_relaxed)) {
+			OSG_NOTICE << "Wrote framebuffer screenshot: " << _filename << std::endl;
+		}
+
+		else OSG_WARN << "Failed to write framebuffer screenshot: " << _filename << std::endl;
+	}
+
+	bool done() const {
+		return _done.load(std::memory_order_acquire);
+	}
+
+	bool success() const {
+		return _success.load(std::memory_order_relaxed);
+	}
+
+private:
+	osg::observer_ptr<osg::Camera> _camera;
+	std::string _filename;
+	mutable std::atomic<bool> _started{false};
+	mutable std::atomic<bool> _done{false};
+	mutable std::atomic<bool> _success{false};
+};
+
+void applyTemporaryKhronosCamera(osg::Camera* camera) {
+	// TEMPORARY BoomBox parity fixture copied exactly from ~/tmp/khronos/BoomBox.gltf.
+	// The Khronos export is Y-up; osgx's glTF scene is Z-up.
+	const osg::Vec3d eye(0.0, -0.041496723890304565, 0.0);
+	const osg::Vec3d forward(0.0, 1.0, 0.0);
+	const osg::Vec3d up(0.0, 0.0, 1.0);
+
+	// DamagedHelmet fixture from ~/Downloads/camera.gltf, retained for the next comparison:
+	// const osg::Vec3d eye(
+	// 	-0.0024815797805786133,
+	// 	-3.783294677734375,
+	// 	0.00001055002212524414
+	// );
+	// znear = 0.003815311004049344
+	// zfar = 38.15311004049344
+
+	camera->setViewMatrixAsLookAt(eye, eye + forward, up);
+	camera->setProjectionMatrixAsPerspective(
+		45.0,
+		1.5219721329046088,
+		0.000039875311734142786,
+		0.3987531173414279
+	);
+}
+
+}
+
 int main(int argc, char** argv) {
+	// Khronos requests an antialiased WebGL2 context. WebGL leaves the exact sample count to the
+	// browser; the desktop path used for these parity captures ordinarily resolves to 4x MSAA.
+	osg::DisplaySettings::instance()->setNumMultiSamples(4);
+
 	osg::ArgumentParser args(&argc, argv);
 	osgViewer::Viewer viewer(args);
 
 	args.getApplicationUsage()->setCommandLineUsage(
-		std::string(args.getApplicationName()) + " <model.gltf> --ktx2 <path> --hdr <path> [--debug [mode]]"
+		std::string(args.getApplicationName()) +
+		" <model.gltf> --ktx2 <path> --hdr <path> [--capture <path.png>] [--debug [mode]]"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--ktx2 <path>",
@@ -40,11 +130,15 @@ int main(int argc, char** argv) {
 		"Source HDR environment (for Lambertian diffuse irradiance)"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
+		"--capture <path.png>",
+		"Write the first complete framebuffer to a PNG and exit"
+	);
+	args.getApplicationUsage()->addCommandLineOption(
 		"--debug [mode]",
 		"combined, diffuse, specular, base-color, roughness, metallic, normal-texture, normal-texture-raw, geometry-normal, shading-normal, geometry-tangent, bitangent, linear-diffuse, linear-specular, or linear-combined"
 	);
 
-	std::string ktx2Path, hdrPath, debugName = "combined";
+	std::string ktx2Path, hdrPath, capturePath, debugName = "combined";
 	const std::map<std::string, int> debugModes = {
 		{"combined", 0}, {"diffuse", 1}, {"specular", 2},
 		{"base-color", 3}, {"roughness", 4}, {"metallic", 5},
@@ -55,6 +149,7 @@ int main(int argc, char** argv) {
 
 	const bool haveKtx2 = args.read("--ktx2", ktx2Path);
 	const bool haveHdr = args.read("--hdr", hdrPath);
+	const bool captureRequested = args.read("--capture", capturePath);
 	const int debugPos = args.find("--debug");
 	const bool diagnostics = debugPos >= 0;
 
@@ -109,7 +204,6 @@ int main(int argc, char** argv) {
 	root->addChild(model);
 
 	viewer.setSceneData(root);
-	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 	viewer.addEventHandler(new osgViewer::StatsHandler());
 	viewer.getCamera()->setClearColor(osg::Vec4f(
 		48.0f / 255.0f,
@@ -117,6 +211,7 @@ int main(int argc, char** argv) {
 		66.0f / 255.0f,
 		1.0f
 	)); // #303542
+	applyTemporaryKhronosCamera(viewer.getCamera());
 
 	// Diagnostics, ported from pyosg-khronos-viewer.py: 1/2/3 pick debugMode; N/R toggle the
 	// normal/roughness maps.
@@ -182,5 +277,18 @@ int main(int argc, char** argv) {
 		}
 	));
 
-	return viewer.run();
+	osg::ref_ptr<FramebufferPNG> capture;
+
+	if(captureRequested) {
+		capture = new FramebufferPNG(viewer.getCamera(), capturePath);
+		viewer.getCamera()->setFinalDrawCallback(capture);
+	}
+
+	while(!viewer.done()) {
+		viewer.frame();
+
+		if(capture && capture->done()) break;
+	}
+
+	return capture && !capture->success() ? 1 : 0;
 }
