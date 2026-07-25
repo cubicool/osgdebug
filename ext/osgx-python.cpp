@@ -1,7 +1,6 @@
 //vimrun! ./test.py
 
 #include "osgx.hpp"
-
 #include "pyosg/pyosg.hpp"
 
 #include "pybind11x.hpp"
@@ -199,9 +198,48 @@ PYBIND11_MODULE(osgx, m) {
 		"instead of 9 coefficients. Sample with LAMBERTIAN_IRRADIANCE's osgx_LambertianIrradiance()."
 	);
 
+	py::class_<osgx::ibl::GGXPrefilterOptions>(m_ibl, "GGXPrefilterOptions")
+		.def(py::init<>())
+		.def_readwrite("prefilterSize", &osgx::ibl::GGXPrefilterOptions::prefilterSize)
+		.def_readwrite("maxFrames", &osgx::ibl::GGXPrefilterOptions::maxFrames)
+		.def_readwrite("readbackFrame", &osgx::ibl::GGXPrefilterOptions::readbackFrame)
+		.def_readwrite("syncReadback", &osgx::ibl::GGXPrefilterOptions::syncReadback)
+	;
+
+	py::class_<
+		osgx::ibl::GGXPrefilterReadback,
+		osg::Camera::DrawCallback,
+		osg::ref_ptr<osgx::ibl::GGXPrefilterReadback>
+	>(m_ibl, "GGXPrefilterReadback")
+		.def("isDone", &osgx::ibl::GGXPrefilterReadback::isDone)
+		.def("getResult", &osgx::ibl::GGXPrefilterReadback::getResult)
+		.def("reset", &osgx::ibl::GGXPrefilterReadback::reset)
+	;
+
+	py::class_<osgx::ibl::GGXPrefilterScene>(m_ibl, "GGXPrefilterScene")
+		.def_readonly("root", &osgx::ibl::GGXPrefilterScene::root)
+		.def_readonly("readback", &osgx::ibl::GGXPrefilterScene::readback)
+	;
+
+	m_ibl
+		.def(
+			"createGGXPrefilterScene",
+			&osgx::ibl::createGGXPrefilterScene,
+			"equirectImage"_a,
+			"options"_a = osgx::ibl::GGXPrefilterOptions()
+		)
+		.def(
+			"rebakeGGXPrefilterScene",
+			&osgx::ibl::rebakeGGXPrefilterScene,
+			"scene"_a,
+			"equirectImage"_a
+		)
+		.def("finishGGXPrefilter", &osgx::ibl::finishGGXPrefilter, "readback"_a)
+	;
+
 	auto m_gltf = m.def_submodule(
 		"gltf",
-		"osgx::gltf - glTF material-reading glue (osgGLTF_Material UBO contract) + one-call "
+		"osgx::gltf - glTF material-reading glue (osgGLTF_Material UBO interface) + one-call "
 		"full PBR/IBL setup"
 	);
 

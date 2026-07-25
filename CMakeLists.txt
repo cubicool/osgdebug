@@ -29,6 +29,7 @@ find_package(OpenSceneGraph REQUIRED
 	osgWidget
 	osgAnimation
 )
+find_package(OpenGL REQUIRED)
 
 add_library(osgx_core INTERFACE)
 add_library(osgx::core ALIAS osgx_core)
@@ -50,20 +51,42 @@ target_sources(osgx_core INTERFACE
 )
 set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
-add_library(osgx INTERFACE)
+add_library(osgx
+	src/GGXPrefilter.cpp
+)
 add_library(osgx::osgx ALIAS osgx)
 
-target_link_libraries(osgx INTERFACE osgx::core)
-target_sources(osgx INTERFACE
+target_compile_features(osgx PUBLIC cxx_std_20)
+target_link_libraries(osgx
+	PUBLIC osgx::core
+	PRIVATE OpenGL::GL
+)
+target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Grid.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/IBL.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GGXPrefilter.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GLTF.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Manipulators.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/PBR.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Picking.hpp>"
 )
-set_target_properties(osgx PROPERTIES EXPORT_NAME osgx)
+set_target_properties(osgx PROPERTIES
+	EXPORT_NAME osgx
+	POSITION_INDEPENDENT_CODE ON
+)
+
+if(NOT WIN32)
+	target_compile_options(osgx PRIVATE
+		-W
+		-Wall
+		-Werror
+		-Wshadow
+		-Wconversion
+		-Wpedantic
+		-Wno-unused-parameter
+	)
+endif()
 
 add_library(osgDebug INTERFACE)
 add_library(osgDebug::osgDebug ALIAS osgDebug)
@@ -77,7 +100,11 @@ target_sources(osgDebug INTERFACE
 set_target_properties(osgDebug PROPERTIES EXPORT_NAME osgDebug)
 
 if(OSGX_INSTALL)
-	install(TARGETS osgx_core osgx EXPORT osgxTargets)
+	install(TARGETS osgx_core osgx EXPORT osgxTargets
+		ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+		LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+	)
 	install(DIRECTORY osgx/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
 		FILES_MATCHING PATTERN "*.hpp"
 	)
@@ -115,6 +142,16 @@ if(OSGX_INSTALL)
 	)
 	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/osgDebugConfig.cmake"
 		DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/osgDebug"
+	)
+
+	configure_file(
+		"${CMAKE_CURRENT_SOURCE_DIR}/cmake/uninstall.cmake.in"
+		"${CMAKE_CURRENT_BINARY_DIR}/uninstall.cmake"
+		@ONLY
+	)
+	add_custom_target(uninstall
+		COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_CURRENT_BINARY_DIR}/uninstall.cmake"
+		COMMENT "Removing files listed in install_manifest.txt"
 	)
 endif()
 

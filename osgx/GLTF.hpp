@@ -7,22 +7,22 @@ namespace osgx {
 
 // ================================================================================================
 // osgx::gltf - the glue between osgGLTF's ReaderWriterGLTF (applyMaterial() in GLTFReader.hpp)
-// and osgx::pbr's material-agnostic BRDF math: reads the UBO/texture-unit contract the C++ loader
+// and osgx::pbr's material-agnostic BRDF math: reads the UBO/texture-unit interface the C++ loader
 // populates per primitive into an osgx_Material (see osgx::pbr::MATERIAL_STRUCT), plus a couple
 // of small glTF-specific fragment helpers (shading normal, emissive, alpha coverage) that need
-// the same texture contract.
+// the same texture interface.
 //
 // Candidates identified by porting OpenSceneGraph.py/examples/pyosg-lighting/09-ibl.py's material-
 // reading fragment code (getMaterial()/getShadingNormal()/getEmissive()/getAlphaCoverage()) down
 // to OpenSceneGraph.py/examples/pyosg-voxelize.py's trimmed no-IBL-required PBR fallback shader --
 // the same UBO-reading code was about to get copy-pasted a third time, which is exactly what
-// osgx exists to avoid. MATERIAL_INPUTS is the fixed external contract (field order/types must
+// osgx exists to avoid. MATERIAL_INPUTS is the fixed external interface (field order/types must
 // match GLTFReader.hpp's std140 layout exactly) - everything else here is just GLSL glue on top.
 // ================================================================================================
 
 namespace gltf {
 
-// The osgGLTF loader's per-primitive contract: a std140 UBO of material scalars/flags (binding 0,
+// The osgGLTF loader's per-primitive interface: a std140 UBO of material scalars/flags (binding 0,
 // populated by GLTFReader.hpp's applyMaterial()) plus four fixed texture units (baseColor=0,
 // normal=1, orm=2, emissive=3) and two alpha-coverage uniforms. Include exactly once per shader --
 // declaring `osgGLTF_Material`/`osgGLTF_textures` twice is a compile error, not a harmless

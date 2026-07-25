@@ -36,9 +36,34 @@ target_link_libraries(my_target PRIVATE osgDebug::osgDebug)
 Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project if the chosen
 prefix is not already in CMake's search path.
 
+The same build tree can remove exactly the files recorded by its most recent install:
+
+```console
+cmake --build BUILD --target uninstall
+```
+
+This uses CMake's generated `install_manifest.txt`; keep the build tree until the installation is
+no longer needed.
+
 Projects needing only osgx can use `osgx::core` for the low-level facilities or `osgx::osgx` for
 the complete utility layer. In installed mode, use `find_package(osgx CONFIG REQUIRED)` first.
-`osgx::osgx` includes `osgx::core`, and `osgDebug::osgDebug` includes the complete osgx layer.
+`osgx::core` is header-only. `osgx::osgx` is the compiled `libosgx` library, includes
+`osgx::core`, and contains implementation-heavy facilities such as GPU GGX environment
+prefiltering. `osgDebug::osgDebug` includes the complete osgx layer.
+
+## Fresh checkout build order
+
+For a full osgdebug + osgGLTF installation, build and install this repository first. osgGLTF's
+GPU prefilter tool links the installed `osgx::osgx` target:
+
+```text
+1. Configure, build, and install osgdebug (provides osgx::core and osgx::osgx).
+2. Configure osgGLTF with that installation in CMAKE_PREFIX_PATH.
+3. Build and install osgGLTF.
+```
+
+There is no current reverse build dependency: osgdebug does not require osgGLTF. osgGLTF's loader
+also remains independent of osgx; only its optional tools require osgx at present.
 
 # `osgx.hpp` Extras
 
@@ -48,10 +73,11 @@ Its public headers are organized by concern:
 
 - `osgx/Shader.hpp` — generic, line-oriented GLSL library expansion.
 - `osgx/PBR.hpp` — PBR BRDF snippets and `OrbitLightRig`.
-- `osgx/IBL.hpp` — prefiltered cubemaps, BRDF-LUT baking, and SH9 diffuse irradiance.
+- `osgx/IBL.hpp` — environment-map loading, BRDF-LUT baking, and diffuse irradiance helpers.
+- `osgx/GGXPrefilter.hpp` — GPU GGX prefilter scene construction, rebaking, and readback.
 - `osgx/GLTF.hpp` — glTF material-reading GLSL glue (the `osgGLTF_Material` UBO / texture-unit
-  contract osgGLTF's loader populates) plus `createPBRIBLScene()`, a one-call full PBR/IBL setup against
-  an already-loaded glTF node.
+  interface populated by osgGLTF's loader) plus `createPBRIBLScene()`, a one-call full PBR/IBL
+  setup against an already-loaded glTF node.
 - `osgx.hpp` — convenience umbrella that includes all osgx facilities.
 
 ## Shader libraries
@@ -105,8 +131,8 @@ are left intact for other shader tooling or the GLSL compiler.
 - `Ortho2DManipulator` is an orthographic 2D camera manipulator with pan, geometric zoom, pixel-nudge zoom, optional Ctrl-drag 3D tilt, and automatic near/far projection setup.
 - `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
 - `osgx::pbr` provides reusable BRDF GLSL snippets and `OrbitLightRig` for direct-light uniforms.
-- `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking, prefiltered environment maps, and SH9 diffuse irradiance.
-- `osgx::gltf` provides the glTF loader's material-reading GLSL contract (material UBO + shading normal + emissive + alpha coverage) plus `createPBRIBLScene()`, a one-call full PBR/IBL setup (prefiltered cubemap + BRDF LUT + SH9) against an already-loaded glTF node. IBL only, no direct/punctual lights yet -- see TODO.md.
+- `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking, GGX-prefiltered environment maps, and SH9 or Lambertian diffuse irradiance.
+- `osgx::gltf` provides the glTF loader's material-reading GLSL interface (material UBO + shading normal + emissive + alpha coverage) plus `createPBRIBLScene()`, a one-call full PBR/IBL setup (GGX-prefiltered cubemap + BRDF LUT + Lambertian irradiance cubemap) against an already-loaded glTF node. IBL only, no direct/punctual lights yet -- see TODO.md.
 
 # `osgDebug.hpp` Systems
 
