@@ -130,18 +130,6 @@ osg::ref_ptr<osg::Program> makeProgram() {
 	return program;
 }
 
-void rearmBakeNodes(osg::Node* node) {
-	if(!node) return;
-
-	if(auto* callback = dynamic_cast<RunOnceCallback*>(node->getUpdateCallback())) callback->rebake(node);
-
-	if(auto* group = node->asGroup()) {
-		for(unsigned int child = 0; child < group->getNumChildren(); ++child) {
-			rearmBakeNodes(group->getChild(child));
-		}
-	}
-}
-
 }
 
 bool LambertianBakeScene::ready() const {
@@ -247,7 +235,7 @@ bool rebakeLambertianBakeScene(
 
 	scene.sourceTexture->setImage(equirectangularHDR);
 	scene.completion->reset();
-	rearmBakeNodes(scene.root);
+	rearmRunOnceCallbacks(scene.root);
 
 	return true;
 }

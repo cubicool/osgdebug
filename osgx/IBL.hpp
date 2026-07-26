@@ -9,6 +9,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/GL>
 #include <osg/Geode>
 #include <osg/Geometry>
+#include <osg/Group>
 #include <osg/Image>
 #include <osg/NodeCallback>
 #include <osg/NodeVisitor>
@@ -37,12 +38,14 @@ namespace ibl {
 // (render one more frame -- e.g. after swapping the bake's source data).
 class RunOnceCallback: public osg::NodeCallback {
 public:
+	explicit RunOnceCallback(bool traverseChildren=true): _traverseChildren(traverseChildren) {}
+
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
 		if(_done) node->setNodeMask(0);
 
 		_done = true;
 
-		traverse(node, nv);
+		if(_traverseChildren) traverse(node, nv);
 	}
 
 	void rebake(osg::Node* node) {
@@ -52,7 +55,22 @@ public:
 
 private:
 	bool _done = false;
+	bool _traverseChildren = true;
 };
+
+// Re-arms every RunOnceCallback below `node`, including callbacks on nodes currently masked out
+// after a prior bake or capture.
+inline void rearmRunOnceCallbacks(osg::Node* node) {
+	if(!node) return;
+
+	if(auto* callback = dynamic_cast<RunOnceCallback*>(node->getUpdateCallback())) callback->rebake(node);
+
+	if(auto* group = node->asGroup()) {
+		for(unsigned int child = 0; child < group->getNumChildren(); child++) {
+			rearmRunOnceCallbacks(group->getChild(child));
+		}
+	}
+}
 
 // Signals that the final ordered pass in a frame-driven bake has completed. This means the result
 // is ready for later GPU sampling in that render context; CPU readback remains a separate,

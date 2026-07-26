@@ -76,6 +76,7 @@ target_sources(osgx_core INTERFACE
 set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
 add_library(osgx
+	src/CaptureCubeMap.cpp
 	src/GGXPrefilter.cpp
 	src/LambertianBake.cpp
 )
@@ -90,6 +91,7 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Grid.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/IBL.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/CaptureCubeMap.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GGXPrefilter.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/LambertianBake.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Manipulators.hpp>"
