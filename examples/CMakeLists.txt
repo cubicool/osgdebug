@@ -2,7 +2,6 @@ set(OSGX_EXAMPLES
 	"array"
 	"culling"
 	"eventhandler"
-	"gltf"
 	"grid"
 	"hover"
 	"manipulator"

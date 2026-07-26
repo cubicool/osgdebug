@@ -332,8 +332,7 @@ vec3 osgx_SHIrradiance(vec3 N, vec3 shCoeffs[9]) {
 //
 // Lives alongside SH9, not in place of it -- SH9 stays the right call for "cheap ambient, zero
 // fuss"; reach for this when matching a real reference renderer (or high-contrast environments)
-// actually matters. See osgx::gltf::createPBRIBLScene(), which uses this exclusively for Khronos
-// parity.
+// actually matters. osgGLTF's optional PBR renderer uses this exclusively for Khronos parity.
 // ------------------------------------------------------------------------------------------------
 
 namespace detail {

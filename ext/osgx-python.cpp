@@ -16,7 +16,6 @@ PYBIND11_MODULE(osgx, m) {
 
 	osgx::pbr::registerShaderLibs();
 	osgx::ibl::registerShaderLibs();
-	osgx::gltf::registerShaderLibs();
 
 	auto grid = py::class_<
 		osgx::Grid,
@@ -237,44 +236,4 @@ PYBIND11_MODULE(osgx, m) {
 		.def("finishGGXPrefilter", &osgx::ibl::finishGGXPrefilter, "readback"_a)
 	;
 
-	auto m_gltf = m.def_submodule(
-		"gltf",
-		"osgx::gltf - glTF material-reading glue (osgGLTF_Material UBO interface) + one-call "
-		"full PBR/IBL setup"
-	);
-
-	m_gltf.attr("MATERIAL_INPUTS") = osgx::gltf::MATERIAL_INPUTS;
-	m_gltf.attr("GET_MATERIAL") = osgx::gltf::GET_MATERIAL;
-	m_gltf.attr("SHADING_NORMAL") = osgx::gltf::SHADING_NORMAL;
-	m_gltf.attr("EMISSIVE") = osgx::gltf::EMISSIVE;
-	m_gltf.attr("ALPHA_COVERAGE") = osgx::gltf::ALPHA_COVERAGE;
-
-	py::class_<osgx::gltf::PBRIBLScene>(m_gltf, "PBRIBLScene")
-		.def(py::init<>())
-		.def_readwrite("lutCamera", &osgx::gltf::PBRIBLScene::lutCamera)
-		.def_readwrite("envMap", &osgx::gltf::PBRIBLScene::envMap)
-		.def_readwrite("brdfLUT", &osgx::gltf::PBRIBLScene::brdfLUT)
-		.def_readwrite("diffuseEnv", &osgx::gltf::PBRIBLScene::diffuseEnv)
-		.def_readwrite("debugMode", &osgx::gltf::PBRIBLScene::debugMode)
-		.def_readwrite("disableNormalMap", &osgx::gltf::PBRIBLScene::disableNormalMap)
-		.def_readwrite("disableRoughnessMap", &osgx::gltf::PBRIBLScene::disableRoughnessMap)
-		.def("valid", &osgx::gltf::PBRIBLScene::valid)
-	;
-
-	m_gltf.def(
-		"createPBRIBLScene",
-		&osgx::gltf::createPBRIBLScene,
-		"node"_a,
-		"ktx2Path"_a,
-		"hdrPath"_a,
-		"iblIntensity"_a=1.0f,
-		"lutSize"_a=1024,
-		"diagnostics"_a=false,
-		"One-call full PBR/IBL setup against an already-loaded glTF node: loads the prefiltered "
-		"cubemap, bakes the BRDF LUT and Lambertian diffuse irradiance cubemap, and wires the "
-		"shader + every uniform/texture unit it needs onto node's StateSet (OVERRIDE'd). Returns a "
-		"PBRIBLScene -- add .lutCamera to the scene graph (required for the LUT to actually bake) "
-		"and check .valid() if either asset path might be wrong. diagnostics=True additionally "
-		"compiles the debug channels."
-	);
 }

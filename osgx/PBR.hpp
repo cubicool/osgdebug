@@ -93,8 +93,8 @@ vec3 osgx_F_Schlick_roughness(float cosTheta, vec3 F0, float roughness) {
 }
 )GLSL";
 
-// Plain PBR material bundle -- source-agnostic (a glTF loader populates one via
-// osgx::gltf::GET_MATERIAL, but nothing here assumes glTF): everything DIRECT_SPECULAR,
+// Plain PBR material bundle -- source-agnostic (osgGLTF's optional renderer populates one from
+// its loader-defined material interface, but nothing here assumes glTF): everything DIRECT_SPECULAR,
 // F_MULTISCATTER/IBL_SPECULAR, and a hemisphere/SH ambient term need to shade a fragment.
 inline constexpr const char* MATERIAL_STRUCT = R"GLSL(
 struct osgx_Material {

@@ -62,8 +62,9 @@ GPU prefilter tool links the installed `osgx::osgx` target:
 3. Build and install osgGLTF.
 ```
 
-There is no current reverse build dependency: osgdebug does not require osgGLTF. osgGLTF's loader
-also remains independent of osgx; only its optional tools require osgx at present.
+There is no reverse build dependency: osgdebug does not require osgGLTF. osgGLTF consumes
+`osgx::core` for its low-level infrastructure and provides its own optional adapter over the full
+`osgx::osgx` PBR/IBL layer.
 
 # `osgx.hpp` Extras
 
@@ -75,9 +76,6 @@ Its public headers are organized by concern:
 - `osgx/PBR.hpp` — PBR BRDF snippets and `OrbitLightRig`.
 - `osgx/IBL.hpp` — environment-map loading, BRDF-LUT baking, and diffuse irradiance helpers.
 - `osgx/GGXPrefilter.hpp` — GPU GGX prefilter scene construction, rebaking, and readback.
-- `osgx/GLTF.hpp` — glTF material-reading GLSL glue (the `osgGLTF_Material` UBO / texture-unit
-  interface populated by osgGLTF's loader) plus `createPBRIBLScene()`, a one-call full PBR/IBL
-  setup against an already-loaded glTF node.
 - `osgx.hpp` — convenience umbrella that includes all osgx facilities.
 
 ## Shader libraries
@@ -132,7 +130,8 @@ are left intact for other shader tooling or the GLSL compiler.
 - `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
 - `osgx::pbr` provides reusable BRDF GLSL snippets and `OrbitLightRig` for direct-light uniforms.
 - `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking, GGX-prefiltered environment maps, and SH9 or Lambertian diffuse irradiance.
-- `osgx::gltf` provides the glTF loader's material-reading GLSL interface (material UBO + shading normal + emissive + alpha coverage) plus `createPBRIBLScene()`, a one-call full PBR/IBL setup (GGX-prefiltered cubemap + BRDF LUT + Lambertian irradiance cubemap) against an already-loaded glTF node. IBL only, no direct/punctual lights yet -- see TODO.md.
+glTF-specific material and rendering integration lives with the loader in osgGLTF. Generic osgx
+does not depend on or duplicate osgGLTF's public shader interface.
 
 # `osgDebug.hpp` Systems
 

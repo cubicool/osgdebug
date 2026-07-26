@@ -11,4 +11,3 @@
 #include "osgx/PBR.hpp"
 #include "osgx/IBL.hpp"
 #include "osgx/GGXPrefilter.hpp"
-#include "osgx/GLTF.hpp"
