@@ -76,6 +76,7 @@ Its public headers are organized by concern:
 - `osgx/PBR.hpp` — PBR BRDF snippets and `OrbitLightRig`.
 - `osgx/IBL.hpp` — environment-map loading, BRDF-LUT baking, and diffuse irradiance helpers.
 - `osgx/GGXPrefilter.hpp` — GPU GGX prefilter scene construction, rebaking, and readback.
+- `osgx/LambertianBake.hpp` — frame-driven GPU Lambertian/diffuse cubemap baking.
 - `osgx.hpp` — convenience umbrella that includes all osgx facilities.
 
 ## Shader libraries
@@ -262,3 +263,15 @@ session does not flood with unintended frames. On first render it automatically 
 export LSAN_OPTIONS=suppressions=/home/cubicool/osgdebug/OSG/lsan.supp
 export OSG_GL_CONTEXT_VERSION=3.0
 ```
+
+`osgx-ibl` is the generic visual laboratory for IBL outputs. It currently bakes a Lambertian
+diffuse cubemap directly from an HDR panorama, then displays it either as a Z-up skybox or a
+literal six-face GL cubemap cross:
+
+```bash
+./examples/osgx-ibl Cannon_Exterior.hdr --mode lambertian --size 256 --samples 2048
+```
+
+Press `c` to switch between the diffuse skybox and cross views, or `p` to inspect the original
+tone-mapped equirectangular HDR panorama. Future generic source/GGX/LUT modes belong in this tool
+rather than in glTF-specific examples.

@@ -236,8 +236,12 @@ function(OSGDEBUG_ADD_EXECUTABLE _prefix_or_topic)
 		"../osgDebug.hpp"
 	)
 
-	osgdebug_compile_options("${_target}")
 	target_link_libraries("${_target}" PRIVATE "${_library}")
+	osgdebug_compile_options("${_target}")
+	# Examples must exercise this checkout's public headers, not an older copy installed alongside
+	# OSG. The OpenSceneGraph package contributes its prefix before transitive osgx includes, so make
+	# the source root explicitly first.
+	target_include_directories("${_target}" BEFORE PRIVATE "${PROJECT_SOURCE_DIR}")
 endfunction()
 
 if(OSGX_BUILD_EXAMPLES)

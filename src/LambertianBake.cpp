@@ -144,18 +144,6 @@ void rearmBakeNodes(osg::Node* node) {
 
 }
 
-void LambertianBakeCompletion::operator()(osg::RenderInfo&) const {
-	_done.store(true, std::memory_order_release);
-}
-
-bool LambertianBakeCompletion::done() const {
-	return _done.load(std::memory_order_acquire);
-}
-
-void LambertianBakeCompletion::reset() {
-	_done.store(false, std::memory_order_release);
-}
-
 bool LambertianBakeScene::ready() const {
 	return completion && completion->done();
 }
@@ -235,7 +223,7 @@ LambertianBakeScene createLambertianBakeScene(
 		if(face == 5) completionCamera = camera;
 	}
 
-	auto completion = new LambertianBakeCompletion();
+	auto completion = new BakeCompletion();
 
 	// The face cameras have explicit PRE_RENDER order, so this post-draw callback cannot run until
 	// every output face has been populated. Keeping it on a real FBO pass avoids a dummy camera

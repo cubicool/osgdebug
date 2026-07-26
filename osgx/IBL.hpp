@@ -21,6 +21,7 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +52,27 @@ public:
 
 private:
 	bool _done = false;
+};
+
+// Signals that the final ordered pass in a frame-driven bake has completed. This means the result
+// is ready for later GPU sampling in that render context; CPU readback remains a separate,
+// explicitly synchronizing operation.
+class BakeCompletion: public osg::Camera::DrawCallback {
+public:
+	void operator()(osg::RenderInfo&) const override {
+		_done.store(true, std::memory_order_release);
+	}
+
+	bool done() const {
+		return _done.load(std::memory_order_acquire);
+	}
+
+	void reset() {
+		_done.store(false, std::memory_order_release);
+	}
+
+private:
+	mutable std::atomic<bool> _done{false};
 };
 
 // Fullscreen NDC-quad vertex shader -- shared by any single-pass bake (BRDF LUT today; future

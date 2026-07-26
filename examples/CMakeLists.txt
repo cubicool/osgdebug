@@ -4,6 +4,7 @@ set(OSGX_EXAMPLES
 	"eventhandler"
 	"grid"
 	"hover"
+	"ibl"
 	"manipulator"
 	"picking"
 	"visitor"

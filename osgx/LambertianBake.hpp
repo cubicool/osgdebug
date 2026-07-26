@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Warnings.hpp"
+#include "IBL.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -13,8 +13,6 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-#include <atomic>
-
 namespace osgx::ibl {
 
 // Requested quality for a GPU cosine-convolution of an equirectangular HDR. The resulting cube
@@ -24,19 +22,6 @@ struct LambertianBakeOptions {
 	int sampleCount = 2048;
 };
 
-// Signals completion after every cubemap face has rendered. The texture remains GPU-resident;
-// callers that only render with it never need a readback.
-class LambertianBakeCompletion: public osg::Camera::DrawCallback {
-public:
-	void operator()(osg::RenderInfo&) const override;
-
-	bool done() const;
-	void reset();
-
-private:
-	mutable std::atomic<bool> _done{false};
-};
-
 // A frame-driven GPU bake. Add root to a viewer scene, advance frames, then use diffuseTexture
 // once completion reports done. `rebakeLambertianBakeScene()` re-arms the same passes for a new
 // HDR image without recreating their cameras or output texture.
@@ -44,7 +29,7 @@ struct LambertianBakeScene {
 	osg::ref_ptr<osg::Group> root;
 	osg::ref_ptr<osg::Texture2D> sourceTexture;
 	osg::ref_ptr<osg::TextureCubeMap> diffuseTexture;
-	osg::ref_ptr<LambertianBakeCompletion> completion;
+	osg::ref_ptr<BakeCompletion> completion;
 
 	bool ready() const;
 };
