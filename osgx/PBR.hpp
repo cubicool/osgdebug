@@ -193,6 +193,28 @@ vec3 osgx_IBLSpecular(
 }
 )GLSL";
 
+// Geometric specular anti-aliasing (Tokuyoshi & Kaplanyan 2019 / Filament's normal filtering):
+// widens roughness where the shading normal changes rapidly across a pixel's screen-space
+// footprint, so a low-roughness, high-curvature surface (a beveled metal trim is the case that
+// motivated this) converges under low sample counts instead of showing per-pixel reflection
+// sparkle/aliasing as its mirror-like reflection vector jitters between neighboring fragments.
+// Works in alpha space (roughness^2, the actual GGX parameter) since the added variance term is
+// only meaningful there, then converts back to the perceptual roughness this codebase otherwise
+// passes around (IBL_SPECULAR/F_MULTISCATTER's LOD selection and BRDF LUT lookups both expect
+// perceptual roughness, not alpha). `N` should be the final shading normal (post normal-map),
+// evaluated in any space -- dFdx/dFdy operate on screen-space fragment neighbors regardless.
+inline constexpr const char* SPECULAR_AA = R"GLSL(
+float osgx_SpecularAA(vec3 N, float roughness) {
+	vec3 dndx = dFdx(N);
+	vec3 dndy = dFdy(N);
+	float variance = 0.15 * (dot(dndx, dndx) + dot(dndy, dndy));
+	float kernelAlpha = min(variance, 0.18);
+	float alpha = roughness * roughness;
+
+	return sqrt(clamp(alpha + kernelAlpha, 0.0, 1.0));
+}
+)GLSL";
+
 // Khronos PBR Neutral tonemap -- hue-preserving (no ACES orange shift), for compressing HDR
 // specular (routinely > 1.0 off a near-mirror surface under a bright environment) into LDR
 // without hard-clipping to solid white. Ported verbatim from 09-ibl.py's tonemapPBRNeutral().
@@ -278,6 +300,7 @@ inline void registerShaderLibs() {
 		{"DIRECT_SPECULAR", "osgx_DirectSpecular", pbr::DIRECT_SPECULAR},
 		{"F_MULTISCATTER", "osgx_F_MultiScatter", pbr::F_MULTISCATTER},
 		{"IBL_SPECULAR", "osgx_IBLSpecular", pbr::IBL_SPECULAR},
+		{"SPECULAR_AA", "osgx_SpecularAA", pbr::SPECULAR_AA},
 		{"TONEMAP_PBR_NEUTRAL", "osgx_TonemapPBRNeutral", pbr::TONEMAP_PBR_NEUTRAL}
 	};
 	::osgx::registerShaderLibs("osgx::pbr", libs);
