@@ -78,11 +78,17 @@ vec3 glToZUp(vec3 direction) {
 	return vec3(direction.x, -direction.z, direction.y);
 }
 
-vec2 equirectUV(vec3 direction) {
-	float u = atan(direction.y, direction.x) / (2.0 * PI);
-	float v = 1.0 - acos(clamp(direction.z, -1.0, 1.0)) / PI;
+vec2 equirectUV(vec3 directionZUp) {
+	// The integration basis is Z-up, but the HDR's equirectangular pixels and the output
+	// cubemap follow the ordinary KTX/OpenGL convention. Convert at this boundary so serialized
+	// Lambertian cubes agree with the GGX baker and can be mixed with external KTX2 cubemaps.
+	vec3 direction = vec3(directionZUp.x, directionZUp.z, -directionZUp.y);
+	// Cannon_Exterior and Khronos's prefiltered reference use +Z at the panorama's horizontal
+	// midpoint. The previous -PI/2 offset rotated every serialized cube by one quarter turn.
+	float phi = atan(direction.z, direction.x);
+	float theta = acos(clamp(direction.y, -1.0, 1.0));
 
-	return vec2(fract(u), v);
+	return vec2(mod(phi / (2.0 * PI) + 0.5, 1.0), 1.0 - theta / PI);
 }
 
 void main() {

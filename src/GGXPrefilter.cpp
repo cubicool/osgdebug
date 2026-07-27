@@ -82,7 +82,9 @@ vec3 dir_gl_to_zup(vec3 d) { return vec3(d.x, -d.z, d.y); }
 
 vec2 equirect_uv(vec3 dir_zup) {
 	vec3 d = vec3(dir_zup.x, dir_zup.z, -dir_zup.y);
-	float phi = atan(d.z, d.x) - PI / 2.0;
+	// Keep the serialized GGX cube in the same Khronos/KTX-facing panorama convention as the
+	// Lambertian baker: +Z lies at the panorama's horizontal midpoint.
+	float phi = atan(d.z, d.x);
 	float theta = acos(clamp(d.y, -1.0, 1.0));
 	return vec2(mod(phi / (2.0 * PI) + 0.5, 1.0), 1.0 - theta / PI);
 }

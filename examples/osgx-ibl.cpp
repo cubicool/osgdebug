@@ -35,7 +35,10 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -226,12 +229,14 @@ osg::ref_ptr<osg::Geode> makePanorama(osg::Texture2D& texture) {
 
 class DisplayModeHandler final: public osgGA::GUIEventHandler {
 public:
-	explicit DisplayModeHandler(osg::Switch* display): _display(display) {}
+	DisplayModeHandler(osg::Switch* display, bool panoramaAvailable):
+		_display(display),
+		_panoramaAvailable(panoramaAvailable) {}
 
 	bool handle(const osgGA::GUIEventAdapter& event, osgGA::GUIActionAdapter&) override {
 		if(event.getEventType() != osgGA::GUIEventAdapter::KEYDOWN) return false;
 
-		if(event.getKey() == 'p') {
+		if(event.getKey() == 'p' && _panoramaAvailable) {
 			_panorama = !_panorama;
 			_apply();
 			std::cout << "osgx-ibl: mode " << (_panorama ? "panorama" : (_cross ? "cross" : "skybox")) << std::endl;
@@ -253,10 +258,11 @@ private:
 	void _apply() {
 		_display->setValue(0, !_panorama && !_cross);
 		_display->setValue(1, !_panorama && _cross);
-		_display->setValue(2, _panorama);
+		_display->setValue(2, _panoramaAvailable && _panorama);
 	}
 
 	osg::ref_ptr<osg::Switch> _display;
+	bool _panoramaAvailable = false;
 	bool _cross = false;
 	bool _panorama = false;
 };
@@ -300,10 +306,76 @@ bool parsePositiveInt(std::string_view text, int& result) {
 	return true;
 }
 
+std::string replaceFaceToken(std::string_view pattern, std::size_t face) {
+	constexpr std::string_view token = "{face}";
+	const auto position = pattern.find(token);
+
+	if(position == std::string_view::npos) return {};
+
+	std::string result(pattern);
+
+	result.replace(position, token.size(), std::to_string(face));
+
+	return result;
+}
+
+osg::ref_ptr<osg::TextureCubeMap> loadRawCubemapRGBA32F(std::string_view pattern, int size) {
+	static constexpr std::array faces = {
+		osg::TextureCubeMap::POSITIVE_X,
+		osg::TextureCubeMap::NEGATIVE_X,
+		osg::TextureCubeMap::POSITIVE_Y,
+		osg::TextureCubeMap::NEGATIVE_Y,
+		osg::TextureCubeMap::POSITIVE_Z,
+		osg::TextureCubeMap::NEGATIVE_Z
+	};
+	const auto pixelCount = static_cast<std::size_t>(size) * static_cast<std::size_t>(size);
+	const auto byteCount = pixelCount * 4 * sizeof(float);
+	auto cubemap = osgx::make_ref<osg::TextureCubeMap>();
+
+	for(std::size_t face = 0; face < faces.size(); ++face) {
+		const std::filesystem::path filename(replaceFaceToken(pattern, face));
+		std::error_code error;
+		const auto actualBytes = std::filesystem::file_size(filename, error);
+
+		if(error || actualBytes != byteCount) {
+			std::cerr << "osgx-ibl: expected " << byteCount << " bytes in '" << filename.string()
+				<< "', got " << (error ? 0 : actualBytes) << std::endl;
+
+			return {};
+		}
+
+		auto image = osgx::make_ref<osg::Image>();
+
+		image->allocateImage(size, size, 1, GL_RGBA, GL_FLOAT);
+
+		std::ifstream input(filename, std::ios::binary);
+
+		input.read(reinterpret_cast<char*>(image->data()), static_cast<std::streamsize>(byteCount));
+
+		if(!input) {
+			std::cerr << "osgx-ibl: failed to read '" << filename.string() << "'" << std::endl;
+
+			return {};
+		}
+
+		cubemap->setImage(faces[face], image);
+	}
+
+	cubemap->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+	cubemap->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	cubemap->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	cubemap->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+	cubemap->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+	cubemap->setUseHardwareMipMapGeneration(false);
+
+	return cubemap;
+}
+
 }
 
 int main(int argc, char** argv) {
 	std::string_view hdrPath;
+	std::string_view rawCubemapPattern;
 	int cubeSize = 256;
 	int sampleCount = 2048;
 
@@ -341,6 +413,16 @@ int main(int argc, char** argv) {
 			else sampleCount = value;
 		}
 
+		else if(argument == "--raw-cubemap-rgba32f") {
+			if(index + 1 == argc) {
+				std::cerr << "osgx-ibl: --raw-cubemap-rgba32f requires a {face} filename pattern" << std::endl;
+
+				return 1;
+			}
+
+			rawCubemapPattern = argv[++index];
+		}
+
 		else if(argument.starts_with("--")) {
 			std::cerr << "osgx-ibl: unknown option " << argument << std::endl;
 
@@ -355,44 +437,65 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	if(hdrPath.empty()) {
+	if((hdrPath.empty() && rawCubemapPattern.empty()) || (!hdrPath.empty() && !rawCubemapPattern.empty())) {
 		std::cerr
 			<< "Usage: osgx-ibl <environment.hdr> [--mode lambertian] [--size N] [--samples N]" << std::endl
+			<< "   or: osgx-ibl --raw-cubemap-rgba32f '<prefix>{face}<suffix>' [--size N]" << std::endl
 			<< "Controls: 'c' toggles diffuse skybox/cross; 'p' toggles the raw HDR panorama" << std::endl;
 
 		return 1;
 	}
 
-	auto hdrImage = osgDB::readRefImageFile(std::string(hdrPath));
+	osg::ref_ptr<osg::TextureCubeMap> cubemap;
+	osg::ref_ptr<osg::Group> bakeRoot;
+	osg::ref_ptr<osgx::ibl::BakeCompletion> completion;
+	osg::ref_ptr<osg::Texture2D> sourceTexture;
+	const bool isRawCubemap = !rawCubemapPattern.empty();
 
-	if(!hdrImage) {
-		std::cerr << "osgx-ibl: failed to load HDR image " << hdrPath << std::endl;
+	if(isRawCubemap) {
+		cubemap = loadRawCubemapRGBA32F(rawCubemapPattern, cubeSize);
 
-		return 1;
+		if(!cubemap) return 1;
 	}
 
-	auto bake = osgx::ibl::createLambertianBakeScene(
-		hdrImage,
-		{.cubeSize = cubeSize, .sampleCount = sampleCount}
-	);
+	else {
+		auto hdrImage = osgDB::readRefImageFile(std::string(hdrPath));
 
-	if(!bake.root || !bake.diffuseTexture || !bake.completion) {
-		std::cerr << "osgx-ibl: could not create the Lambertian bake scene" << std::endl;
+		if(!hdrImage) {
+			std::cerr << "osgx-ibl: failed to load HDR image " << hdrPath << std::endl;
 
-		return 1;
+			return 1;
+		}
+
+		auto bake = osgx::ibl::createLambertianBakeScene(
+			hdrImage,
+			{.cubeSize = cubeSize, .sampleCount = sampleCount}
+		);
+
+		if(!bake.root || !bake.diffuseTexture || !bake.completion) {
+			std::cerr << "osgx-ibl: could not create the Lambertian bake scene" << std::endl;
+
+			return 1;
+		}
+
+		cubemap = bake.diffuseTexture;
+		bakeRoot = bake.root;
+		completion = bake.completion;
+		sourceTexture = bake.sourceTexture;
 	}
 
 	auto display = new osg::Switch();
 
-	display->addChild(makeSkybox(*bake.diffuseTexture), true);
-	display->addChild(makeCross(*bake.diffuseTexture), false);
-	display->addChild(makePanorama(*bake.sourceTexture), false);
+	display->addChild(makeSkybox(*cubemap), true);
+	display->addChild(makeCross(*cubemap), false);
+	if(sourceTexture) display->addChild(makePanorama(*sourceTexture), false);
+	else display->addChild(new osg::Group(), false);
 
 	auto root = new osg::Group();
 
-	root->addChild(bake.root);
+	if(bakeRoot) root->addChild(bakeRoot);
 	root->addChild(display);
-	root->setUpdateCallback(new BakeStatusCallback(bake.completion));
+	if(completion) root->setUpdateCallback(new BakeStatusCallback(completion));
 
 	osgViewer::Viewer viewer;
 	auto manipulator = new osgGA::TrackballManipulator();
@@ -405,14 +508,21 @@ int main(int argc, char** argv) {
 	viewer.setCameraManipulator(manipulator);
 	viewer.setSceneData(root);
 	viewer.addEventHandler(new osgViewer::StatsHandler());
-	viewer.addEventHandler(new DisplayModeHandler(display));
+	viewer.addEventHandler(new DisplayModeHandler(display, sourceTexture.valid()));
 	viewer.addEventHandler(new ScrollBlocker());
 	viewer.home();
 
-	std::cout
-		<< "osgx-ibl: GPU Lambertian bake " << cubeSize << "x" << cubeSize
-		<< ", " << sampleCount << " samples" << std::endl
-		<< "Controls: 'c' toggles diffuse skybox/cross; 'p' toggles the raw HDR panorama" << std::endl;
+	if(isRawCubemap) {
+		std::cout << "osgx-ibl: raw RGBA32F cubemap " << cubeSize << "x" << cubeSize << std::endl
+			<< "Controls: 'c' toggles cubemap skybox/cross" << std::endl;
+	}
+
+	else {
+		std::cout
+			<< "osgx-ibl: GPU Lambertian bake " << cubeSize << "x" << cubeSize
+			<< ", " << sampleCount << " samples" << std::endl
+			<< "Controls: 'c' toggles diffuse skybox/cross; 'p' toggles the raw HDR panorama" << std::endl;
+	}
 
 	return viewer.run();
 }
