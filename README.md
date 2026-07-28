@@ -115,6 +115,7 @@ are left intact for other shader tooling or the GLSL compiler.
 - `tick` and `call()` provide lightweight `osg::Timer`-based timing around arbitrary callables.
 - `getFirstParent<T>()` walks an OSG parent chain and returns the first parent matching a requested type.
 - `ring_buffer<T, N>` and `aring_buffer<T, N>` keep fixed-size recent samples, with the arithmetic version adding averages.
+- 'findDataFile` wraps the `osgDB` file utils, letting you specify multiple paths/suffixes in one call.
 - `LambdaVisitor`, `IndexedVisitor`, `NameVisitor`, and `DescribeSceneVisitor` make common scene-graph traversal, naming, and tree-printing tasks less boilerplate-heavy.
 - `VisitorEventHandler` runs a visitor against the viewer scene root when a key is released.
 - `LambdaKeyHandler` binds one or more key presses to a lambda with optional access to the pressed key.
