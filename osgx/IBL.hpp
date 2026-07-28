@@ -42,6 +42,11 @@ public:
 
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
 		if(_done) node->setNodeMask(0);
+		// Logged at NOTICE (on by default) rather than INFO deliberately: a bake pass silently
+		// re-running every frame instead of once is exactly the class of bug this callback exists
+		// to prevent, and it stayed unnoticed for days precisely because nothing printed either
+		// way. One line per pass at startup is worth the noise; drop to OSG_INFO if that changes.
+		else OSG_NOTICE << "osgx::RunOnceCallback: baked \"" << node->getName() << "\"" << std::endl;
 
 		_done = true;
 

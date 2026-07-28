@@ -1,4 +1,5 @@
 #include "osgx/GGXPrefilter.hpp"
+#include "osgx/IBL.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -53,6 +54,7 @@ uniform int faceIndex;
 uniform float roughness;
 uniform int equirectWidth;
 uniform int equirectHeight;
+uniform int sampleCount;
 in vec2 vUV;
 out vec4 fragColor;
 
@@ -90,7 +92,7 @@ vec2 equirect_uv(vec3 dir_zup) {
 }
 
 void main() {
-	const uint NUM_SAMPLES = 1024u;
+	uint NUM_SAMPLES = uint(sampleCount);
 	vec2 uv = vUV * 2.0 - 1.0;
 	vec3 N;
 	if(faceIndex == 0) N = normalize(vec3( 1.0, -uv.y, -uv.x));
@@ -179,6 +181,7 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 	osg::Texture2D* srcEquirect,
 	osg::Group* root,
 	int prefilterSize,
+	int sampleCount,
 	int eqW,
 	int eqH
 ) {
@@ -220,6 +223,7 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 			cam->setViewMatrix(osg::Matrix::identity());
 			cam->setComputeNearFarMode(osg::Camera::DO_NOT_COMPUTE_NEAR_FAR);
 			cam->setCullingMode(osg::Camera::NO_CULLING);
+			cam->setUpdateCallback(new RunOnceCallback());
 			cam->attach(
 				osg::Camera::COLOR_BUFFER0,
 				prefilterTex,
@@ -236,6 +240,7 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 			ss->addUniform(new osg::Uniform("equirectTex", 0));
 			ss->addUniform(new osg::Uniform("faceIndex", face));
 			ss->addUniform(new osg::Uniform("roughness", roughness));
+			ss->addUniform(new osg::Uniform("sampleCount", sampleCount));
 			ss->addUniform(new osg::Uniform("equirectWidth", eqW));
 			ss->addUniform(new osg::Uniform("equirectHeight", eqH));
 			ss->setTextureAttributeAndModes(0, srcEquirect, osg::StateAttribute::ON);
@@ -316,6 +321,7 @@ GGXPrefilterScene createGGXPrefilterScene(
 	if(!equirectImage) return scene;
 
 	const int prefilterSize = std::max(1, options.prefilterSize);
+	const int sampleCount = std::max(1, options.sampleCount);
 
 	auto* envTex = new osg::Texture2D();
 
@@ -329,7 +335,7 @@ GGXPrefilterScene createGGXPrefilterScene(
 
 	auto* root = new osg::Group();
 	auto prefilterTex = makePrefilterBake(
-		envTex, root, prefilterSize,
+		envTex, root, prefilterSize, sampleCount,
 		equirectImage->s(),
 		equirectImage->t()
 	);
@@ -354,6 +360,7 @@ bool rebakeGGXPrefilterScene(GGXPrefilterScene& scene, osg::Image* equirectImage
 	scene.sourceTexture->setImage(equirectImage);
 
 	updateBakeSourceUniforms(scene.root, equirectImage->s(), equirectImage->t());
+	rearmRunOnceCallbacks(scene.root);
 
 	scene.readback->reset();
 

@@ -18,6 +18,7 @@ namespace osgx::ibl {
 // TODO: If these can't be NEGATIVE, they need to be OTHER TYPES than `int`!
 struct GGXPrefilterOptions {
 	int prefilterSize = 128;
+	int sampleCount = 1024;
 	int maxFrames = 8;
 	int readbackFrame = 2;
 	// bool configureGLContext = true;

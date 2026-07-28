@@ -3,6 +3,7 @@
 // Generic IBL inspection tool. It intentionally knows about HDR input and osgx bake products,
 // but not glTF, KTX2, or any application-specific material setup.
 
+#include <osgx/GGXPrefilter.hpp>
 #include <osgx/LambertianBake.hpp>
 #include <osgx/Warnings.hpp>
 
@@ -37,8 +38,10 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -57,16 +60,20 @@ void main() {
 }
 )GLSL";
 
+// textureLod at a uniform mip is a no-op for a single-level Lambertian cube (mip 0 is the only
+// level either way) but lets GGX mode (multiple roughness levels) reuse this same shader/geode
+// pair instead of needing its own copy.
 constexpr const char SKYBOX_FRAG[] = R"GLSL(
 #version 460 core
 uniform samplerCube environment;
+uniform float mipLevel;
 in vec3 vDirection;
 out vec4 fragColor;
 void main() {
 	// The Lambertian baker receives Z-up world directions and stores them in ordinary GL cube-face
 	// layout. Apply the matching Z-up -> GL lookup transform used by the PBR shader.
 	vec3 cubeDirection = normalize(vec3(vDirection.x, vDirection.z, -vDirection.y));
-	vec3 color = texture(environment, cubeDirection).rgb;
+	vec3 color = textureLod(environment, cubeDirection, mipLevel).rgb;
 	color = color / (color + vec3(1.0));
 	fragColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);
 }
@@ -86,10 +93,11 @@ void main() {
 constexpr const char CROSS_FRAG[] = R"GLSL(
 #version 460 core
 uniform samplerCube environment;
+uniform float mipLevel;
 in vec3 vDirection;
 out vec4 fragColor;
 void main() {
-	vec3 color = texture(environment, normalize(vDirection)).rgb;
+	vec3 color = textureLod(environment, normalize(vDirection), mipLevel).rgb;
 	color = color / (color + vec3(1.0));
 	fragColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);
 }
@@ -115,6 +123,18 @@ void main() {
 	vec3 color = texture(panorama, vUV).rgb;
 	color = color / (color + vec3(1.0));
 	fragColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);
+}
+)GLSL";
+
+// The LUT's meaningful data is a (scale, bias) pair in R/G -- see osgx_F_MultiScatter's ab.x/ab.y
+// read in osgx/PBR.hpp. Shown directly, unlit/untonemapped, since it's not a color at all.
+constexpr const char LUT_FRAG[] = R"GLSL(
+#version 460 core
+uniform sampler2D lut;
+in vec2 vUV;
+out vec4 fragColor;
+void main() {
+	fragColor = vec4(texture(lut, vUV).rg, 0.0, 1.0);
 }
 )GLSL";
 
@@ -169,7 +189,8 @@ osg::ref_ptr<osg::Geometry> makeCubeCross() {
 void configureCubeDisplay(
 	osg::StateSet& stateSet,
 	osg::Program& program,
-	osg::TextureCubeMap& texture
+	osg::TextureCubeMap& texture,
+	osg::Uniform& mipLevel
 ) {
 	stateSet.setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 	stateSet.setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
@@ -177,21 +198,22 @@ void configureCubeDisplay(
 	stateSet.setAttributeAndModes(&program, osg::StateAttribute::ON);
 	stateSet.setTextureAttributeAndModes(0, &texture, osg::StateAttribute::ON);
 	stateSet.addUniform(new osg::Uniform("environment", 0));
+	stateSet.addUniform(&mipLevel);
 }
 
-osg::ref_ptr<osg::Geode> makeSkybox(osg::TextureCubeMap& texture) {
+osg::ref_ptr<osg::Geode> makeSkybox(osg::TextureCubeMap& texture, osg::Uniform& mipLevel) {
 	auto geode = new osg::Geode();
 	auto program = new osg::Program();
 
 	program->addShader(new osg::Shader(osg::Shader::VERTEX, SKYBOX_VERT));
 	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, SKYBOX_FRAG));
 	geode->addDrawable(new osg::ShapeDrawable(new osg::Box(osg::Vec3(), 200.0f)));
-	configureCubeDisplay(*geode->getOrCreateStateSet(), *program, texture);
+	configureCubeDisplay(*geode->getOrCreateStateSet(), *program, texture, mipLevel);
 
 	return geode;
 }
 
-osg::ref_ptr<osg::Geode> makeCross(osg::TextureCubeMap& texture) {
+osg::ref_ptr<osg::Geode> makeCross(osg::TextureCubeMap& texture, osg::Uniform& mipLevel) {
 	auto geode = new osg::Geode();
 	auto program = new osg::Program();
 
@@ -199,7 +221,7 @@ osg::ref_ptr<osg::Geode> makeCross(osg::TextureCubeMap& texture) {
 	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, CROSS_FRAG));
 	program->addBindAttribLocation("cubeDirection", 1);
 	geode->addDrawable(makeCubeCross());
-	configureCubeDisplay(*geode->getOrCreateStateSet(), *program, texture);
+	configureCubeDisplay(*geode->getOrCreateStateSet(), *program, texture, mipLevel);
 
 	return geode;
 }
@@ -227,54 +249,126 @@ osg::ref_ptr<osg::Geode> makePanorama(osg::Texture2D& texture) {
 	return geode;
 }
 
+osg::ref_ptr<osg::Geode> makeLutQuad(osg::Texture2D& texture) {
+	auto geode = new osg::Geode();
+	auto program = new osg::Program();
+	auto quad = osg::createTexturedQuadGeometry(
+		osg::Vec3(-1.0f, -1.0f, 0.0f),
+		osg::Vec3(2.0f, 0.0f, 0.0f),
+		osg::Vec3(0.0f, 2.0f, 0.0f)
+	);
+
+	program->addShader(new osg::Shader(osg::Shader::VERTEX, PANORAMA_VERT));
+	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, LUT_FRAG));
+	geode->addDrawable(quad);
+
+	auto* stateSet = geode->getOrCreateStateSet();
+
+	stateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+	stateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
+	stateSet->setTextureAttributeAndModes(0, &texture, osg::StateAttribute::ON);
+	stateSet->addUniform(new osg::Uniform("lut", 0));
+
+	return geode;
+}
+
+// Four mutually exclusive views. Panorama/Lut are only reachable when the active mode actually
+// produced a source panorama / BRDF LUT (Lambertian has no LUT; raw-cubemap mode has neither).
 class DisplayModeHandler final: public osgGA::GUIEventHandler {
 public:
-	DisplayModeHandler(osg::Switch* display, bool panoramaAvailable):
+	enum class View { Skybox, Cross, Panorama, Lut };
+
+	DisplayModeHandler(osg::Switch* display, bool panoramaAvailable, bool lutAvailable):
 		_display(display),
-		_panoramaAvailable(panoramaAvailable) {}
+		_panoramaAvailable(panoramaAvailable),
+		_lutAvailable(lutAvailable) {}
 
 	bool handle(const osgGA::GUIEventAdapter& event, osgGA::GUIActionAdapter&) override {
 		if(event.getEventType() != osgGA::GUIEventAdapter::KEYDOWN) return false;
 
-		if(event.getKey() == 'p' && _panoramaAvailable) {
-			_panorama = !_panorama;
-			_apply();
-			std::cout << "osgx-ibl: mode " << (_panorama ? "panorama" : (_cross ? "cross" : "skybox")) << std::endl;
+		if(event.getKey() == 'c') { _toggle(View::Cross); return true; }
+		if(event.getKey() == 'p' && _panoramaAvailable) { _toggle(View::Panorama); return true; }
+		if(event.getKey() == 'l' && _lutAvailable) { _toggle(View::Lut); return true; }
 
-			return true;
-		}
-
-		if(event.getKey() != 'c') return false;
-
-		_cross = !_cross;
-		_panorama = false;
-		_apply();
-		std::cout << "osgx-ibl: mode " << (_cross ? "cross" : "skybox") << std::endl;
-
-		return true;
+		return false;
 	}
 
 private:
-	void _apply() {
-		_display->setValue(0, !_panorama && !_cross);
-		_display->setValue(1, !_panorama && _cross);
-		_display->setValue(2, _panoramaAvailable && _panorama);
+	static const char* _name(View view) {
+		switch(view) {
+			case View::Cross: return "cross";
+			case View::Panorama: return "panorama";
+			case View::Lut: return "brdf LUT";
+			default: return "skybox";
+		}
+	}
+
+	void _toggle(View view) {
+		_view = (_view == view) ? View::Skybox : view;
+
+		_display->setValue(0, _view == View::Skybox);
+		_display->setValue(1, _view == View::Cross);
+		_display->setValue(2, _view == View::Panorama);
+		_display->setValue(3, _view == View::Lut);
+
+		std::cout << "osgx-ibl: mode " << _name(_view) << std::endl;
 	}
 
 	osg::ref_ptr<osg::Switch> _display;
 	bool _panoramaAvailable = false;
-	bool _cross = false;
-	bool _panorama = false;
+	bool _lutAvailable = false;
+	View _view = View::Skybox;
 };
 
-// A Lambertian irradiance cube has one level only. Until a future mode exposes a meaningful wheel
-// action (for example, GGX mip selection), consume scroll events so TrackballManipulator cannot
-// dolly the viewer outside the enclosing skybox.
+// A Lambertian irradiance cube (and a raw loaded cubemap) has one level only, so scroll is
+// repurposed to block TrackballManipulator's dolly zoom instead of doing anything meaningful.
 class ScrollBlocker final: public osgGA::GUIEventHandler {
 public:
 	bool handle(const osgGA::GUIEventAdapter& event, osgGA::GUIActionAdapter&) override {
 		return event.getEventType() == osgGA::GUIEventAdapter::SCROLL;
 	}
+};
+
+// GGX mode's actual use for the wheel action ScrollBlocker's comment used to point at: step
+// through the prefiltered roughness levels. Key/scroll bindings intentionally match
+// osggltf-ktx2-skybox.cpp's MipHandler so the two tools share muscle memory.
+class MipScrollHandler final: public osgGA::GUIEventHandler {
+public:
+	MipScrollHandler(osg::Uniform* mipUniform, int maxMip): _mipUniform(mipUniform), _maxMip(maxMip) {}
+
+	bool handle(const osgGA::GUIEventAdapter& event, osgGA::GUIActionAdapter&) override {
+		float delta = 0.0f;
+
+		if(event.getEventType() == osgGA::GUIEventAdapter::KEYDOWN) {
+			if(event.getKey() == '+' || event.getKey() == '=') delta = 1.0f;
+			else if(event.getKey() == '-' || event.getKey() == '_') delta = -1.0f;
+			else if(event.getKey() == '.' || event.getKey() == '>') delta = 0.25f;
+			else if(event.getKey() == ',' || event.getKey() == '<') delta = -0.25f;
+			else return false;
+		}
+
+		else if(event.getEventType() == osgGA::GUIEventAdapter::SCROLL) {
+			if(event.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP) delta = 0.5f;
+			else if(event.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_DOWN) delta = -0.5f;
+			else return false;
+		}
+
+		else return false;
+
+		_mipLevel = std::clamp(_mipLevel + delta, 0.0f, static_cast<float>(_maxMip));
+		_mipUniform->set(_mipLevel);
+
+		std::cout
+			<< "osgx-ibl: mip level " << std::fixed << std::setprecision(2) << _mipLevel
+			<< " / " << _maxMip << std::defaultfloat << std::endl;
+
+		return true;
+	}
+
+private:
+	osg::ref_ptr<osg::Uniform> _mipUniform;
+	float _mipLevel = 0.0f;
+	int _maxMip = 0;
 };
 
 class BakeStatusCallback final: public osg::NodeCallback {
@@ -374,22 +468,35 @@ osg::ref_ptr<osg::TextureCubeMap> loadRawCubemapRGBA32F(std::string_view pattern
 }
 
 int main(int argc, char** argv) {
+	enum class Mode { Lambertian, GGX };
+
 	std::string_view hdrPath;
 	std::string_view rawCubemapPattern;
 	int cubeSize = 256;
 	int sampleCount = 2048;
+	Mode mode = Mode::Lambertian;
 
 	for(int index = 1; index < argc; index++) {
 		const std::string_view argument(argv[index]);
 
 		if(argument == "--mode") {
-			if(index + 1 == argc || std::string_view(argv[index + 1]) != "lambertian") {
-				std::cerr << "osgx-ibl: only '--mode lambertian' is available currently" << std::endl;
+			if(index + 1 == argc) {
+				std::cerr << "osgx-ibl: --mode requires 'lambertian' or 'ggx'" << std::endl;
 
 				return 1;
 			}
 
 			index++;
+
+			const std::string_view modeArgument(argv[index]);
+
+			if(modeArgument == "lambertian") mode = Mode::Lambertian;
+			else if(modeArgument == "ggx") mode = Mode::GGX;
+			else {
+				std::cerr << "osgx-ibl: --mode requires 'lambertian' or 'ggx'" << std::endl;
+
+				return 1;
+			}
 		}
 
 		else if(argument == "--size" || argument == "--samples") {
@@ -439,9 +546,17 @@ int main(int argc, char** argv) {
 
 	if((hdrPath.empty() && rawCubemapPattern.empty()) || (!hdrPath.empty() && !rawCubemapPattern.empty())) {
 		std::cerr
-			<< "Usage: osgx-ibl <environment.hdr> [--mode lambertian] [--size N] [--samples N]" << std::endl
+			<< "Usage: osgx-ibl <environment.hdr> [--mode lambertian|ggx] [--size N] [--samples N]" << std::endl
 			<< "   or: osgx-ibl --raw-cubemap-rgba32f '<prefix>{face}<suffix>' [--size N]" << std::endl
-			<< "Controls: 'c' toggles diffuse skybox/cross; 'p' toggles the raw HDR panorama" << std::endl;
+			<< "Controls: 'c' toggles cross view; 'p' toggles the raw HDR panorama" << std::endl
+			<< "          'l' toggles the BRDF LUT (ggx mode only)" << std::endl
+			<< "          +/-, ,/., or scroll step GGX mip level (ggx mode only)" << std::endl;
+
+		return 1;
+	}
+
+	if(mode == Mode::GGX && !rawCubemapPattern.empty()) {
+		std::cerr << "osgx-ibl: --mode ggx requires an HDR input, not --raw-cubemap-rgba32f" << std::endl;
 
 		return 1;
 	}
@@ -450,6 +565,8 @@ int main(int argc, char** argv) {
 	osg::ref_ptr<osg::Group> bakeRoot;
 	osg::ref_ptr<osgx::ibl::BakeCompletion> completion;
 	osg::ref_ptr<osg::Texture2D> sourceTexture;
+	osg::ref_ptr<osg::Texture2D> lutTexture;
+	int maxMip = 0;
 	const bool isRawCubemap = !rawCubemapPattern.empty();
 
 	if(isRawCubemap) {
@@ -467,28 +584,64 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		auto bake = osgx::ibl::createLambertianBakeScene(
-			hdrImage,
-			{.cubeSize = cubeSize, .sampleCount = sampleCount}
-		);
+		if(mode == Mode::GGX) {
+			osgx::ibl::GGXPrefilterOptions options;
 
-		if(!bake.root || !bake.diffuseTexture || !bake.completion) {
-			std::cerr << "osgx-ibl: could not create the Lambertian bake scene" << std::endl;
+			options.prefilterSize = cubeSize;
+			options.sampleCount = sampleCount;
 
-			return 1;
+			auto bake = osgx::ibl::createGGXPrefilterScene(hdrImage, options);
+
+			if(!bake.root || !bake.prefilterTexture) {
+				std::cerr << "osgx-ibl: could not create the GGX prefilter bake scene" << std::endl;
+
+				return 1;
+			}
+
+			cubemap = bake.prefilterTexture;
+			bakeRoot = bake.root;
+			sourceTexture = bake.sourceTexture;
+			// Matches GGXPrefilter.cpp's own mipCountForSize() -- the highest valid mip index for
+			// a power-of-two cube face, i.e. floor(log2(size)), not the level *count*.
+			maxMip = static_cast<int>(std::floor(std::log2(static_cast<double>(cubeSize))));
+
+			lutTexture = osgx::make_ref<osg::Texture2D>();
+
+			auto lutCamera = osgx::ibl::makeBRDFLUTCamera(256, lutTexture);
+
+			// A sibling bake root under the same parent, same as
+			// osgGLTF::pbr::preparePBRIBLEnvironment(hdrPath, ...) wires its own LUT/diffuse/
+			// specular bakes together -- independent PRE_RENDER passes, not a dependency chain.
+			bakeRoot->addChild(lutCamera);
 		}
 
-		cubemap = bake.diffuseTexture;
-		bakeRoot = bake.root;
-		completion = bake.completion;
-		sourceTexture = bake.sourceTexture;
+		else {
+			auto bake = osgx::ibl::createLambertianBakeScene(
+				hdrImage,
+				{.cubeSize = cubeSize, .sampleCount = sampleCount}
+			);
+
+			if(!bake.root || !bake.diffuseTexture || !bake.completion) {
+				std::cerr << "osgx-ibl: could not create the Lambertian bake scene" << std::endl;
+
+				return 1;
+			}
+
+			cubemap = bake.diffuseTexture;
+			bakeRoot = bake.root;
+			completion = bake.completion;
+			sourceTexture = bake.sourceTexture;
+		}
 	}
 
+	auto mipUniform = osgx::make_ref<osg::Uniform>("mipLevel", 0.0f);
 	auto display = new osg::Switch();
 
-	display->addChild(makeSkybox(*cubemap), true);
-	display->addChild(makeCross(*cubemap), false);
+	display->addChild(makeSkybox(*cubemap, *mipUniform), true);
+	display->addChild(makeCross(*cubemap, *mipUniform), false);
 	if(sourceTexture) display->addChild(makePanorama(*sourceTexture), false);
+	else display->addChild(new osg::Group(), false);
+	if(lutTexture) display->addChild(makeLutQuad(*lutTexture), false);
 	else display->addChild(new osg::Group(), false);
 
 	auto root = new osg::Group();
@@ -508,13 +661,22 @@ int main(int argc, char** argv) {
 	viewer.setCameraManipulator(manipulator);
 	viewer.setSceneData(root);
 	viewer.addEventHandler(new osgViewer::StatsHandler());
-	viewer.addEventHandler(new DisplayModeHandler(display, sourceTexture.valid()));
-	viewer.addEventHandler(new ScrollBlocker());
-	viewer.home();
+	viewer.addEventHandler(new DisplayModeHandler(display, sourceTexture.valid(), lutTexture.valid()));
+
+	if(mode == Mode::GGX) viewer.addEventHandler(new MipScrollHandler(mipUniform, maxMip));
+	else viewer.addEventHandler(new ScrollBlocker());
 
 	if(isRawCubemap) {
 		std::cout << "osgx-ibl: raw RGBA32F cubemap " << cubeSize << "x" << cubeSize << std::endl
 			<< "Controls: 'c' toggles cubemap skybox/cross" << std::endl;
+	}
+
+	else if(mode == Mode::GGX) {
+		std::cout
+			<< "osgx-ibl: GPU GGX prefilter bake " << cubeSize << "x" << cubeSize
+			<< ", " << (maxMip + 1) << " mip levels, " << sampleCount << " samples" << std::endl
+			<< "Controls: 'c' cross, 'p' panorama, 'l' BRDF LUT; "
+			<< "+/-, ,/., or scroll to step mip level" << std::endl;
 	}
 
 	else {
