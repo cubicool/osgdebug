@@ -576,7 +576,17 @@ int main(int argc, char** argv) {
 	}
 
 	else {
-		auto hdrImage = osgDB::readRefImageFile(std::string(hdrPath));
+		auto hdrImagePath = osgx::findDataFile(
+			hdrPath,
+			{
+				"{}",
+				"glTF-Sample-Environments/{}"
+			},
+			".hdr"
+		);
+
+		// auto hdrImage = osgDB::readRefImageFile(std::string(hdrPath));
+		auto hdrImage = osgDB::readRefImageFile(hdrImagePath.c_str());
 
 		if(!hdrImage) {
 			std::cerr << "osgx-ibl: failed to load HDR image " << hdrPath << std::endl;

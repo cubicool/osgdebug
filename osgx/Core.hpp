@@ -10,18 +10,23 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Timer>
 #include <osg/Vec3>
 #include <osg/ref_ptr>
+#include <osgDB/FileUtils>
 
 OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
 #include <array>
 #include <concepts>
+#include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <list>
 #include <numeric>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -142,6 +147,167 @@ T* getFirstParent(const Node* node) {
 	}
 
 	return nullptr;
+}
+
+// ------------------------------------------------------------------------------------------------
+namespace detail {
+
+	// Tries `name` as-is first (so absolute/relative paths and OSG_FILE_PATH both work exactly like
+	// any other osgDB::findDataFile() call), then substitutes `name` into each `{}`-style pattern
+	// in `candidates`, in order, retrying osgDB::findDataFile() on the result.
+	//
+	// When `suffix` is non-empty, a hit is only accepted if its extension matches (leading '.' on
+	// `suffix` is optional either way); otherwise the search keeps going to the next candidate. This
+	// is the whole reason `suffix` exists: candidate patterns often mix extensions--a `.gltf` next
+	// to a `.hdr` next to a `.ktx2`, all sharing one base name in the same data directory--so without
+	// a filter, whichever one osgDB happens to find first silently wins, which is not necessarily
+	// the one the caller actually wants.
+	/* inline std::filesystem::path findDataFileImpl(
+		std::string_view name,
+		std::span<const std::string> candidates,
+		const std::string& suffix,
+		const osgDB::Options* options
+	) {
+		const auto want = suffix.empty()
+			? std::string{}
+			: suffix.front() == '.' ? suffix : "." + suffix
+		;
+
+		auto find = [&](std::string_view candidate) -> std::filesystem::path {
+			auto found = osgDB::findDataFile(std::string(candidate), options);
+
+			OSG_INFO << "osgx::findDataFile: checking " << candidate << std::endl;
+
+			if(found.empty()) return {};
+			if(!want.empty() && std::filesystem::path(found).extension() != want) return {};
+
+			OSG_INFO << "osgx::findDataFile: found " << found << std::endl;
+
+			return found;
+		};
+
+		if(auto found = find(name); !found.empty()) return found;
+
+		for(const auto& pattern: candidates) {
+			std::string candidate = pattern;
+
+			for(std::string::size_type pos = 0;
+				(pos = candidate.find("{}", pos)) != std::string::npos;
+				pos += name.size()
+			) candidate.replace(pos, 2, name);
+
+			if(auto found = find(candidate); !found.empty()) return found;
+		}
+
+		return {};
+	} */
+
+	inline std::filesystem::path findDataFileImpl(
+		std::string_view name,
+		std::span<const std::string> candidates,
+		std::string_view suffix,
+		const osgDB::Options* options
+	) {
+		const auto normalizedSuffix = [&] {
+			if(suffix.empty()) return std::string{};
+			if(suffix.front() == '.') return std::string{suffix};
+			return "." + std::string{suffix};
+		}();
+
+		std::filesystem::path requested{name};
+
+		if(
+			!normalizedSuffix.empty() &&
+			requested.extension() != normalizedSuffix
+		) {
+			requested += normalizedSuffix;
+		}
+
+		const auto requestedName = requested.string();
+
+		auto find = [&](std::string_view candidate) -> std::filesystem::path {
+			auto found = osgDB::findDataFile(std::string(candidate), options);
+
+			OSG_INFO << "osgx::findDataFile: checking " << candidate << std::endl;
+
+			if(found.empty()) return {};
+			if(
+				!normalizedSuffix.empty() &&
+				std::filesystem::path(found).extension() != normalizedSuffix
+			) {
+				return {};
+			}
+
+			OSG_INFO << "osgx::findDataFile: found " << found << std::endl;
+
+			return found;
+		};
+
+		if(auto found = find(requestedName); !found.empty()) return found;
+
+		for(const auto& pattern: candidates) {
+			std::string candidate = pattern;
+
+			for(
+				std::string::size_type pos = 0;
+				(pos = candidate.find("{}", pos)) != std::string::npos;
+				pos += requestedName.size()
+			) {
+				candidate.replace(pos, 2, requestedName);
+			}
+
+			if(auto found = find(candidate); !found.empty()) return found;
+		}
+
+		return {};
+	}
+}
+
+inline std::filesystem::path findDataFile(
+	std::string_view name,
+	std::span<const std::string> candidates={},
+	const osgDB::Options* options=nullptr
+) {
+	return detail::findDataFileImpl(name, candidates, {}, options);
+}
+
+inline std::filesystem::path findDataFile(
+	std::string_view name,
+	std::span<const std::string> candidates,
+	const std::string& suffix,
+	const osgDB::Options* options=nullptr
+) {
+	return detail::findDataFileImpl(name, candidates, suffix, options);
+}
+
+// `std::span` has no `std::initializer_list` constructor until C++26, so these two overloads exist
+// purely so a bare `findDataFile(name, {"a", "b"})` compiles without a named temporary or spelling
+// out a container type at the call site.
+inline std::filesystem::path findDataFile(
+	std::string_view name,
+	std::initializer_list<std::string> candidates,
+	const osgDB::Options* options=nullptr
+) {
+	return detail::findDataFileImpl(
+		name,
+		std::span<const std::string>(candidates.begin(), candidates.size()),
+		{},
+		options
+	);
+}
+
+inline std::filesystem::path findDataFile(
+	std::string_view name,
+	std::initializer_list<std::string> candidates,
+	const std::string& suffix,
+	const osgDB::Options* options=nullptr
+) {
+	return detail::findDataFileImpl(
+		name,
+		std::span<const std::string>(candidates.begin(), candidates.size()),
+		suffix,
+		options
+	);
 }
 
 // ------------------------------------------------------------------------------------------------
