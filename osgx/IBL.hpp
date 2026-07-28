@@ -26,6 +26,7 @@ OSGX_ENABLE_WARNINGS
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -254,6 +255,35 @@ inline osg::ref_ptr<osg::Camera> makeBRDFLUTCamera(int lutSize, osg::Texture2D* 
 	cam->setUpdateCallback(new RunOnceCallback());
 
 	return cam;
+}
+
+// One `sharedBRDFLUT(lutSize)` call's worth of result: `texture` is always the shared LUT for that
+// size. `camera` is only non-null the FIRST time a given `lutSize` is requested in this process --
+// that caller is responsible for adding it to a rendered scene graph so the one-time bake actually
+// runs. Every later call at the same `lutSize` gets the same `texture` back with `camera` left
+// null, because there is nothing left to bake.
+struct SharedBRDFLUT {
+	osg::ref_ptr<osg::Texture2D> texture;
+	osg::ref_ptr<osg::Camera> camera;
+};
+
+// The split-sum BRDF LUT is a property of THIS CODE -- this GGX distribution, this Smith
+// visibility term, this sample count -- not of any HDR image, environment, or probe (see the
+// derivation note above makeBRDFLUTCamera()). Every environment requesting the same `lutSize`
+// bakes to byte-identical output, so this bakes it once per size, process-wide, and hands the same
+// GPU texture to every caller after that -- never re-derive it per HDR/environment/probe, and
+// never key this cache by anything but `lutSize`.
+inline SharedBRDFLUT sharedBRDFLUT(int lutSize) {
+	static std::map<int, osg::ref_ptr<osg::Texture2D>> cache;
+
+	if(auto it = cache.find(lutSize); it != cache.end()) return {it->second, nullptr};
+
+	auto texture = make_ref<osg::Texture2D>();
+	auto camera = makeBRDFLUTCamera(lutSize, texture);
+
+	cache.emplace(lutSize, texture);
+
+	return {texture, camera};
 }
 
 // ------------------------------------------------------------------------------------------------
