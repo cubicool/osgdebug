@@ -47,6 +47,12 @@ namespace pbr {
 // Contract: these assume `const float PI = 3.14159265359;` is already in scope. Not bundled
 // here, since plenty of consuming shaders already define PI themselves and a duplicate
 // `const float PI` is a compile error, not a harmless redefinition -- the caller adds it once.
+//
+// Kept as `inline constexpr` header definitions (not moved to PBR.cpp): most are bound directly
+// by name in ext/osgx-python.cpp (needs real external linkage), AND all eleven are referenced
+// inside registerShaderLibs()'s `static constexpr ShaderLib` array below, which needs a genuine
+// constant expression -- `inline constexpr` in a header is the one form satisfying both, same
+// reasoning as osgx::ibl's shader-string constants.
 
 // GGX/Trowbridge-Reitz normal distribution term (D). NdotH and roughness in [0,1];
 // `roughness * roughness` is the standard Disney/Karis alpha remap.
@@ -109,9 +115,7 @@ struct osgx_Material {
 // All five snippets, concatenated in dependency order (G_SMITH calls osgx_G_Schlick, so
 // G_SCHLICK must precede it). Convenience for callers that want the whole BRDF toolkit;
 // reach for the individual constants instead if only part of it is needed.
-inline std::string snippets() {
-	return std::string(D_GGX) + G_SCHLICK + G_SMITH + F_SCHLICK + F_SCHLICK_ROUGHNESS;
-}
+std::string snippets();
 
 // Per-light Cook-Torrance specular contribution (direct lighting), already multiplied by NdotL --
 // caller multiplies by the light's own radiance (color * intensity/distance^2 or similar) and
@@ -264,47 +268,14 @@ struct OrbitLightRig: public osg::NodeCallback {
 		{0.45f, 0.50f, 0.80f, 4.2f, 0.50f},
 	};
 
-	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
-		float t = nv->getFrameStamp() ? float(nv->getFrameStamp()->getSimulationTime()) : 0.0f;
-		auto* lp = ss->getUniform(uniformName);
-
-		for(size_t i = 0; i < orbits.size(); i++) {
-			const auto& o = orbits[i];
-			float a = t * o.speed + o.phase;
-
-			lp->setElement(static_cast<unsigned int>(i), osg::Vec4(
-				center.x() + std::cos(a) * o.radius,
-				center.y() + std::sin(a) * o.radius,
-				center.z() + o.height,
-				o.intensity * intensity
-			));
-		}
-
-		traverse(node, nv);
-	}
+	void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 };
 
 }
 
-
 namespace pbr {
 
-inline void registerShaderLibs() {
-	static constexpr ShaderLib libs[] = {
-		{"D_GGX", "osgx_D_GGX", pbr::D_GGX},
-		{"G_SCHLICK", "osgx_G_Schlick", pbr::G_SCHLICK},
-		{"G_SMITH", "osgx_G_Smith", pbr::G_SMITH},
-		{"F_SCHLICK", "osgx_F_Schlick", pbr::F_SCHLICK},
-		{"F_SCHLICK_ROUGHNESS", "osgx_F_Schlick_roughness", pbr::F_SCHLICK_ROUGHNESS},
-		{"MATERIAL_STRUCT", "osgx_Material", pbr::MATERIAL_STRUCT},
-		{"DIRECT_SPECULAR", "osgx_DirectSpecular", pbr::DIRECT_SPECULAR},
-		{"F_MULTISCATTER", "osgx_F_MultiScatter", pbr::F_MULTISCATTER},
-		{"IBL_SPECULAR", "osgx_IBLSpecular", pbr::IBL_SPECULAR},
-		{"SPECULAR_AA", "osgx_SpecularAA", pbr::SPECULAR_AA},
-		{"TONEMAP_PBR_NEUTRAL", "osgx_TonemapPBRNeutral", pbr::TONEMAP_PBR_NEUTRAL}
-	};
-	::osgx::registerShaderLibs("osgx::pbr", libs);
-}
+void registerShaderLibs();
 
 }
 

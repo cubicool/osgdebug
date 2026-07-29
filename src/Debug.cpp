@@ -533,18 +533,6 @@ bool ProfilerCullCallback::cull(osg::NodeVisitor* nv, osg::Drawable* drawable, o
 	const auto path = detail::cameraQualifiedPath(cv ? cv->getCurrentCamera() : nullptr, leafName);
 	bool callbackCulled = false;
 
-	// TODO: temporary diagnostic for the osgEarth REX investigation -- remove once
-	// resolved. Proves whether OSG's cull traversal ever invokes a DrawableCullCallback
-	// for a profiled drawable at all -- zero GL dependency, so it isolates "cull never
-	// visits these objects via the standard callback" from any draw/GL-extension issue.
-	static bool loggedCullOnce = false;
-
-	if(!loggedCullOnce) {
-		loggedCullOnce = true;
-
-		detail::notify("osgx::debug::ProfilerCullCallback | cull() FIRED for ", path);
-	}
-
 	if(_cb.valid()) {
 		if(auto* dcb = _cb->asDrawableCullCallback()) {
 			callbackCulled = dcb->cull(nv, drawable, ri);

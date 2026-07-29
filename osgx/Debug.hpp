@@ -551,21 +551,6 @@ public:
 
 		const auto start = osg::Timer::instance()->tick();
 
-		// TODO: temporary diagnostic for the osgEarth REX investigation -- remove once
-		// resolved. Proves whether drawImplementation() ever actually fires for a
-		// profiled drawable at all, and whether GL_TIMESTAMP queries are available in
-		// this context, independent of whether any data ever reaches the ImGui table.
-		static bool loggedDrawOnce = false;
-
-		if(!loggedDrawOnce) {
-			loggedDrawOnce = true;
-
-			detail::notify(
-				"osgx::debug::ProfilerCallback | drawImplementation FIRED for ", path,
-				" hasTimerQuery=", (ext && ext->glQueryCounter ? "true" : "false")
-			);
-		}
-
 		Scoped scoped(0, path);
 
 		if(ext && ext->glQueryCounter) {
