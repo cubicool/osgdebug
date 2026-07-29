@@ -376,7 +376,7 @@ PYBIND11_MODULE(osgx, m) {
 	// references the way ImGui's C++ &value out-params expect. A sibling of
 	// osgx::debug, not nested under it -- most of this (Panel/Widget/sliders) has
 	// nothing to do with the profiler; only ProfilerSection reaches into debug::.
-#ifdef OSGDEBUG_IMGUI
+#ifdef OSGX_IMGUI
 	auto m_imgui = m.def_submodule("imgui", "osgx::imgui namespace");
 
 	py::enum_<osgx::imgui::Dock>(m_imgui, "Dock")
@@ -428,7 +428,8 @@ PYBIND11_MODULE(osgx, m) {
 			&osgx::imgui::Panel::addProfilerSection,
 			"view"_a,
 			"sceneRoot"_a,
-			"default_open"_a=false
+			"default_open"_a=false,
+			"print_every"_a=0
 		)
 		.def(
 			"addTextureSection",
@@ -487,7 +488,8 @@ PYBIND11_MODULE(osgx, m) {
 			&osgx::imgui::Widget::addProfilerSection,
 			"view"_a,
 			"sceneRoot"_a,
-			"default_open"_a=false
+			"default_open"_a=false,
+			"print_every"_a=0
 		)
 		.def(
 			"addTextureSection",

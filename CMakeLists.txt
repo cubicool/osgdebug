@@ -55,6 +55,22 @@ find_package(OpenSceneGraph REQUIRED
 )
 find_package(OpenGL REQUIRED)
 
+# Detected once here (not per-subdirectory/per-target) so OSGX_WITH_IMGUI and the
+# IMGUI_* variables are already set by the time add_subdirectory(examples)/ext are
+# reached below -- CMake subdirectories inherit the parent's variables at the point
+# add_subdirectory() is called.
+find_package(PkgConfig)
+
+if(PkgConfig_FOUND)
+	pkg_check_modules(IMGUI imgui)
+endif()
+
+option(OSGX_WITH_IMGUI "Compile osgx::imgui (Dear ImGui overlay) into libosgx" ${IMGUI_FOUND})
+
+if(OSGX_WITH_IMGUI AND NOT IMGUI_FOUND)
+	message(FATAL_ERROR "OSGX_WITH_IMGUI is ON but Dear ImGui was not found via pkg-config")
+endif()
+
 configure_file(
 	"${CMAKE_CURRENT_SOURCE_DIR}/osgx/Version.hpp.in"
 	"${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp"
@@ -85,6 +101,7 @@ set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
 add_library(osgx
 	src/CaptureCubeMap.cpp
+	src/Debug.cpp
 	src/GGXPrefilter.cpp
 	src/LambertianBake.cpp
 )
@@ -114,6 +131,13 @@ set_target_properties(osgx PROPERTIES
 )
 
 target_compile_options(osgx PRIVATE ${OSGX_WARNING_OPTIONS})
+
+if(OSGX_WITH_IMGUI)
+	target_sources(osgx PRIVATE src/ImGui.cpp)
+	target_compile_definitions(osgx PUBLIC OSGX_IMGUI)
+	target_include_directories(osgx PUBLIC ${IMGUI_INCLUDE_DIRS})
+	target_link_libraries(osgx PUBLIC ${IMGUI_LINK_LIBRARIES})
+endif()
 
 if(OSGX_INSTALL)
 	install(TARGETS osgx_core osgx EXPORT osgxTargets
@@ -244,20 +268,10 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	osgx_compile_options(osgx_python)
 	set_target_properties(osgx_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-	# Same ImGui detection as examples/CMakeLists.txt (pkg_check_modules is
-	# subdirectory-scoped, so it has to be repeated here rather than reused).
-	find_package(PkgConfig)
-
-	if(PkgConfig_FOUND)
-		pkg_check_modules(IMGUI imgui)
-	endif()
-
-	if(IMGUI_FOUND)
-		find_package(OpenGL REQUIRED)
-		target_compile_definitions(osgx_python PRIVATE OSGDEBUG_IMGUI)
-		target_include_directories(osgx_python PRIVATE ${IMGUI_INCLUDE_DIRS})
-		target_link_libraries(osgx_python PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
-	else()
-		message(STATUS "ImGui not found via pkg-config; osgx.imgui Python bindings will be unavailable")
+	# osgx.imgui Python bindings ride along automatically: osgx_python links
+	# osgx::osgx, which already carries OSGX_IMGUI + the Dear ImGui include dirs
+	# and link libraries as PUBLIC usage requirements when OSGX_WITH_IMGUI is on.
+	if(NOT OSGX_WITH_IMGUI)
+		message(STATUS "OSGX_WITH_IMGUI is OFF; osgx.imgui Python bindings will be unavailable")
 	endif()
 endif()

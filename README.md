@@ -282,7 +282,9 @@ session does not flood with unintended frames. On first render it automatically 
 
 ## `osgx::imgui` — Dear ImGui overlay
 
-`osgx/ImGui.hpp` (gated behind `OSGDEBUG_IMGUI`, requiring Dear ImGui via pkg-config) provides
+`osgx/ImGui.hpp` (gated behind `OSGX_IMGUI`, requiring Dear ImGui via pkg-config; set via the
+`OSGX_WITH_IMGUI` CMake option, which compiles it into `libosgx` when Dear ImGui is found)
+provides
 `osgx::imgui::Widget`, a self-contained Dear ImGui overlay with pluggable sections
 (`addStatsSection()`, `addProfilerSection()`, `addTextureSection()`, or a custom
 `addSection(label, fn)`), and `osgx::imgui::Panel`, the same section machinery for an

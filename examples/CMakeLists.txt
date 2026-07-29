@@ -21,22 +21,16 @@ find_package(OpenGL REQUIRED)
 target_link_libraries(osgx-hover PRIVATE OpenGL::GL)
 target_link_libraries(osgx-picking PRIVATE OpenGL::GL)
 
-find_package(PkgConfig)
-
-if(PkgConfig_FOUND)
-	pkg_check_modules(IMGUI imgui)
-endif()
-
-if(IMGUI_FOUND)
+# OSGX_WITH_IMGUI + the Dear ImGui detection (IMGUI_FOUND, etc.) come from the root
+# CMakeLists.txt -- already resolved by the time this subdirectory is processed.
+if(OSGX_WITH_IMGUI)
 	add_executable(osgx-imgui
 		"osgx-imgui.cpp"
 		"../osgx/osgx.hpp"
 	)
 
 	osgx_compile_options(osgx-imgui)
-	target_compile_definitions(osgx-imgui PRIVATE OSGDEBUG_IMGUI)
-	target_include_directories(osgx-imgui PRIVATE ${IMGUI_INCLUDE_DIRS})
-	target_link_libraries(osgx-imgui PRIVATE osgx::osgx ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
+	target_link_libraries(osgx-imgui PRIVATE osgx::osgx OpenGL::GL)
 
 	add_executable(osgx-imgui-external
 		"osgx-imgui-external.cpp"
@@ -44,9 +38,7 @@ if(IMGUI_FOUND)
 	)
 
 	osgx_compile_options(osgx-imgui-external)
-	target_compile_definitions(osgx-imgui-external PRIVATE OSGDEBUG_IMGUI)
-	target_include_directories(osgx-imgui-external PRIVATE ${IMGUI_INCLUDE_DIRS})
-	target_link_libraries(osgx-imgui-external PRIVATE osgx::osgx ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
+	target_link_libraries(osgx-imgui-external PRIVATE osgx::osgx OpenGL::GL)
 else()
-	message(STATUS "ImGui not found via pkg-config; skipping osgx-imgui")
+	message(STATUS "OSGX_WITH_IMGUI is OFF; skipping osgx-imgui")
 endif()

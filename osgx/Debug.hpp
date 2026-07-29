@@ -87,48 +87,9 @@ enum class Type: GLenum {
 };
 
 namespace detail {
-	inline const char* toString(Source s) {
-		switch(s) {
-			case Source::DONT_CARE: return "DONT_CARE";
-			case Source::API: return "API";
-			case Source::APPLICATION: return "APPLICATION";
-			case Source::OTHER: return "OTHER";
-			case Source::SHADER_COMPILER: return "SHADER_COMPILER";
-			case Source::THIRD_PARTY: return "THIRD_PARTY";
-			case Source::WINDOW_SYSTEM: return "WINDOW_SYSTEM";
-		}
-
-		return "UNKNOWN_SOURCE";
-	}
-
-	inline const char* toString(Type t) {
-		switch(t) {
-			case Type::DONT_CARE: return "DONT_CARE";
-			case Type::DEPRECATED_BEHAVIOR: return "DEPRECATED_BEHAVIOR";
-			case Type::ERROR: return "ERROR";
-			case Type::MARKER: return "MARKER";
-			case Type::OTHER: return "OTHER";
-			case Type::PERFORMANCE: return "PERFORMANCE";
-			case Type::POP_GROUP: return "POP_GROUP";
-			case Type::PORTABILITY: return "PORTABILITY";
-			case Type::PUSH_GROUP: return "PUSH_GROUP";
-			case Type::UNDEFINED_BEHAVIOR: return "UNDEFINED_BEHAVIOR";
-		}
-
-		return "UNKNOWN_TYPE";
-	}
-
-	inline const char* toString(Severity s) {
-		switch(s) {
-			case Severity::DONT_CARE: return "DONT_CARE";
-			case Severity::HIGH: return "HIGH";
-			case Severity::LOW: return "LOW";
-			case Severity::MEDIUM: return "MEDIUM";
-			case Severity::NOTIFICATION: return "NOTIFICATION";
-		}
-
-		return "UNKNOWN_SEVERITY";
-	}
+	const char* toString(Source s);
+	const char* toString(Type t);
+	const char* toString(Severity s);
 }
 
 namespace detail {
@@ -154,18 +115,24 @@ namespace detail {
 		GLboolean enabled
 	);
 
-	inline glPushDebugGroupFunc _pushGroup = nullptr;
-	inline glPopDebugGroupFunc _popGroup = nullptr;
-	inline glDebugMessageInsertFunc _messageInsert = nullptr;
-	inline glDebugMessageCallbackFunc _messageCallback = nullptr;
-	inline glDebugMessageControlFunc _messageControl = nullptr;
+	// Defined once in Debug.cpp. Deliberately NOT `inline` variables: an `inline` namespace-
+	// scope variable only merges into one definition within a single link unit. Any separately
+	// dlopen()'d module (an osgDB plugin, most of which load via RTLD_LOCAL) that included this
+	// header directly used to get its own private copy of this state, disconnected from every
+	// other consumer's -- e.g. a ProfilerVisitor running in one module writing into a
+	// FrameAccumulator that profilerStats() in another module could never see. `extern` +
+	// exactly one definition in the compiled osgx library fixes that: every consumer that links
+	// osgx::osgx resolves to the same already-loaded symbol.
+	extern glPushDebugGroupFunc _pushGroup;
+	extern glPopDebugGroupFunc _popGroup;
+	extern glDebugMessageInsertFunc _messageInsert;
+	extern glDebugMessageCallbackFunc _messageCallback;
+	extern glDebugMessageControlFunc _messageControl;
 
 	// All osgx::debug log output - internal diagnostics, GL annotation mirrors, driver
 	// messages - flows through this single sink. Replace it to redirect to spdlog,
 	// Qt logging, an ImGui scrollback, etc. Default: osg::notify(NOTICE).
-	inline std::function<void(std::string_view)> _sink = [](std::string_view s) {
-		osg::notify(osg::NOTICE) << s << std::endl;
-	};
+	extern std::function<void(std::string_view)> _sink;
 
 	inline void notify(const auto&... args) {
 		std::ostringstream oss;
@@ -173,7 +140,7 @@ namespace detail {
 		_sink(oss.str());
 	}
 
-	inline void APIENTRY defaultCallback(
+	void APIENTRY defaultCallback(
 		GLenum source,
 		GLenum type,
 		GLuint id,
@@ -181,127 +148,33 @@ namespace detail {
 		GLsizei length,
 		const GLchar* message,
 		const void* userParam
-	) {
-		const auto src = static_cast<Source>(source);
-		const auto typ = static_cast<Type>(type);
-		const auto sev = static_cast<Severity>(severity);
+	);
 
-		std::string msg;
+	void pushGroup(Source source, GLuint id, const std::string& message);
+	void popGroup();
 
-		if(message) {
-			if(length >= 0) msg.assign(message, static_cast<size_t>(length));
-			else msg = message;
-		}
-
-		std::ostringstream oss;
-
-		oss << "osgx::debug | source=" << toString(src)
-			<< " type=" << toString(typ)
-			<< " severity=" << toString(sev)
-			<< " id=" << id
-			<< " | " << msg;
-
-		_sink(oss.str());
-	}
-
-	inline void pushGroup(Source source, GLuint id, const std::string& message) {
-		if(!_pushGroup) return;
-
-		_pushGroup(
-			static_cast<std::underlying_type_t<Source>>(source),
-			id,
-			-1,
-			message.c_str()
-		);
-
-		notify("osgx::debug::pushGroup | ", message);
-	}
-
-	inline void popGroup() {
-		if(!_popGroup) return;
-
-		_popGroup();
-	}
-
-	inline void messageInsert(
+	void messageInsert(
 		GLenum source,
 		GLenum type,
 		GLuint id,
 		GLenum severity,
 		const std::string& message
-	) {
-		if(!_messageInsert) return;
+	);
 
-		_messageInsert(source, type, id, severity, -1, message.c_str());
+	void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr);
+	void clearCallback();
+	void enableDebugOutput(bool synchronous=true);
+	void disableDebugOutput();
+	void installDefaultCallback(bool synchronous=true);
 
-		notify("osgx::debug::messageInsert | ", message);
-	}
-
-	inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
-		if(!_messageCallback) return;
-
-		_messageCallback(callback, userParam);
-	}
-
-	inline void clearCallback() {
-		setCallback(nullptr, nullptr);
-	}
-
-	inline void enableDebugOutput(bool synchronous=true) {
-		if(!_messageCallback) return;
-
-		glEnable(GL_DEBUG_OUTPUT);
-
-		if(synchronous) glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-		else glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-	}
-
-	inline void disableDebugOutput() {
-		if(!_messageCallback) return;
-
-		glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-		glDisable(GL_DEBUG_OUTPUT);
-	}
-
-	inline void installDefaultCallback(bool synchronous=true) {
-		if(!_messageCallback) return;
-
-		enableDebugOutput(synchronous);
-		setCallback(defaultCallback, nullptr);
-	}
-
-	inline void messageControl(
+	void messageControl(
 		GLenum source,
 		GLenum type,
 		GLenum severity,
 		bool enabled,
 		GLsizei count=0,
 		const GLuint* ids=nullptr
-	) {
-		if(!_messageControl) return;
-
-		_messageControl(
-			source,
-			type,
-			severity,
-			count,
-			ids,
-			enabled ? GL_TRUE : GL_FALSE
-		);
-	}
-
-	template<typename T>
-	inline void setupFunction(const std::string& name, T* func) {
-		void* f = osg::getGLExtensionFuncPtr(name.c_str());
-
-		if(f) {
-			*func = reinterpret_cast<T>(f);
-
-			notify("osgx::debug | Bound function '", name, "' to @", (void*)(*func));
-		}
-
-		else notify("osgx::debug | FAILED to bind '", name, "'");
-	}
+	);
 
 	// Per-context accumulator for two-phase GPU timing. ProfilerCallback (phase 1) pushes
 	// pending timestamp query pairs here without blocking. ProfilerFinalCallback (phase 2)
@@ -379,40 +252,11 @@ namespace detail {
 
 		// Thread-safe copy for readers (e.g. the ImGui profiler table) that shouldn't
 		// hold the lock -- and therefore block the cull thread -- while rendering.
-		Stats snapshot() const {
-			std::lock_guard<std::mutex> lock(*statsMutex);
+		Stats snapshot() const;
 
-			return stats;
-		}
-
-		Entry alloc(osg::GLExtensions* ext) {
-			if(!freeList.empty()) {
-				auto e = std::move(freeList.back());
-
-				freeList.pop_back();
-
-				return e;
-			}
-
-			Entry e;
-
-			ext->glGenQueries(1, &e.begin);
-			ext->glGenQueries(1, &e.end);
-
-			return e;
-		}
-
-		void push(Entry e) {
-			pending.push_back(std::move(e));
-		}
-
-		void markCull(const std::string& path, CullState state, unsigned int frameNum) {
-			std::lock_guard<std::mutex> lock(*statsMutex);
-			auto& s = stats[path];
-
-			s.cullState = state;
-			s.cullFrame = frameNum;
-		}
+		Entry alloc(osg::GLExtensions* ext);
+		void push(Entry e);
+		void markCull(const std::string& path, CullState state, unsigned int frameNum);
 
 		// SYNC: drain current frame's pending queries, blocking per-query.
 		void drain(
@@ -420,9 +264,7 @@ namespace detail {
 			size_t sampleWindow,
 			size_t printEvery,
 			unsigned int frameNum
-		) {
-			_drain(pending, ext, sampleWindow, printEvery, frameNum);
-		}
+		);
 
 		// ASYNC: drain the previous frame's results (should already be ready),
 		// then advance the double-buffer so this frame's pending becomes next
@@ -432,11 +274,7 @@ namespace detail {
 			size_t sampleWindow,
 			size_t printEvery,
 			unsigned int frameNum
-		) {
-			_drain(ready, ext, sampleWindow, printEvery, frameNum);
-
-			std::swap(pending, ready);
-		}
+		);
 
 	private:
 		void _drain(
@@ -445,49 +283,12 @@ namespace detail {
 			size_t sampleWindow,
 			size_t printEvery,
 			unsigned int frameNum
-		) {
-			for(auto& e : source) {
-				GLuint64 t0 = 0, t1 = 0;
-
-				ext->glGetQueryObjectui64v(e.begin, GL_QUERY_RESULT, &t0);
-				ext->glGetQueryObjectui64v(e.end, GL_QUERY_RESULT, &t1);
-
-				const GLuint64 gpuNs = t1 - t0;
-				bool shouldPrint = false;
-				GLuint64 avgNs = 0;
-
-				{
-					std::lock_guard<std::mutex> lock(*statsMutex);
-					auto& s = stats[e.path];
-
-					s.gpuBuffer.add(gpuNs, sampleWindow);
-					s.samplesSincePrint++;
-
-					if(printEvery > 0 && s.samplesSincePrint >= printEvery) {
-						s.samplesSincePrint = 0;
-						shouldPrint = true;
-						avgNs = s.gpuBuffer.average(printEvery);
-					}
-				}
-
-				// Kept outside the lock -- notify()/stdout shouldn't hold up the cull thread.
-				if(shouldPrint) {
-					// TODO: This is annoyingly AWFUL and should be fixed; SOON!
-					notify(
-						"osgx::debug::Profiler | [", e.path, "] GPU: ", gpuNs / 1000u, "us",
-						" | avg: ", avgNs / 1000u, "us",
-						" Frame: ", frameNum
-					);
-				}
-
-				freeList.push_back(std::move(e));
-			}
-
-			source.clear();
-		}
+		);
 	};
 
-	inline osg::buffered_object<FrameAccumulator> _accumulators;
+	// Defined once in Debug.cpp -- see the comment above _pushGroup et al. for why this
+	// must be `extern`, not `inline`.
+	extern osg::buffered_object<FrameAccumulator> _accumulators;
 }
 
 // Thread-safe snapshot of per-path GPU timing stats for the given GL context.
@@ -498,119 +299,54 @@ namespace detail {
 // safe to call from onDraw regardless (POST_DRAW fires before FINAL_DRAW in
 // OSG, so you see the previous frame's data - ring-buffer averaging makes
 // that irrelevant).
-inline detail::FrameAccumulator::Stats profilerStats(unsigned int contextID) {
-	return detail::_accumulators[contextID].snapshot();
-}
+detail::FrameAccumulator::Stats profilerStats(unsigned int contextID);
 
-inline void pushGroup(Source source, GLuint id, const std::string& message) {
-	detail::pushGroup(source, id, message);
-}
+void pushGroup(Source source, GLuint id, const std::string& message);
+void pushGroup(GLuint id, const std::string& message);
+void popGroup();
 
-inline void pushGroup(GLuint id, const std::string& message) {
-	pushGroup(Source::APPLICATION, id, message);
-}
-
-inline void popGroup() {
-	detail::popGroup();
-}
-
-inline void messageInsert(
+void messageInsert(
 	Source source,
 	Type type,
 	GLuint id,
 	Severity severity,
 	const std::string& message
-) {
-	detail::messageInsert(
-		static_cast<std::underlying_type_t<Source>>(source),
-		static_cast<std::underlying_type_t<Type>>(type),
-		id,
-		static_cast<std::underlying_type_t<Severity>>(severity),
-		message
-	);
-}
+);
 
-inline void messageInsert(
+void messageInsert(
 	Type type,
 	GLuint id,
 	Severity severity,
 	const std::string& message
-) {
-	messageInsert(Source::APPLICATION, type, id, severity, message);
-}
+);
 
 // TODO: More messageInsert() wrappers for Type/Severity.
 
-inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
-	detail::setCallback(callback, userParam);
-}
-
-inline void clearCallback() {
-	detail::clearCallback();
-}
-
-inline void installDefaultCallback(bool synchronous=true) {
-	detail::installDefaultCallback(synchronous);
-}
+void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr);
+void clearCallback();
+void installDefaultCallback(bool synchronous=true);
 
 // Replace the log sink for all osgx::debug output (internal diagnostics, GL annotation
 // mirrors, driver messages). The default writes to osg::notify(NOTICE).
-inline void setSink(std::function<void(std::string_view)> sink) {
-	detail::_sink = std::move(sink);
-}
+void setSink(std::function<void(std::string_view)> sink);
 
-inline void enableDebugOutput(bool synchronous=true) {
-	detail::enableDebugOutput(synchronous);
-}
+void enableDebugOutput(bool synchronous=true);
+void disableDebugOutput();
 
-inline void disableDebugOutput() {
-	detail::disableDebugOutput();
-}
-
-inline void messageControl(
+void messageControl(
 	Source source,
 	Type type,
 	Severity severity,
 	bool enabled,
 	GLsizei count,
 	const GLuint* ids=nullptr
-) {
-	detail::messageControl(
-		static_cast<std::underlying_type_t<Source>>(source),
-		static_cast<std::underlying_type_t<Type>>(type),
-		static_cast<std::underlying_type_t<Severity>>(severity),
-		enabled,
-		count,
-		ids
-	);
-}
+);
 
-inline void messageControl(Source source, Type type, Severity severity, bool enabled) {
-	messageControl(source, type, severity, enabled, 0, nullptr);
-}
+void messageControl(Source source, Type type, Severity severity, bool enabled);
 
 // TODO: Add a check for whether we're already initialized.
-inline void initialize(osg::GraphicsContext* gc) {
-	if(osg::isGLExtensionSupported(gc->getState()->getContextID(), "GL_KHR_debug")) {
-		detail::setupFunction("glPushDebugGroup", &detail::_pushGroup);
-		detail::setupFunction("glPopDebugGroup", &detail::_popGroup);
-		detail::setupFunction("glDebugMessageInsert", &detail::_messageInsert);
-		detail::setupFunction("glDebugMessageCallback", &detail::_messageCallback);
-		detail::setupFunction("glDebugMessageControl", &detail::_messageControl);
-	}
-}
-
-inline void deinitialize(bool disableOutput=true) {
-	clearCallback();
-
-	if(disableOutput && detail::_messageCallback) disableDebugOutput();
-
-	detail::_pushGroup = nullptr;
-	detail::_popGroup = nullptr;
-	detail::_messageInsert = nullptr;
-	detail::_messageCallback = nullptr;
-	detail::_messageControl = nullptr;
-}
+void initialize(osg::GraphicsContext* gc);
+void deinitialize(bool disableOutput=true);
 
 // Annotations are camera-scoped: a PRE_DRAW/FINAL_DRAW pair brackets everything that camera
 // renders. Sub-groups within a single camera's scene graph cannot be individually annotated this
@@ -642,35 +378,8 @@ public:
 	_message(message),
 	_measureTime(measureTime) {}
 
-	void begin() {
-		_active = detail::_pushGroup != nullptr;
-
-		if(_active) pushGroup(_source, _id, _message);
-
-		if(_measureTime) _start = osg::Timer::instance()->tick();
-	}
-
-	void end() {
-		if(!_active) return;
-
-		if(_measureTime) {
-			auto stop = osg::Timer::instance()->tick();
-			auto dt = stop - _start;
-			// TODO: This is more correct?
-			// auto dt = osg::Timer::instance()->delta_u(_start, stop);
-
-			messageInsert(
-				Type::PERFORMANCE,
-				_id,
-				Severity::NOTIFICATION,
-				_message + " took " + std::to_string(dt) + "us"
-			);
-		}
-
-		popGroup();
-
-		_active = false;
-	}
+	void begin();
+	void end();
 
 private:
 	GLuint _id;
@@ -715,81 +424,17 @@ enum class CameraDrawCallbackSlot {
 };
 
 namespace detail {
-	inline osg::Camera::DrawCallback* getCameraDrawCallback(
-		osg::Camera* camera,
-		CameraDrawCallbackSlot slot
-	) {
-		switch(slot) {
-			case CameraDrawCallbackSlot::PRE_DRAW: return camera->getPreDrawCallback();
-			case CameraDrawCallbackSlot::POST_DRAW: return camera->getPostDrawCallback();
-			case CameraDrawCallbackSlot::FINAL_DRAW: return camera->getFinalDrawCallback();
-		}
+	osg::Camera::DrawCallback* getCameraDrawCallback(osg::Camera* camera, CameraDrawCallbackSlot slot);
 
-		return nullptr;
-	}
-
-	inline void setCameraDrawCallback(
+	void setCameraDrawCallback(
 		osg::Camera* camera,
 		CameraDrawCallbackSlot slot,
 		osg::Camera::DrawCallback* cb
-	) {
-		switch(slot) {
-			case CameraDrawCallbackSlot::PRE_DRAW:
-				camera->setPreDrawCallback(cb); break;
-
-			case CameraDrawCallbackSlot::POST_DRAW:
-				camera->setPostDrawCallback(cb); break;
-
-			case CameraDrawCallbackSlot::FINAL_DRAW:
-				camera->setFinalDrawCallback(cb); break;
-		}
-	}
-}
-
-inline void appendCameraDrawCallback(
-	osg::Camera* camera,
-	CameraDrawCallbackSlot slot,
-	osg::Camera::DrawCallback* cb
-) {
-	auto* existing = detail::getCameraDrawCallback(camera, slot);
-
-	if(!existing) {
-		detail::setCameraDrawCallback(camera, slot, cb);
-
-		return;
-	}
-
-	if(auto* group = dynamic_cast<osgx::CameraDrawCallbacksGroup*>(existing)) {
-		group->add(cb);
-
-		return;
-	}
-
-	detail::setCameraDrawCallback(
-		camera,
-		slot,
-		new osgx::CameraDrawCallbacksGroup({existing, cb})
 	);
 }
 
-inline void prependCameraDrawCallback(
-	osg::Camera* camera,
-	CameraDrawCallbackSlot slot,
-	osg::Camera::DrawCallback* cb
-) {
-	auto* existing = detail::getCameraDrawCallback(camera, slot);
-
-	if(!existing) {
-		detail::setCameraDrawCallback(camera, slot, cb);
-		return;
-	}
-
-	detail::setCameraDrawCallback(
-		camera,
-		slot,
-		new osgx::CameraDrawCallbacksGroup({cb, existing})
-	);
-}
+void appendCameraDrawCallback(osg::Camera* camera, CameraDrawCallbackSlot slot, osg::Camera::DrawCallback* cb);
+void prependCameraDrawCallback(osg::Camera* camera, CameraDrawCallbackSlot slot, osg::Camera::DrawCallback* cb);
 
 // Fires AnnotationGroup::begin() from a camera draw slot (GL context current).
 class AnnotationBeginCallback: public osg::Camera::DrawCallback {
@@ -851,6 +496,19 @@ private:
 // appendCameraDrawCallback(cam, FINAL_DRAW, new osgx::debug::ProfilerFinalCallback());
 enum class QueryMode { SYNC, ASYNC };
 
+namespace detail {
+	// A drawable reachable through more than one camera/parent path (e.g. the same model
+	// attached under both a ShadowCam and a G-Buffer camera) shares ONE osg::Drawable
+	// instance and therefore one ProfilerCallback -- there is physically only one _name
+	// slot to overwrite no matter how many parents reference it. The fix is to fold in
+	// *which camera is actually rendering right now*, read at the point of use (draw time
+	// via RenderInfo::getCurrentCamera(), cull time via CullVisitor::getCurrentCamera()),
+	// rather than trying to store multiple paths per drawable. `camera` may be null (e.g.
+	// no current camera on the RenderInfo/CullVisitor stack), in which case `name` is
+	// returned unchanged.
+	std::string cameraQualifiedPath(const osg::Camera* camera, const std::string& name);
+}
+
 class ProfilerCallbackBase: public osg::Drawable::DrawCallback {
 public:
 	virtual void setProfilerName(const std::string& name) = 0;
@@ -887,10 +545,26 @@ public:
 
 	virtual void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* drawable) const override {
 		auto* ext = ri.getState()->get<osg::GLExtensions>();
-		const auto& path = _name.empty() ? drawable->getName() : _name;
+		const auto& leafName = _name.empty() ? drawable->getName() : _name;
+		const auto path = detail::cameraQualifiedPath(ri.getCurrentCamera(), leafName);
 		const auto contextID = ri.getState()->getContextID();
 
 		const auto start = osg::Timer::instance()->tick();
+
+		// TODO: temporary diagnostic for the osgEarth REX investigation -- remove once
+		// resolved. Proves whether drawImplementation() ever actually fires for a
+		// profiled drawable at all, and whether GL_TIMESTAMP queries are available in
+		// this context, independent of whether any data ever reaches the ImGui table.
+		static bool loggedDrawOnce = false;
+
+		if(!loggedDrawOnce) {
+			loggedDrawOnce = true;
+
+			detail::notify(
+				"osgx::debug::ProfilerCallback | drawImplementation FIRED for ", path,
+				" hasTimerQuery=", (ext && ext->glQueryCounter ? "true" : "false")
+			);
+		}
 
 		Scoped scoped(0, path);
 
@@ -933,41 +607,7 @@ public:
 	void setProfilerName(const std::string& name) override { _name = name; }
 	const std::string& getProfilerName() const override { return _name; }
 
-	bool cull(osg::NodeVisitor* nv, osg::Drawable* drawable, osg::RenderInfo* ri) const override {
-		const auto frameNum = nv && nv->getFrameStamp()
-			? nv->getFrameStamp()->getFrameNumber()
-			: 0u
-		;
-
-		const auto contextID = ri && ri->getState()
-			? ri->getState()->getContextID()
-			: 0u
-		;
-
-		const auto& path = _name.empty() && drawable ? drawable->getName() : _name;
-		bool callbackCulled = false;
-
-		if(_cb.valid()) {
-			if(auto* dcb = _cb->asDrawableCullCallback()) {
-				callbackCulled = dcb->cull(nv, drawable, ri);
-			}
-
-			else _cb->run(drawable, nv);
-		}
-
-		auto* cv = nv ? nv->asCullVisitor() : nullptr;
-		const bool boundsCulled = drawable && cv && drawable->isCullingActive()
-			&& cv->isCulled(drawable->getBoundingBox())
-		;
-
-		detail::_accumulators[contextID].markCull(
-			path,
-			(callbackCulled || boundsCulled) ? CullState::CULLED : CullState::VISIBLE,
-			frameNum
-		);
-
-		return callbackCulled;
-	}
+	bool cull(osg::NodeVisitor* nv, osg::Drawable* drawable, osg::RenderInfo* ri) const override;
 
 private:
 	std::string _name;
@@ -1110,19 +750,7 @@ class FrameByFrameViewer: public osgViewer::Viewer {
 public:
 	class EventHandler: public osgGA::GUIEventHandler {
 	public:
-		bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
-			auto* viewer = dynamic_cast<FrameByFrameViewer*>(&aa);
-
-			if(viewer && ea.getEventType() == osgGA::GUIEventAdapter::KEYUP) {
-				if(ea.getKey() == 'n') {
-					viewer->requestRender();
-
-					return true;
-				}
-			}
-
-			return false;
-		}
+		bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override;
 	};
 
 	FrameByFrameViewer():
@@ -1134,108 +762,11 @@ public:
 		_render.store(true, std::memory_order_release);
 	}
 
-	int run() override {
-		while(!done()) {
-			_ensureInitialized();
-			_installAnnotationCallbacks();
-
-			advance();
-			eventTraversal();
-
-			if(_render.load(std::memory_order_acquire)) {
-				_count++;
-
-				getFrameStamp()->setFrameNumber(_count);
-
-				double wallTime = osg::Timer::instance()->delta_s(
-					_startTick,
-					osg::Timer::instance()->tick()
-				);
-
-				detail::notify(
-					"osgx::debug::FrameByFrameViewer | render #", _count,
-					" @", wallTime, "s"
-				);
-
-				auto [_ut, ut] = osgx::call([this]() { updateTraversal(); });
-
-				detail::notify("osgx::debug::FrameByFrameViewer | Update took ", ut, "us");
-
-				// Below are exactly what the typical `osgViewer::Viewer::renderingTraversals()`
-				// method does.
-				//
-				// - Calculate frame time/number.
-				// - Collect stats (if enabled).
-				// - Iterate over getScenes().
-				//   - Call scene.DatabasePager.signalBeginFrame().
-				//   - Call scene.ImagePager.signalBeginFrame().
-				//   - Compute bounds of scene.
-				// - Iterate over getCameras().
-				//   - Call camera.getRenderer().cull().
-				// - Iterate over getContexts(), defined in subclass (Viewer/CompositeViewer).
-				//   - Make context thread active.
-				//   - Call context.runOperations().
-				//     - Iterate over all context cameras.
-				//       - Call camera.getRenderer()(context).
-				//         - osgViewer::Renderer calls either cull_draw() or draw(), FINALLY
-				//           leading to our Drawable! The order of function call is:
-				//             - SceneView::draw()
-				//             - RenderBin::draw()
-				// - Iterate over getContexts().
-				//   - Make context thread active.
-				//   - Call context.swapBuffers().
-				// - Iterate over getScenes().
-				//   - Call scene.DatabasePager.signalEndFrame().
-				//   - Call scene.ImagePager.signalEndFrame().
-				// - Update stats (if enabled).
-				renderingTraversals();
-
-				_render.store(false, std::memory_order_release);
-			}
-
-			OpenThreads::Thread::microSleep(_POLL_INTERVAL_US);
-		}
-
-		return 0;
-	}
+	int run() override;
 
 private:
-	void _ensureInitialized() {
-		if(_firstFrame) {
-			viewerInit();
-
-			if(!isRealized()) realize();
-
-			_firstFrame = false;
-		}
-	}
-
-	void _installAnnotationCallbacks() {
-		if(_annotationCallbacksInstalled) return;
-
-		auto* camera = getCamera();
-
-		auto frameAnnotation = osgx::make_ref<AnnotationGroup>(
-			0u,
-			"Frame",
-			Source::APPLICATION,
-			true
-		);
-
-		appendCameraDrawCallback(
-			camera,
-			CameraDrawCallbackSlot::PRE_DRAW,
-			new AnnotationBeginCallback(frameAnnotation)
-		);
-
-		appendCameraDrawCallback(
-			camera,
-			CameraDrawCallbackSlot::FINAL_DRAW,
-			new AnnotationEndCallback(frameAnnotation)
-		);
-
-		_annotationCallbacksInstalled = true;
-	}
+	void _ensureInitialized();
+	void _installAnnotationCallbacks();
 
 	static constexpr unsigned int _POLL_INTERVAL_US = 100000;
 
