@@ -286,6 +286,85 @@ inline SharedBRDFLUT sharedBRDFLUT(int lutSize) {
 	return {texture, camera};
 }
 
+// A CPU-readback companion for makeBRDFLUTCamera()/sharedBRDFLUT(), exactly like
+// GGXPrefilterReadback/LambertianCubeReadback but simpler: the LUT bakes in exactly one PRE_RENDER
+// pass (gated by its own RunOnceCallback), so this only needs a frame-count trigger, not an
+// external completion signal. Exists purely for the offline serialize-to-KTX2 use case --
+// sharedBRDFLUT()'s live consumers never construct one of these.
+//
+// The result is a bare osg::Image, not a Texture2D: the KTX2 writer plugin has no Texture2D
+// support at all (only TextureCubeMap and osg::Image -- see plugins/ktx2/ReaderWriterKTX2.cpp), so
+// there is nothing gained by wrapping this back into a texture before writing it out.
+class BRDFLUTReadback: public osg::Camera::DrawCallback {
+public:
+	BRDFLUTReadback(osg::Texture2D* srcTex, int triggerFrame=1, bool sync=true):
+	_srcTex(srcTex),
+	_triggerFrame(triggerFrame),
+	_sync(sync) {}
+
+	void operator()(osg::RenderInfo& ri) const override {
+		if(_done) return;
+
+		_frameCount++;
+
+		if(_frameCount < _triggerFrame) return;
+		if(!_srcTex) return;
+
+		auto* texObj = _srcTex->getTextureObject(ri.getContextID());
+
+		if(!texObj) {
+			OSG_WARN << "osgx::ibl: BRDF LUT not on GPU yet; retrying next frame" << std::endl;
+
+			return;
+		}
+
+		if(_sync) glFinish();
+
+		texObj->bind();
+
+		_result = new osg::Image();
+
+		// The LUT's FBO internal format is GL_RGBA (see makeBRDFLUTCamera()) -- an unsized token
+		// that resolves to 8-bit UNORM per channel, matching the [0,1]-ranged Fresnel scale/bias
+		// values the shader writes. Read back as GL_UNSIGNED_BYTE to match; no mip chain exists.
+		_result->readImageFromCurrentTexture(ri.getContextID(), false, GL_UNSIGNED_BYTE);
+
+		_done = true;
+	}
+
+	bool isDone() const { return _done; }
+	osg::Image* getResult() const { return _result; }
+
+private:
+	osg::ref_ptr<osg::Texture2D> _srcTex;
+	int _triggerFrame;
+	bool _sync;
+	mutable int _frameCount = 0;
+	mutable osg::ref_ptr<osg::Image> _result;
+	mutable bool _done = false;
+};
+
+// Reads all six faces of `srcTex` (already bound by the caller) back from the GPU into CPU-side
+// osg::Image data on `result`, so it becomes writable by the KTX2 plugin (which reads per-face
+// `getImage()` data -- see plugins/ktx2/ReaderWriterKTX2.cpp -- not a live GL texture). Shared by
+// every cubemap readback callback (GGXPrefilterReadback, LambertianCubeReadback); each keeps its
+// own trigger condition (frame-count heuristic vs. an exact BakeCompletion signal), since that part
+// genuinely differs and isn't worth unifying behind a virtual hook.
+inline void readCubeMapFaces(
+	unsigned int contextID,
+	GLenum type,
+	bool copyMipMapsIfAvailable,
+	osg::TextureCubeMap* result
+) {
+	for(int face = 0; face < 6; face++) {
+		auto* img = new osg::Image();
+
+		img->readImageFromCurrentTexture(contextID, copyMipMapsIfAvailable, type, static_cast<unsigned int>(face));
+
+		result->setImage(static_cast<unsigned int>(face), img);
+	}
+}
+
 // ------------------------------------------------------------------------------------------------
 // SH-9 diffuse irradiance
 //

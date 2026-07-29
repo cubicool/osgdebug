@@ -296,18 +296,7 @@ void GGXPrefilterReadback::operator()(osg::RenderInfo& ri) const {
 
 	texObj->bind();
 
-	for(int face = 0; face < 6; face++) {
-		auto* img = new osg::Image();
-
-		img->readImageFromCurrentTexture(
-			ri.getContextID(),
-			true,
-			GL_HALF_FLOAT,
-			static_cast<unsigned int>(face)
-		);
-
-		result->setImage(static_cast<unsigned int>(face), img);
-	}
+	readCubeMapFaces(ri.getContextID(), GL_HALF_FLOAT, true, result);
 
 	done = true;
 }

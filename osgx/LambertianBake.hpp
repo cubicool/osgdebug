@@ -44,4 +44,33 @@ bool rebakeLambertianBakeScene(
 	osg::Image* equirectangularHDR
 );
 
+// A CPU-readback companion for LambertianBakeScene, mirroring GGXPrefilterReadback (see
+// GGXPrefilter.hpp) -- exists purely for the offline serialize-to-KTX2 use case. Attach to a
+// viewer's OUTER camera (not any of the six face cameras inside LambertianBakeScene::root), the
+// same way osggltf-iblbake-gpu attaches GGXPrefilterReadback to viewer.getCamera(). Interactive/
+// dynamic-probe consumers of createLambertianBakeScene() never construct one of these, so they
+// never pay for the glFinish-gated readback below -- LambertianBakeScene::completion alone is
+// enough for them. Triggers off that exact completion signal rather than a frame-count heuristic,
+// since one is already available here (GGX has no equivalent, hence its own trigger style).
+class LambertianCubeReadback: public osg::Camera::DrawCallback {
+public:
+	LambertianCubeReadback(osg::TextureCubeMap* srcTex, BakeCompletion* completion, bool sync=true);
+
+	void operator()(osg::RenderInfo& ri) const override;
+
+	bool isDone() const { return _done; }
+	osg::TextureCubeMap* getResult() const { return _result; }
+
+private:
+	osg::ref_ptr<osg::TextureCubeMap> _srcTex;
+	osg::ref_ptr<BakeCompletion> _completion;
+	bool _sync;
+	mutable osg::ref_ptr<osg::TextureCubeMap> _result;
+	mutable bool _done = false;
+};
+
+// Returns the finished, CPU-readable cubemap once `readback` reports done (nullptr otherwise),
+// with filter/wrap state set for normal sampling -- mirrors finishGGXPrefilter()'s contract.
+osg::ref_ptr<osg::TextureCubeMap> finishLambertianCubeReadback(LambertianCubeReadback* readback);
+
 }

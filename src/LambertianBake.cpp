@@ -8,6 +8,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Geometry>
 #include <osg/GL>
 #include <osg/Group>
+#include <osg/Notify>
 #include <osg/Program>
 #include <osg/Shader>
 #include <osg/StateSet>
@@ -244,6 +245,54 @@ bool rebakeLambertianBakeScene(
 	rearmRunOnceCallbacks(scene.root);
 
 	return true;
+}
+
+LambertianCubeReadback::LambertianCubeReadback(
+	osg::TextureCubeMap* srcTex,
+	BakeCompletion* completion,
+	bool sync
+):
+_srcTex(srcTex),
+_completion(completion),
+_sync(sync) {
+	_result = new osg::TextureCubeMap();
+}
+
+void LambertianCubeReadback::operator()(osg::RenderInfo& ri) const {
+	if(_done) return;
+	if(!_completion || !_completion->done()) return;
+	if(!_srcTex) return;
+
+	auto* texObj = _srcTex->getTextureObject(ri.getContextID());
+
+	if(!texObj) {
+		OSG_WARN << "osgx::ibl: Lambertian cubemap not on GPU yet; retrying next frame" << std::endl;
+
+		return;
+	}
+
+	if(_sync) glFinish();
+
+	texObj->bind();
+
+	readCubeMapFaces(ri.getContextID(), GL_HALF_FLOAT, false, _result);
+
+	_done = true;
+}
+
+osg::ref_ptr<osg::TextureCubeMap> finishLambertianCubeReadback(LambertianCubeReadback* readback) {
+	if(!readback || !readback->isDone()) return nullptr;
+
+	osg::TextureCubeMap* result = readback->getResult();
+
+	result->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+	result->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	result->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	result->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+	result->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+	result->setUseHardwareMipMapGeneration(false);
+
+	return result;
 }
 
 }
