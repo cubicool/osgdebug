@@ -103,7 +103,11 @@ add_library(osgx
 	src/CaptureCubeMap.cpp
 	src/Debug.cpp
 	src/GGXPrefilter.cpp
+	src/Grid.cpp
+	src/IBL.cpp
 	src/LambertianBake.cpp
+	src/Manipulators.cpp
+	src/Picking.cpp
 )
 add_library(osgx::osgx ALIAS osgx)
 
