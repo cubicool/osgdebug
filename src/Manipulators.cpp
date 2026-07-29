@@ -339,4 +339,144 @@ bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActi
 	}
 }
 
+// Eye position, cylindrical around the guide line: x = axis.x + distance*sin(yaw),
+// z = axis.z + distance*cos(yaw), y = height. Look-at target is the guide line at the SAME
+// height as the eye, so the view direction always stays horizontal (never pitches).
+osg::Matrixd OrbitAxisManipulator::getInverseMatrix() const {
+	double s = std::sin(_yaw);
+	double c = std::cos(_yaw);
+
+	osg::Vec3d eye(_axis.x() + _distance * s, _height, _axis.z() + _distance * c);
+	osg::Vec3d center(_axis.x(), _height, _axis.z());
+	osg::Vec3d up(0.0, 1.0, 0.0);
+
+	return osg::Matrixd::lookAt(eye, center, up);
+}
+
+osg::Matrixd OrbitAxisManipulator::getMatrix() const {
+	return osg::Matrixd::inverse(getInverseMatrix());
+}
+
+// Camera-to-world: derive yaw/height/distance from the eye position, keeping the guide line
+// (_axis/_groundY/_topY) as already established by setNode()/home().
+void OrbitAxisManipulator::setByMatrix(const osg::Matrixd& m) {
+	osg::Vec3d eye = m.getTrans();
+
+	double dx = eye.x() - _axis.x();
+	double dz = eye.z() - _axis.z();
+
+	_distance = std::sqrt(dx * dx + dz * dz);
+	_yaw = std::atan2(dx, dz);
+	_height = std::clamp(eye.y(), _groundY, _topY);
+}
+
+void OrbitAxisManipulator::setByInverseMatrix(const osg::Matrixd& m) {
+	setByMatrix(osg::Matrixd::inverse(m));
+}
+
+// Recompute the distance clamp from the camera's current vertical FOV and the model's vertical
+// extent, then clamp _distance to it. Leaves the projection matrix untouched -- the caller owns
+// FOV/near/far.
+void OrbitAxisManipulator::updateCamera(osg::Camera& cam) {
+	double fovy, aspect, zNear, zFar;
+
+	if(cam.getProjectionMatrix().getPerspective(fovy, aspect, zNear, zFar)) {
+		double modelHeight = _topY - _groundY;
+		double tanHalfFovy = std::tan(osg::DegreesToRadians(fovy) * 0.5);
+
+		if(modelHeight > 0.0 && tanHalfFovy > 0.0) {
+			// coverage = modelHeight / (2 * distance * tanHalfFovy) => distance = modelHeight / (2 * coverage * tanHalfFovy)
+			_minDistance = modelHeight / (2.0 * _maxCoverage * tanHalfFovy);
+			_maxDistance = modelHeight / (2.0 * _minCoverage * tanHalfFovy);
+		}
+	}
+
+	_distance = std::clamp(_distance, _minDistance, _maxDistance);
+
+	cam.setViewMatrix(getInverseMatrix());
+}
+
+void OrbitAxisManipulator::home(const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter& aa) {
+	_yaw = 0.0;
+
+	if(_node.valid()) {
+		auto bs = _node->getBound();
+
+		_axis = osg::Vec3d(bs.center().x(), 0.0, bs.center().z());
+		_groundY = bs.center().y() - bs.radius();
+		_topY = bs.center().y() + bs.radius();
+		_height = bs.center().y();
+		_distance = (bs.radius() > 0.0) ? bs.radius() * 3.0 : 3.0;
+	}
+
+	else {
+		_axis.set(0.0, 0.0, 0.0);
+		_groundY = -1.0;
+		_topY = 1.0;
+		_height = 0.0;
+		_distance = 3.0;
+	}
+
+	aa.requestRedraw();
+}
+
+// Always active: MOVE and DRAG are handled identically, with no button gate. The first event
+// after construction (or after home()) just seeds _lastX/_lastY so we don't apply a spurious
+// jump on the initial mouse position.
+void OrbitAxisManipulator::_orbit(double nx, double ny) {
+	if(!_initialized) {
+		_lastX = nx;
+		_lastY = ny;
+		_initialized = true;
+
+		return;
+	}
+
+	double dx = nx - _lastX;
+	double dy = ny - _lastY;
+
+	_lastX = nx;
+	_lastY = ny;
+
+	_yaw -= dx * _yawSensitivity;
+	_height += dy * _heightSensitivity * (_topY - _groundY);
+	_height = std::clamp(_height, _groundY, _topY);
+}
+
+bool OrbitAxisManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) {
+	switch(ea.getEventType()) {
+	case osgGA::GUIEventAdapter::MOVE:
+	case osgGA::GUIEventAdapter::DRAG:
+		_orbit(ea.getXnormalized(), ea.getYnormalized());
+		aa.requestRedraw();
+
+		return false;
+
+	case osgGA::GUIEventAdapter::SCROLL: {
+		bool up = (ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP);
+
+		_distance *= up ? (1.0 / _wheelZoomFactor) : _wheelZoomFactor;
+		_distance = std::clamp(_distance, _minDistance, _maxDistance);
+
+		aa.requestRedraw();
+
+		return true;
+	}
+
+	case osgGA::GUIEventAdapter::KEYDOWN:
+		if(
+			ea.getKey() == osgGA::GUIEventAdapter::KEY_Space ||
+			ea.getKey() == osgGA::GUIEventAdapter::KEY_Home
+		) {
+			home(ea, aa);
+			return true;
+		}
+
+		return false;
+
+	default:
+		return false;
+	}
+}
+
 }

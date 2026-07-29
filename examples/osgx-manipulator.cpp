@@ -1,9 +1,10 @@
 // vimrun! ./examples/osgx-manipulator
 //
-// Demonstrates osgx::Ortho2DManipulator.
+// Demonstrates osgx::Ortho2DManipulator (default) and osgx::OrbitAxisManipulator ("orbit").
 //
 // With no arguments, renders a grid of colored boxes in the XY plane.
-// Pass a model path to load and inspect it instead.
+// Pass "orbit" to use OrbitAxisManipulator instead of Ortho2DManipulator.
+// Pass a model path (after "orbit", if present) to load and inspect it instead of the grid.
 
 #include "../osgx/Core.hpp"
 #include "../osgx/Manipulators.hpp"
@@ -22,6 +23,7 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <iostream>
+#include <string>
 
 static osg::ref_ptr<osg::Node> createDefaultScene() {
 	auto root = osgx::make_ref<osg::Group>();
@@ -61,13 +63,19 @@ static osg::ref_ptr<osg::Node> createDefaultScene() {
 int main(int argc, char** argv) {
 	osgViewer::Viewer viewer;
 
+	bool orbitMode = argc >= 2 && std::string(argv[1]) == "orbit";
+	const char* modelPath = orbitMode
+		? (argc >= 3 ? argv[2] : nullptr)
+		: (argc >= 2 ? argv[1] : nullptr)
+	;
+
 	osg::ref_ptr<osg::Node> scene;
 
-	if(argc >= 2) {
-		scene = osgDB::readRefNodeFile(argv[1]);
+	if(modelPath) {
+		scene = osgDB::readRefNodeFile(modelPath);
 
 		if(!scene) {
-			std::cerr << "Failed to load: " << argv[1] << std::endl;
+			std::cerr << "Failed to load: " << modelPath << std::endl;
 
 			return 1;
 		}
@@ -75,22 +83,38 @@ int main(int argc, char** argv) {
 
 	else scene = createDefaultScene();
 
-	auto manip = osgx::make_ref<osgx::Ortho2DManipulator>();
-
-	// manip->setPixelNudge(0.5);
-
 	viewer.setSceneData(scene);
-	viewer.setCameraManipulator(manip);
 	viewer.addEventHandler(new osgViewer::StatsHandler());
 
-	std::cout
-		<< "Ortho2DManipulator" << std::endl
-		<< " Left drag pan" << std::endl
-		<< " Scroll geometric zoom" << std::endl
-		<< " Shift+Scroll pixel-nudge zoom (8px/click)" << std::endl
-		<< " Ctrl+Left drag 3D pitch/yaw" << std::endl
-		<< " Space/Home reset view" << std::endl
-	;
+	if(orbitMode) {
+		auto manip = osgx::make_ref<osgx::OrbitAxisManipulator>();
+
+		viewer.setCameraManipulator(manip);
+
+		std::cout
+			<< "OrbitAxisManipulator" << std::endl
+			<< " Mouse move/drag orbit (X) + height (Y), always active" << std::endl
+			<< " Scroll dolly zoom (clamped to model coverage)" << std::endl
+			<< " Space/Home reset view" << std::endl
+		;
+	}
+
+	else {
+		auto manip = osgx::make_ref<osgx::Ortho2DManipulator>();
+
+		// manip->setPixelNudge(0.5);
+
+		viewer.setCameraManipulator(manip);
+
+		std::cout
+			<< "Ortho2DManipulator" << std::endl
+			<< " Left drag pan" << std::endl
+			<< " Scroll geometric zoom" << std::endl
+			<< " Shift+Scroll pixel-nudge zoom (8px/click)" << std::endl
+			<< " Ctrl+Left drag 3D pitch/yaw" << std::endl
+			<< " Space/Home reset view" << std::endl
+		;
+	}
 
 	return viewer.run();
 }

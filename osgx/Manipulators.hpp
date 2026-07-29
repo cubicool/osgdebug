@@ -6,6 +6,7 @@ OSGX_DISABLE_WARNINGS
 
 #include <osg/Camera>
 #include <osg/CullSettings>
+#include <osg/Math>
 #include <osg/Matrix>
 #include <osg/observer_ptr>
 #include <osgGA/CameraManipulator>
@@ -194,6 +195,127 @@ private:
 	osg::ref_ptr<osg::Node> _node;
 
 	bool _dragging{false};
+	double _lastX{0.0};
+	double _lastY{0.0};
+};
+
+// ================================================================================================
+// OrbitAxisManipulator
+//
+// "Turntable" camera manipulator for model-viewer-style presentation (see: the Batman Arkham
+// series' character/suit viewer). The camera orbits a fixed vertical guide line through the
+// model's bounds, always looking level (never pitching up/down) at whatever height it's currently
+// at, and dollies toward/away from that line on zoom. The model itself never moves or scales.
+//
+// Controls:
+//
+// Mouse move/drag (no button required) orbit (X) + height (Y), always active
+// Scroll dolly zoom, clamped by viewport-coverage fraction (see below)
+// Space / Home reset to home
+//
+// State is cylindrical: yaw around the guide line, height along it (clamped to the bound's
+// vertical extent -- never below "ground", never above the top), and distance from it (clamped
+// so the model can't be zoomed past ~50% visible or zoomed out past a ~5% viewport margin, in
+// terms of the camera's current vertical FOV -- see updateCamera()).
+//
+// The manipulator does NOT own the projection matrix (unlike Ortho2DManipulator) -- it reads the
+// camera's existing perspective FOV each frame to recompute the distance clamp, but leaves
+// near/far/FOV to the caller.
+//
+// v1 tracks raw mouse position deltas (bounded by the window edges, like a trackpad) rather than
+// true relative/captured motion -- no cursor hide or pointer warp/confine. That's real OS-specific
+// plumbing (X11 XGrabPointer/XWarpPointer and friends); see TODO.md for the planned move of the
+// existing pyosg/linux platform helpers into osgx before adding it here.
+//
+// TODO: add optional "gate action X behind button Y" modes (e.g. require LEFT_MOUSE_BUTTON held
+// for orbit/height) once the always-active feel is validated -- deliberately left out for now.
+// ================================================================================================
+class OrbitAxisManipulator: public osgGA::CameraManipulator {
+public:
+	OSGX_META_Object(osgx, OrbitAxisManipulator)
+
+	OrbitAxisManipulator() = default;
+
+	OSGX_DISABLE_WARNINGS
+
+		OrbitAxisManipulator(
+			const OrbitAxisManipulator& m,
+			const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY
+		):
+		osgGA::CameraManipulator(m, co),
+		_axis(m._axis),
+		_groundY(m._groundY),
+		_topY(m._topY),
+		_height(m._height),
+		_yaw(m._yaw),
+		_distance(m._distance),
+		_minDistance(m._minDistance),
+		_maxDistance(m._maxDistance),
+		_minCoverage(m._minCoverage),
+		_maxCoverage(m._maxCoverage),
+		_yawSensitivity(m._yawSensitivity),
+		_heightSensitivity(m._heightSensitivity),
+		_wheelZoomFactor(m._wheelZoomFactor),
+		_node(m._node) {}
+
+	OSGX_ENABLE_WARNINGS
+
+	// Config
+	void setYawSensitivity(double s) { _yawSensitivity = s; }
+	void setHeightSensitivity(double s) { _heightSensitivity = s; }
+	void setWheelZoomFactor(double f) { _wheelZoomFactor = f; }
+
+	// minCoverage/maxCoverage are fractions of the viewport's vertical extent that the model's
+	// bound should occupy at the zoomed-out/zoomed-in extremes, respectively (e.g. 0.95 = 5%
+	// margin top/bottom when zoomed out; 2.0 = model is 2x viewport height, ~50% visible, when
+	// zoomed in).
+	void setCoverageLimits(double minCoverage, double maxCoverage) {
+		_minCoverage = minCoverage;
+		_maxCoverage = maxCoverage;
+	}
+
+	// State
+	double getYaw() const { return _yaw; }
+	double getHeight() const { return _height; }
+	double getDistance() const { return _distance; }
+
+	// CameraManipulator interface
+	void setNode(osg::Node* node) override { _node = node; }
+	const osg::Node* getNode() const override { return _node.get(); }
+	osg::Node* getNode() override { return _node.get(); }
+
+	void setByMatrix(const osg::Matrixd& m) override;
+	void setByInverseMatrix(const osg::Matrixd& m) override;
+	osg::Matrixd getMatrix() const override;
+	osg::Matrixd getInverseMatrix() const override;
+
+	// Leaves the projection matrix untouched; only recomputes the distance clamp (from the
+	// camera's current vertical FOV and the model's bound) and sets the view matrix.
+	void updateCamera(osg::Camera& cam) override;
+
+	void home(const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter& aa) override;
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override;
+
+private:
+	void _orbit(double nx, double ny);
+
+	osg::Vec3d _axis{0.0, 0.0, 0.0}; // guide line: x/z fixed, y spans [_groundY, _topY]
+	double _groundY{0.0};
+	double _topY{1.0};
+	double _height{0.5};
+	double _yaw{0.0};
+	double _distance{1.0};
+	double _minDistance{1e-4};
+	double _maxDistance{1e6};
+	double _minCoverage{0.95};
+	double _maxCoverage{2.0};
+	double _yawSensitivity{osg::PI};
+	double _heightSensitivity{0.5};
+	double _wheelZoomFactor{1.15};
+
+	osg::ref_ptr<osg::Node> _node;
+
+	bool _initialized{false};
 	double _lastX{0.0};
 	double _lastY{0.0};
 };
