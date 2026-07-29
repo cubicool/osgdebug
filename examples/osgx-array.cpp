@@ -1,6 +1,18 @@
 //vimrun! ./examples/osgx-array
 
-#include "../osgx.hpp"
+#include "../osgx/Array.hpp"
+#include "../osgx/Core.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/CopyOp>
+#include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/Vec2>
+#include <osgDB/ReadFile>
+#include <osgDB/WriteFile>
+
+OSGX_ENABLE_WARNINGS
 
 #include <cassert>
 #include <filesystem>

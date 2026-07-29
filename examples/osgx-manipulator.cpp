@@ -5,13 +5,18 @@
 // With no arguments, renders a grid of colored boxes in the XY plane.
 // Pass a model path to load and inspect it instead.
 
-#include "../osgx.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Manipulators.hpp"
 
 OSGX_DISABLE_WARNINGS
 
-#include <osg/ShapeDrawable>
+#include <osg/Geode>
+#include <osg/Group>
 #include <osg/MatrixTransform>
+#include <osg/Shape>
+#include <osg/ShapeDrawable>
 #include <osgDB/ReadFile>
+#include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
 OSGX_ENABLE_WARNINGS

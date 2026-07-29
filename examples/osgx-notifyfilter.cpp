@@ -1,8 +1,17 @@
-// vimrun! ./examples/osgdebug-callback
+// vimrun! ./examples/osgx-notifyfilter
 
-#include "../osgDebug.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Visitors.hpp"
 
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Geode>
 #include <osg/MatrixTransform>
+#include <osg/Shape>
+#include <osg/ShapeDrawable>
+#include <osgViewer/Viewer>
+
+OSGX_ENABLE_WARNINGS
 
 auto createSphere(osgx::vec_t radius, osgx::vec_t pSize=1.0) {
 	auto s = new osg::ShapeDrawable(new osg::Sphere(osg::Vec3(0.0, 0.0, 0.0), radius));
@@ -14,7 +23,7 @@ auto createSphere(osgx::vec_t radius, osgx::vec_t pSize=1.0) {
 		osg::StateAttribute::ON
 	); */
 
-	s->setName("SPHERE");
+	s->setName("ShapeDrawable");
 
 	return s;
 }
@@ -24,36 +33,32 @@ auto createSphereAt(const osg::Vec3& pos, osgx::vec_t radius, osgx::vec_t pSize=
 	auto g = new osg::Geode();
 
 	g->addDrawable(createSphere(radius, pSize));
+	g->setName("Geode");
 
 	m->addChild(g);
+	m->setName("MatrixTransform");
 
 	return m;
 }
 
 int main(int argc, char** argv) {
+	osg::setNotifyLevel(osg::DEBUG_FP);
+	osg::setNotifyHandler(new osgx::FilterNotifyHandler(
+		"^Done destructing osg::View",
+		R"(^DatabasePager::RequestQueue::~RequestQueue\(\) Destructing queue.)",
+		R"(^\s+Waiting for OperationThread to cancel 0x.*)"
+	));
+
 	osgViewer::Viewer viewer;
 
-	auto debugSupported = osgx::make_ref<osgDebug::GraphicsOperation>();
-
-	viewer.setRealizeOperation(debugSupported);
 	viewer.realize();
 
 	auto root = osgx::make_ref<osg::Geode>();
 	auto draw = createSphere(10.0);
 
-	draw->setDrawCallback(new osgDebug::ProfilerCallback());
-
 	root->addDrawable(draw);
 
 	viewer.setSceneData(root);
 
-	osgDebug::pushGroup(0, __FUNCTION__);
-
-	auto r = viewer.run();
-
-	osgDebug::popGroup();
-
-	// osgDB::writeNodeFile(*root, "tmp.osgt");
-
-	return r;
+	return viewer.run();
 }

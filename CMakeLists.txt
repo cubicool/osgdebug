@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 
-project(osgDebug)
+project(osgx VERSION 0.1.0)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -11,20 +11,20 @@ else()
 	set(OSGX_IS_TOP_LEVEL OFF)
 endif()
 
-option(OSGX_BUILD_EXAMPLES "Build the osgx and osgDebug examples" ${OSGX_IS_TOP_LEVEL})
-option(OSGX_BUILD_UTILS "Build the osgx and osgDebug utilities" ${OSGX_IS_TOP_LEVEL})
-option(OSGX_BUILD_PYTHON "Build the osgx and osgDebug Python modules" ${OSGX_IS_TOP_LEVEL})
-option(OSGX_INSTALL "Generate osgx and osgDebug installation rules" ${OSGX_IS_TOP_LEVEL})
+option(OSGX_BUILD_EXAMPLES "Build the osgx examples" ${OSGX_IS_TOP_LEVEL})
+option(OSGX_BUILD_UTILS "Build the osgx utilities" ${OSGX_IS_TOP_LEVEL})
+option(OSGX_BUILD_PYTHON "Build the osgx Python module" ${OSGX_IS_TOP_LEVEL})
+option(OSGX_INSTALL "Generate osgx installation rules" ${OSGX_IS_TOP_LEVEL})
 
 if(WIN32)
-	set(OSGDEBUG_WARNING_OPTIONS
+	set(OSGX_WARNING_OPTIONS
 		/W4
 		/WX
 		/wd4100
 		/analyze
 	)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-	set(OSGDEBUG_WARNING_OPTIONS
+	set(OSGX_WARNING_OPTIONS
 		-W
 		-Wall
 		-Wshadow
@@ -37,7 +37,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 		-Wno-unused-parameter
 	)
 else()
-	set(OSGDEBUG_WARNING_OPTIONS)
+	set(OSGX_WARNING_OPTIONS)
 endif()
 
 # add_subdirectory("OSG") # EXCLUDE_FROM_ALL)
@@ -55,18 +55,26 @@ find_package(OpenSceneGraph REQUIRED
 )
 find_package(OpenGL REQUIRED)
 
+configure_file(
+	"${CMAKE_CURRENT_SOURCE_DIR}/osgx/Version.hpp.in"
+	"${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp"
+	@ONLY
+)
+
 add_library(osgx_core INTERFACE)
 add_library(osgx::core ALIAS osgx_core)
 
 target_compile_features(osgx_core INTERFACE cxx_std_20)
 target_include_directories(osgx_core INTERFACE
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
 	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_INCLUDE_DIRS}>"
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(osgx_core INTERFACE "$<BUILD_INTERFACE:${OPENSCENEGRAPH_LIBRARIES}>")
 target_sources(osgx_core INTERFACE
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Warnings.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Core.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Array.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Callbacks.hpp>"
@@ -88,7 +96,7 @@ target_link_libraries(osgx
 	PRIVATE OpenGL::GL
 )
 target_sources(osgx PUBLIC
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/osgx.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Grid.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/IBL.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/CaptureCubeMap.hpp>"
@@ -97,24 +105,15 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Manipulators.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/PBR.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Picking.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Debug.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/ImGui.hpp>"
 )
 set_target_properties(osgx PROPERTIES
 	EXPORT_NAME osgx
 	POSITION_INDEPENDENT_CODE ON
 )
 
-target_compile_options(osgx PRIVATE ${OSGDEBUG_WARNING_OPTIONS})
-
-add_library(osgDebug INTERFACE)
-add_library(osgDebug::osgDebug ALIAS osgDebug)
-
-target_link_libraries(osgDebug INTERFACE osgx::osgx)
-target_sources(osgDebug INTERFACE
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgDebug.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgDebug/Debug.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgDebug/ImGui.hpp>"
-)
-set_target_properties(osgDebug PROPERTIES EXPORT_NAME osgDebug)
+target_compile_options(osgx PRIVATE ${OSGX_WARNING_OPTIONS})
 
 if(OSGX_INSTALL)
 	install(TARGETS osgx_core osgx EXPORT osgxTargets
@@ -125,7 +124,9 @@ if(OSGX_INSTALL)
 	install(DIRECTORY osgx/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
 		FILES_MATCHING PATTERN "*.hpp"
 	)
-	install(FILES osgx.hpp DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp"
+		DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
+	)
 	install(EXPORT osgxTargets
 		FILE osgxTargets.cmake
 		NAMESPACE osgx::
@@ -139,26 +140,6 @@ if(OSGX_INSTALL)
 	)
 	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/osgxConfig.cmake"
 		DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/osgx"
-	)
-
-	install(TARGETS osgDebug EXPORT osgDebugTargets)
-	install(DIRECTORY osgDebug/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgDebug"
-		FILES_MATCHING PATTERN "*.hpp"
-	)
-	install(FILES osgDebug.hpp DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-	install(EXPORT osgDebugTargets
-		FILE osgDebugTargets.cmake
-		NAMESPACE osgDebug::
-		DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/osgDebug"
-	)
-
-	configure_package_config_file(
-		"${CMAKE_CURRENT_SOURCE_DIR}/cmake/osgDebugConfig.cmake.in"
-		"${CMAKE_CURRENT_BINARY_DIR}/osgDebugConfig.cmake"
-		INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/osgDebug"
-	)
-	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/osgDebugConfig.cmake"
-		DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/osgDebug"
 	)
 
 	configure_file(
@@ -211,35 +192,23 @@ set(CMAKE_SHARED_LINKER_FLAGS_ASAN
 	"Linker lags to be used to create shared libraries for Asan build type." FORCE
 )
 
-function(OSGDEBUG_COMPILE_OPTIONS _target)
+function(OSGX_COMPILE_OPTIONS _target)
 	target_compile_features("${_target}" PUBLIC cxx_std_20)
 	target_link_libraries("${_target}" PUBLIC ${OPENSCENEGRAPH_LIBRARIES})
 	target_include_directories("${_target}" PUBLIC ${OPENSCENEGRAPH_INCLUDE_DIRS})
-	target_compile_options("${_target}" PRIVATE ${OSGDEBUG_WARNING_OPTIONS})
+	target_compile_options("${_target}" PRIVATE ${OSGX_WARNING_OPTIONS})
 endfunction()
 
-function(OSGDEBUG_ADD_EXECUTABLE _prefix_or_topic)
-	if(ARGC EQUAL 1)
-		set(_target "osgdebug-${_prefix_or_topic}")
-		set(_library osgDebug::osgDebug)
-	else()
-		set(_target "${_prefix_or_topic}-${ARGV1}")
-
-		if(_prefix_or_topic STREQUAL "osgx")
-			set(_library osgx::osgx)
-		else()
-			set(_library osgDebug::osgDebug)
-		endif()
-	endif()
+function(OSGX_ADD_EXECUTABLE _prefix _topic)
+	set(_target "${_prefix}-${_topic}")
 
 	add_executable("${_target}"
 		"${_target}.cpp"
-		"../osgx.hpp"
-		"../osgDebug.hpp"
+		"../osgx/osgx.hpp"
 	)
 
-	target_link_libraries("${_target}" PRIVATE "${_library}")
-	osgdebug_compile_options("${_target}")
+	target_link_libraries("${_target}" PRIVATE osgx::osgx)
+	osgx_compile_options("${_target}")
 	# Examples must exercise this checkout's public headers, not an older copy installed alongside
 	# OSG. The OpenSceneGraph package contributes its prefix before transitive osgx includes, so make
 	# the source root explicitly first.
@@ -272,24 +241,8 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 		osgx::osgx
 		pybind11::module
 	)
-	osgdebug_compile_options(osgx_python)
+	osgx_compile_options(osgx_python)
 	set_target_properties(osgx_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-	pybind11_add_module(osgDebug_python "ext/osgDebug-python.cpp")
-
-	set_target_properties(osgDebug_python PROPERTIES OUTPUT_NAME "osgDebug")
-	target_include_directories(osgDebug_python PRIVATE
-		"${CMAKE_CURRENT_SOURCE_DIR}"
-		${OPENSCENEGRAPH_INCLUDE_DIRS}
-		"/home/cubicool/dev/OpenSceneGraph.py"
-		"/home/cubicool/dev/OpenSceneGraph.py/etc"
-	)
-	target_link_libraries(osgDebug_python PRIVATE
-		osgDebug::osgDebug
-		pybind11::module
-	)
-	osgdebug_compile_options(osgDebug_python)
-	set_target_properties(osgDebug_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 	# Same ImGui detection as examples/CMakeLists.txt (pkg_check_modules is
 	# subdirectory-scoped, so it has to be repeated here rather than reused).
@@ -301,10 +254,10 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 
 	if(IMGUI_FOUND)
 		find_package(OpenGL REQUIRED)
-		target_compile_definitions(osgDebug_python PRIVATE OSGDEBUG_IMGUI)
-		target_include_directories(osgDebug_python PRIVATE ${IMGUI_INCLUDE_DIRS})
-		target_link_libraries(osgDebug_python PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
+		target_compile_definitions(osgx_python PRIVATE OSGDEBUG_IMGUI)
+		target_include_directories(osgx_python PRIVATE ${IMGUI_INCLUDE_DIRS})
+		target_link_libraries(osgx_python PRIVATE ${IMGUI_LINK_LIBRARIES} OpenGL::GL)
 	else()
-		message(STATUS "ImGui not found via pkg-config; osgDebug.imgui Python bindings will be unavailable")
+		message(STATUS "ImGui not found via pkg-config; osgx.imgui Python bindings will be unavailable")
 	endif()
 endif()

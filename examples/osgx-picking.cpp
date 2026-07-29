@@ -10,7 +10,7 @@
 // postDrawCallback fires after FBO unbind; glGetTexImage reads from the texture
 // object (FBO binding irrelevant) -- async DMA with a PBO, zero stall.
 //
-// The SYNC/ASYNC split mirrors the pattern in osgDebug::FinalDrawCallback (timer queries).
+// The SYNC/ASYNC split mirrors the pattern in osgx::debug::FinalDrawCallback (timer queries).
 //
 // --pick-size N (default 1): sample NxN region centered on cursor (SYNC only).
 // --small-pick N: fixed NxN FBO; mouse coords scaled on the way in (SYNC only).
@@ -19,21 +19,30 @@
 //
 // Scene: five spheres, each with a pickID uniform (1-5). ID 0 = background.
 //
-// PickReadbackSync, PickReadbackAsync, PickCameraSync, and all pick helpers live in osgx.hpp.
+// PickReadbackSync, PickReadbackAsync, PickCameraSync, and all pick helpers live in
+// osgx/Picking.hpp.
 
-#include "../osgx.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Picking.hpp"
 
 OSGX_DISABLE_WARNINGS
 
+#include <osg/ArgumentParser>
+#include <osg/Geode>
+#include <osg/Group>
 #include <osg/Image>
+#include <osg/MatrixTransform>
+#include <osg/Shape>
+#include <osg/ShapeDrawable>
 #include <osg/Uniform>
 
-#include <cstring>
-
 #include <osgGA/TrackballManipulator>
+#include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
 OSGX_ENABLE_WARNINGS
+
+#include <cstring>
 
 // ------------------------------------------------------------------------------------------------
 // Scene: five colored spheres, each with a pickID uniform (1-5)

@@ -1,6 +1,15 @@
 // vimrun! ./examples/osgx-visitor
 
-#include "../osgx.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Visitors.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Geometry>
+#include <osg/Group>
+#include <osgDB/ReadFile>
+
+OSGX_ENABLE_WARNINGS
 
 auto createSceneA() {
 	auto root = osgx::make_nref<osg::Group>("SceneA");

@@ -1,12 +1,18 @@
-// Application-owned Dear ImGui lifecycle + reusable osgDebug::imgui::Panel.
+// Application-owned Dear ImGui lifecycle + reusable osgx::imgui::Panel.
 
-#include "../osgDebug.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/ImGui.hpp"
 
 OSGX_DISABLE_WARNINGS
 
 #include <osg/Geode>
+#include <osg/Group>
+#include <osg/Shape>
 #include <osg/ShapeDrawable>
+
 #include <osgGA/TrackballManipulator>
+
+#include <osgViewer/Viewer>
 
 OSGX_ENABLE_WARNINGS
 
@@ -14,7 +20,7 @@ namespace {
 
 class AppImGuiHost: public osgGA::GUIEventHandler {
 public:
-	AppImGuiHost(osgViewer::View& view, osgDebug::imgui::Panel& panel):
+	AppImGuiHost(osgViewer::View& view, osgx::imgui::Panel& panel):
 		_masterCamera(view.getCamera()),
 		_panel(panel) {
 		view.getEventHandlers().push_front(this);
@@ -64,7 +70,7 @@ public:
 
 private:
 	osg::observer_ptr<osg::Camera> _masterCamera;
-	osgDebug::imgui::Panel& _panel;
+	osgx::imgui::Panel& _panel;
 	bool _installed = false;
 	bool _firstFrame = true;
 	double _time = 0.0;
@@ -128,7 +134,7 @@ int main() {
 	viewer.setSceneData(root);
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 
-	osgDebug::imgui::Panel panel;
+	osgx::imgui::Panel panel;
 	panel.addStatsSection(viewer);
 	panel.addProfilerSection(viewer, root);
 	panel.addSection("Application Section", [](osg::RenderInfo&) {

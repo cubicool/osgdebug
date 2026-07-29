@@ -1,6 +1,16 @@
-// vimrun! ./utils/osgdebug-drawables
+// vimrun! ./utils/osgx-drawables
 
-#include "../osgDebug.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Debug.hpp"
+#include "../osgx/Visitors.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Geometry>
+#include <osg/Group>
+#include <osgDB/ReadFile>
+
+OSGX_ENABLE_WARNINGS
 
 auto createSceneA() {
 	auto root = osgx::make_nref<osg::Group>("SceneA");
@@ -61,7 +71,7 @@ int main(int argc, char** argv) {
 	}
 
 	auto dsv = osgx::DescribeSceneVisitor();
-	auto dv = osgDebug::ProfilerVisitor();
+	auto dv = osgx::debug::ProfilerVisitor();
 
 	root->accept(dsv);
 	root->accept(dv);

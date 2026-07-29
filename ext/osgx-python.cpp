@@ -1,6 +1,8 @@
 //vimrun! ./test.py
 
-#include "osgx.hpp"
+#include "osgx/osgx.hpp"
+#include "osgx/Debug.hpp"
+#include "osgx/ImGui.hpp"
 #include "pyosg/pyosg.hpp"
 
 #include "pybind11x.hpp"
@@ -236,4 +238,327 @@ PYBIND11_MODULE(osgx, m) {
 		.def("finishGGXPrefilter", &osgx::ibl::finishGGXPrefilter, "readback"_a)
 	;
 
+	// osgx::debug -- GL_KHR_debug integration (push/pop debug groups, message
+	// inserts) plus the two-phase per-drawable GPU/CPU profiler.
+	auto m_debug = m.def_submodule("debug", "osgx::debug - GL_KHR_debug integration + GPU/CPU profiler");
+
+	py::class_<
+		osgx::debug::GraphicsOperation,
+		osg::GraphicsOperation,
+		osg::ref_ptr<osgx::debug::GraphicsOperation>
+	>(m_debug, "GraphicsOperation")
+		.def(py::init<>())
+	;
+
+	py::enum_<osgx::debug::Severity>(m_debug, "Severity")
+		.value("DONT_CARE", osgx::debug::Severity::DONT_CARE)
+		.value("HIGH", osgx::debug::Severity::HIGH)
+		.value("MEDIUM", osgx::debug::Severity::MEDIUM)
+		.value("LOW", osgx::debug::Severity::LOW)
+		.value("NOTIFICATION", osgx::debug::Severity::NOTIFICATION)
+		.export_values()
+	;
+
+	py::enum_<osgx::debug::Source>(m_debug, "Source")
+		.value("DONT_CARE", osgx::debug::Source::DONT_CARE)
+		.value("API", osgx::debug::Source::API)
+		.value("WINDOW_SYSTEM", osgx::debug::Source::WINDOW_SYSTEM)
+		.value("SHADER_COMPILER", osgx::debug::Source::SHADER_COMPILER)
+		.value("THIRD_PARTY", osgx::debug::Source::THIRD_PARTY)
+		.value("APPLICATION", osgx::debug::Source::APPLICATION)
+		.value("OTHER", osgx::debug::Source::OTHER)
+		.export_values()
+	;
+
+	py::enum_<osgx::debug::Type>(m_debug, "Type")
+		.value("DONT_CARE", osgx::debug::Type::DONT_CARE)
+		.value("ERROR", osgx::debug::Type::ERROR)
+		.value("DEPRECATED_BEHAVIOR", osgx::debug::Type::DEPRECATED_BEHAVIOR)
+		.value("UNDEFINED_BEHAVIOR", osgx::debug::Type::UNDEFINED_BEHAVIOR)
+		.value("PORTABILITY", osgx::debug::Type::PORTABILITY)
+		.value("PERFORMANCE", osgx::debug::Type::PERFORMANCE)
+		.value("OTHER", osgx::debug::Type::OTHER)
+		.value("MARKER", osgx::debug::Type::MARKER)
+		.value("PUSH_GROUP", osgx::debug::Type::PUSH_GROUP)
+		.value("POP_GROUP", osgx::debug::Type::POP_GROUP)
+		.export_values()
+	;
+
+	m_debug
+		.def("initialize", &osgx::debug::initialize)
+		.def(
+			"deinitialize",
+			&osgx::debug::deinitialize,
+			"disableOutput"_a=true
+		)
+		.def(
+			"installDefaultCallback",
+			&osgx::debug::installDefaultCallback,
+			"synchronous"_a=true
+		)
+		.def("clearCallback", &osgx::debug::clearCallback)
+		.def(
+			"enableDebugOutput",
+			&osgx::debug::enableDebugOutput,
+			"synchronous"_a=true
+		)
+		.def("disableDebugOutput", &osgx::debug::disableDebugOutput)
+		.def(
+			"messageControl",
+			py::overload_cast<osgx::debug::Source, osgx::debug::Type, osgx::debug::Severity, bool>(
+				&osgx::debug::messageControl
+			),
+			"source"_a,
+			"type"_a,
+			"severity"_a,
+			"enabled"_a
+		)
+		.def("messageInsert", py::overload_cast<
+			osgx::debug::Source,
+			osgx::debug::Type,
+			GLuint,
+			osgx::debug::Severity,
+			const std::string&
+		>(&osgx::debug::messageInsert),
+			"source"_a,
+			"type"_a,
+			"id"_a,
+			"severity"_a,
+			"message"_a
+		)
+		.def("messageInsert", py::overload_cast<
+			osgx::debug::Type,
+			GLuint,
+			osgx::debug::Severity,
+			const std::string&
+		>(&osgx::debug::messageInsert),
+			"type"_a,
+			"id"_a,
+			"severity"_a,
+			"message"_a
+		)
+		.def(
+			"pushGroup",
+			py::overload_cast<osgx::debug::Source, GLuint, const std::string&>(&osgx::debug::pushGroup)
+		)
+		.def(
+			"pushGroup",
+			py::overload_cast<GLuint, const std::string&>(&osgx::debug::pushGroup)
+		)
+		.def("popGroup", &osgx::debug::popGroup)
+	;
+
+	py::class_<osgx::debug::Scoped>(m_debug, "Scoped")
+		.def(
+			py::init<GLuint, std::string_view, osgx::debug::Source, bool>(),
+			py::arg("id"),
+			py::arg("message"),
+			py::arg("source")=osgx::debug::Source::APPLICATION,
+			py::arg("measureTime")=false
+		)
+		.def("__enter__", [](osgx::debug::Scoped& self) -> osgx::debug::Scoped& {
+			return self;
+		})
+		.def("__exit__", [](
+			osgx::debug::Scoped& self,
+			py::object exc_type,
+			py::object exc_value,
+			py::object traceback
+		) {
+			return false; // don't suppress Python exceptions
+		})
+	;
+
+	// osgx::imgui -- deliberately NOT a general ImGui wrapper (that's pyimgui's
+	// job elsewhere). Just enough to build quick debugging knobs inside a
+	// Widget::addSection() callback: a handful of stateless functions returning
+	// (changed, value) tuples, since Python floats/bools aren't mutable
+	// references the way ImGui's C++ &value out-params expect. A sibling of
+	// osgx::debug, not nested under it -- most of this (Panel/Widget/sliders) has
+	// nothing to do with the profiler; only ProfilerSection reaches into debug::.
+#ifdef OSGDEBUG_IMGUI
+	auto m_imgui = m.def_submodule("imgui", "osgx::imgui namespace");
+
+	py::enum_<osgx::imgui::Dock>(m_imgui, "Dock")
+		.value("NONE", osgx::imgui::Dock::NONE)
+		.value("LEFT", osgx::imgui::Dock::LEFT)
+		.value("RIGHT", osgx::imgui::Dock::RIGHT)
+		.export_values()
+	;
+
+	py::class_<osgx::imgui::Options>(m_imgui, "Options")
+		.def(py::init<>())
+		.def_readwrite("show_gpu_info", &osgx::imgui::Options::showGPUInfo)
+		.def_readwrite("show_frame_info", &osgx::imgui::Options::showFrameInfo)
+		.def_readwrite("dock", &osgx::imgui::Options::dock)
+		.def_readwrite("dock_width", &osgx::imgui::Options::dockWidth)
+	;
+
+	// A growable options bag for addSection() -- expected to grow (a size hint
+	// beyond expand/constrain, tooltips, etc.), so this is keyword-constructible
+	// from Python rather than adding more positional args to addSection itself.
+	py::class_<osgx::imgui::SectionOptions>(m_imgui, "SectionOptions")
+		.def(
+			py::init(&osgx::imgui::makeSectionOptions),
+			"expand"_a=false,
+			"default_open"_a=false
+		)
+		.def_readwrite("expand", &osgx::imgui::SectionOptions::expand)
+		.def_readwrite("default_open", &osgx::imgui::SectionOptions::defaultOpen)
+	;
+
+	py::class_<osgx::imgui::Panel>(m_imgui, "Panel")
+		.def(py::init<>())
+		.def(
+			"addSection", &osgx::imgui::Panel::addSection,
+			"label"_a,
+			"fn"_a,
+			"options"_a=osgx::imgui::SectionOptions()
+		)
+		.def("removeSection", &osgx::imgui::Panel::removeSection, "label"_a)
+		.def("clearSections", &osgx::imgui::Panel::clearSections)
+		.def(
+			"addStatsSection",
+			&osgx::imgui::Panel::addStatsSection,
+			"viewer"_a,
+			"default_open"_a=false
+		)
+		.def(
+			"addProfilerSection",
+			&osgx::imgui::Panel::addProfilerSection,
+			"view"_a,
+			"sceneRoot"_a,
+			"default_open"_a=false
+		)
+		.def(
+			"addTextureSection",
+			py::overload_cast<
+				osgViewer::View&,
+				osg::Node*, bool
+			>(&osgx::imgui::Panel::addTextureSection),
+			"view"_a,
+			"root"_a,
+			"default_open"_a=false
+		)
+		.def(
+			"addTextureSection",
+			py::overload_cast<osgViewer::View&, bool>(&osgx::imgui::Panel::addTextureSection),
+			"view"_a,
+			"default_open"_a=false
+		)
+		.def("draw", &osgx::imgui::Panel::draw, "render_info"_a)
+	;
+
+	py::class_<
+		osgx::imgui::Widget,
+		osgGA::GUIEventHandler,
+		osg::ref_ptr<osgx::imgui::Widget>
+	>(m_imgui, "Widget")
+		.def(
+			// osgViewer::View, not the full Viewer -- Widget only needs getCamera()
+			// (cached once) and getEventHandlers(); a Python osgViewer::Viewer still
+			// works here since it upcasts (View is separately registered above and
+			// Viewer's py::class_ lists it as a base).
+			py::init<osgViewer::View&, osg::Camera*, osgx::imgui::Options>(),
+			"viewer"_a,
+			"draw_camera"_a=nullptr,
+			"options"_a=osgx::imgui::Options()
+		)
+		.def(
+			"addSection",
+			&osgx::imgui::Widget::addSection,
+			"label"_a,
+			"fn"_a,
+			"options"_a=osgx::imgui::SectionOptions()
+		)
+		.def("removeSection", &osgx::imgui::Widget::removeSection, "label"_a)
+		.def("clearSections", &osgx::imgui::Widget::clearSections)
+		// Widget no longer holds a Viewer/View reference of its own (see the C++
+		// class comment), so these now take one explicitly instead of reusing
+		// whatever Widget was constructed with.
+		.def(
+			"addStatsSection",
+			&osgx::imgui::Widget::addStatsSection,
+			"viewer"_a,
+			"default_open"_a=false
+		)
+		.def(
+			"addProfilerSection",
+			&osgx::imgui::Widget::addProfilerSection,
+			"view"_a,
+			"sceneRoot"_a,
+			"default_open"_a=false
+		)
+		.def(
+			"addTextureSection",
+			py::overload_cast<osgViewer::View&, osg::Node*, bool>(
+				&osgx::imgui::Widget::addTextureSection
+			),
+			"view"_a,
+			"root"_a,
+			"default_open"_a=false
+		)
+		.def(
+			"addTextureSection",
+			py::overload_cast<osgViewer::View&, bool>(&osgx::imgui::Widget::addTextureSection),
+			"view"_a,
+			"default_open"_a=false
+		)
+	;
+
+	m_imgui
+		.def(
+			"slider_float",
+			&osgx::imgui::sliderFloat,
+			"label"_a,
+			"value"_a,
+			"min"_a,
+			"max"_a,
+			"format"_a="%.3f"
+		)
+		.def(
+			"slider_float_nudge",
+			&osgx::imgui::sliderFloatNudge,
+			"label"_a,
+			"value"_a,
+			"min"_a,
+			"max"_a,
+			"step_pct"_a=0.01f,
+			"format"_a="%.3f"
+		)
+		.def("text", &osgx::imgui::text, "text"_a)
+		.def("separator", &osgx::imgui::separator)
+		.def(
+			"checkbox",
+			&osgx::imgui::checkbox,
+			"label"_a,
+			"value"_a
+		)
+		.def(
+			"input_text",
+			&osgx::imgui::inputText,
+			"label"_a,
+			"value"_a,
+			"max_length"_a=256,
+			"enter_returns_true"_a=false
+		)
+		.def(
+			"radio_group",
+			&osgx::imgui::radioGroup,
+			"value"_a,
+			"labels"_a,
+			"same_line"_a=true
+		)
+	;
+#endif
+
+	py::dict info;
+
+	info["version"] = py::make_tuple(
+		OSGX_VERSION_MAJOR,
+		OSGX_VERSION_MINOR,
+		OSGX_VERSION_PATCH
+	);
+
+	pyx::build_info(m, info);
 }

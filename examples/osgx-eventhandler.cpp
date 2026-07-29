@@ -1,6 +1,14 @@
 //vimrun! ./examples/osgx-eventhandler
 
-#include "../osgx.hpp"
+#include "../osgx/Callbacks.hpp"
+#include "../osgx/Core.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osgGA/GUIEventAdapter>
+#include <osgViewer/Viewer>
+
+OSGX_ENABLE_WARNINGS
 
 #include <cassert>
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "osgx/Version.hpp"
 #include "Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS

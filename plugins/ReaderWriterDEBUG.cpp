@@ -1,6 +1,7 @@
 //vimrun! OSG_NOTIFY_LEVEL=NOTICE osgviewerd ~/OpenSceneGraph-Data/cow.osgt.debug
 
-#include "../osgDebug.hpp"
+#include "../osgx/Debug.hpp"
+#include "../osgx/Visitors.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -55,7 +56,7 @@ public:
 		}
 
 		auto dsv = osgx::DescribeSceneVisitor();
-		auto dv = osgDebug::DrawVisitor();
+		auto dv = osgx::debug::DrawVisitor();
 
 		node->accept(dsv);
 		node->accept(dv);

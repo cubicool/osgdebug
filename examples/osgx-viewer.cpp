@@ -1,10 +1,17 @@
-// vimrun! ./examples/osgdebug-viewer
+// vimrun! ./examples/osgx-viewer
 
-#include "../osgDebug.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Debug.hpp"
+#include "../osgx/Visitors.hpp"
 
 OSGX_DISABLE_WARNINGS
 
+#include <osg/Geode>
 #include <osg/MatrixTransform>
+#include <osg/Shape>
+#include <osg/ShapeDrawable>
+
+#include <osgDB/ReadFile>
 
 #include <osgGA/TrackballManipulator>
 
@@ -37,9 +44,9 @@ auto createSphereAt(const osg::Vec3& pos, osgx::vec_t radius, osgx::vec_t pSize=
 }
 
 int main(int argc, char** argv) {
-	osgDebug::FrameByFrameViewer viewer;
+	osgx::debug::FrameByFrameViewer viewer;
 
-	auto debugSupported = osgx::make_ref<osgDebug::GraphicsOperation>();
+	auto debugSupported = osgx::make_ref<osgx::debug::GraphicsOperation>();
 
 	viewer.setRealizeOperation(debugSupported);
 	viewer.realize();
@@ -62,7 +69,7 @@ int main(int argc, char** argv) {
 	}
 
 	auto dsv = osgx::DescribeSceneVisitor();
-	auto dv = osgDebug::ProfilerVisitor();
+	auto dv = osgx::debug::ProfilerVisitor();
 
 	root->accept(dsv);
 	root->accept(dv);
@@ -71,17 +78,17 @@ int main(int argc, char** argv) {
 	viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 	// viewer.addEventHandler(new osgViewer::StatsHandler());
 
-	osgDebug::appendCameraDrawCallback(
+	osgx::debug::appendCameraDrawCallback(
 		viewer.getCamera(),
-		osgDebug::CameraDrawCallbackSlot::FINAL_DRAW,
-		new osgDebug::ProfilerFinalCallback()
+		osgx::debug::CameraDrawCallbackSlot::FINAL_DRAW,
+		new osgx::debug::ProfilerFinalCallback()
 	);
 
-	osgDebug::pushGroup(0, __FUNCTION__);
+	osgx::debug::pushGroup(0, __FUNCTION__);
 
 	auto r = viewer.run();
 
-	osgDebug::popGroup();
+	osgx::debug::popGroup();
 
 	// osgDB::writeNodeFile(*root, "tmp.osgt");
 

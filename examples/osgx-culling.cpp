@@ -1,6 +1,7 @@
 // vimrun! ./examples/osgx-culling
 
-#include "../osgx.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Visitors.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -8,12 +9,16 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Geode>
 #include <osg/Group>
 #include <osg/MatrixTransform>
+#include <osg/Shape>
 #include <osg/ShapeDrawable>
 
 #include <osgUtil/CullVisitor>
 
 #include <osgDB/WriteFile>
 
+#include <osgGA/GUIEventAdapter>
+
+#include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
 OSGX_ENABLE_WARNINGS
@@ -76,7 +81,7 @@ osg::ref_ptr<osg::Node> makeScene() {
 }
 
 int main(int argc, char** argv) {
-	// osgDebug::FrameByFrameViewer viewer;
+	// osgx::debug::FrameByFrameViewer viewer;
 	osgViewer::Viewer viewer;
 
 	auto root = makeScene();

@@ -1,17 +1,21 @@
-// vimrun! ./examples/osgdebug-imgui
+// vimrun! ./examples/osgx-imgui
 
-#include "../osgDebug.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/ImGui.hpp"
 
 OSGX_DISABLE_WARNINGS
 
-#include <osg/ShapeDrawable>
 #include <osg/Geode>
+#include <osg/Group>
 #include <osg/Image>
 #include <osg/MatrixTransform>
+#include <osg/ShapeDrawable>
 #include <osg/Texture2D>
 
-#include <osgGA/TrackballManipulator>
 #include <osgGA/StateSetManipulator>
+#include <osgGA/TrackballManipulator>
+
+#include <osgViewer/Viewer>
 
 OSGX_ENABLE_WARNINGS
 
@@ -64,7 +68,7 @@ namespace {
 int main(int argc, char** argv) {
 	osgViewer::Viewer viewer;
 
-	// osgDebug::imgui::Widget no longer checks/forces this itself (see its class
+	// osgx::imgui::Widget no longer checks/forces this itself (see its class
 	// comment) -- Dear ImGui's single global context isn't safe to touch from more
 	// than one OSG draw thread, so this is the caller's responsibility now, same
 	// as osgEarth's own ImGuiEventHandler.
@@ -111,7 +115,7 @@ int main(int argc, char** argv) {
 
 	// Widget pushes itself to the front of the viewer's event handler list
 	// automatically (SingleThreaded is our responsibility now, set above).
-	auto* gui = new osgDebug::imgui::Widget(viewer);
+	auto* gui = new osgx::imgui::Widget(viewer);
 
 	gui->addStatsSection(viewer);
 	gui->addProfilerSection(viewer, root);

@@ -1,6 +1,18 @@
 // vimrun! ./examples/osgx-grid
 
-#include "../osgx.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Grid.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Group>
+#include <osg/MatrixTransform>
+#include <osg/Quat>
+#include <osg/Shape>
+#include <osg/ShapeDrawable>
+#include <osgViewer/Viewer>
+
+OSGX_ENABLE_WARNINGS
 
 namespace {
 

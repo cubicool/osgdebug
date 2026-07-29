@@ -1,26 +1,36 @@
-# osgDebug
+# osgx
 
-osgDebug provides easy access to the various *_debug_* OpenGL extensions, allowing the code to provide additional/informative messages and annotations
-that that applications like *Nsight* and *APITrace* support.
+osgx is a small, compiled C++20 utility layer on top of OpenSceneGraph. It modernizes common OSG
+idioms (concepts, ranges, spans, lambdas) and adds two optional, explicitly-included subsystems:
+
+- `osgx::debug` — `GL_KHR_debug` integration (driver message callback, KHR debug-group annotations)
+  plus a two-phase GPU/CPU per-drawable profiler.
+- `osgx::imgui` — a Dear ImGui overlay (`Widget`/`Panel`) with pluggable sections and a built-in
+  GPU-profiler, OSG-stats, and scene-texture browser.
+
+Both live under `osgx/` and use the `osgx` namespace, but neither is included by the `osgx.hpp`
+umbrella header — pulling in `GL_KHR_debug` or Dear ImGui is always an explicit opt-in
+(`#include "osgx/Debug.hpp"` / `#include "osgx/ImGui.hpp"`), never something a consumer gets for
+free just by including the umbrella.
 
 # CMake
 
-osgDebug and osgx can be consumed directly from their source tree or as installed CMake packages.
-In either case, link the appropriate imported-style target and its OpenSceneGraph include and link
-requirements will be propagated to your target.
+osgx can be consumed directly from its source tree or as an installed CMake package. In either
+case, link the imported-style target and its OpenSceneGraph include and link requirements will be
+propagated to your target.
 
 To embed the source tree in another project:
 
 ```cmake
-add_subdirectory(path/to/osgdebug EXCLUDE_FROM_ALL)
-target_link_libraries(my_target PRIVATE osgDebug::osgDebug)
+add_subdirectory(path/to/osgx EXCLUDE_FROM_ALL)
+target_link_libraries(my_target PRIVATE osgx::osgx)
 ```
 
-When embedded, examples, utilities, Python modules, and installation rules are disabled by default.
-They can be enabled individually with `OSGX_BUILD_EXAMPLES`, `OSGX_BUILD_UTILS`,
+When embedded, examples, utilities, the Python module, and installation rules are disabled by
+default. They can be enabled individually with `OSGX_BUILD_EXAMPLES`, `OSGX_BUILD_UTILS`,
 `OSGX_BUILD_PYTHON`, and `OSGX_INSTALL`.
 
-To install osgDebug and consume it as a package, first install an already-configured build tree:
+To install osgx and consume it as a package, first install an already-configured build tree:
 
 ```console
 cmake --install BUILD --prefix /path/to/prefix
@@ -29,8 +39,8 @@ cmake --install BUILD --prefix /path/to/prefix
 Then use the installed package from the consuming project:
 
 ```cmake
-find_package(osgDebug CONFIG REQUIRED)
-target_link_libraries(my_target PRIVATE osgDebug::osgDebug)
+find_package(osgx CONFIG REQUIRED)
+target_link_libraries(my_target PRIVATE osgx::osgx)
 ```
 
 Pass `-DCMAKE_PREFIX_PATH=/path/to/prefix` when configuring the consuming project if the chosen
@@ -45,39 +55,54 @@ cmake --build BUILD --target uninstall
 This uses CMake's generated `install_manifest.txt`; keep the build tree until the installation is
 no longer needed.
 
-Projects needing only osgx can use `osgx::core` for the low-level facilities or `osgx::osgx` for
-the complete utility layer. In installed mode, use `find_package(osgx CONFIG REQUIRED)` first.
-`osgx::core` is header-only. `osgx::osgx` is the compiled `libosgx` library, includes
-`osgx::core`, and contains implementation-heavy facilities such as GPU GGX environment
-prefiltering. `osgDebug::osgDebug` includes the complete osgx layer.
+Use `osgx::core` for the low-level, header-only facilities (`Core.hpp`, `Array.hpp`,
+`Callbacks.hpp`, `Shader.hpp`, `Visitors.hpp`, `Warnings.hpp`) or `osgx::osgx` for the complete
+utility layer, including `osgx::debug`/`osgx::imgui`. `osgx::osgx` is the compiled `libosgx`
+library and includes `osgx::core`.
 
 ## Fresh checkout build order
 
-For a full osgdebug + osgGLTF installation, build and install this repository first. osgGLTF's
-GPU prefilter tool links the installed `osgx::osgx` target:
+For a full osgx + osgGLTF installation, build and install this repository first. osgGLTF's GPU
+prefilter tool links the installed `osgx::osgx` target:
 
 ```text
-1. Configure, build, and install osgdebug (provides osgx::core and osgx::osgx).
+1. Configure, build, and install osgx (provides osgx::core and osgx::osgx).
 2. Configure osgGLTF with that installation in CMAKE_PREFIX_PATH.
 3. Build and install osgGLTF.
 ```
 
-There is no reverse build dependency: osgdebug does not require osgGLTF. osgGLTF consumes
+There is no reverse build dependency: osgx does not require osgGLTF. osgGLTF consumes
 `osgx::core` for its low-level infrastructure and provides its own optional adapter over the full
 `osgx::osgx` PBR/IBL layer.
 
-# `osgx.hpp` Extras
+# `osgx.hpp` — public headers
 
-`osgx.hpp` is the umbrella header for a small C++20 OpenSceneGraph utility layer that sits beside `osgDebug.hpp`. It keeps common setup code shorter and adds modern range/span/lambda-friendly wrappers.
+`osgx.hpp` is the umbrella header for the always-available utility layer. It keeps common setup
+code shorter and adds modern range/span/lambda-friendly wrappers. Its public headers are organized
+by concern:
 
-Its public headers are organized by concern:
-
+- `osgx/Core.hpp` — smart-pointer helpers, timing, ring buffers, `findDataFile()`, and the
+  `ObjectPath`/`vec_t`/literal utilities.
+- `osgx/Visitors.hpp` — scene-graph visitors, event handlers, and `FilterNotifyHandler`.
+- `osgx/Array.hpp` — `Array<BaseArray>` / `DrawElements<BaseElements>` wrappers.
+- `osgx/Callbacks.hpp` — callback-group and lambda-callback adapters.
+- `osgx/Picking.hpp` — object-ID picking cameras, readback, and hover/click handlers.
+- `osgx/Manipulators.hpp` — `Ortho2DManipulator` and `MultiCameraManipulator`.
+- `osgx/Grid.hpp` — procedurally generated, antialiased grid overlay/ground-plane geometry.
 - `osgx/Shader.hpp` — generic, line-oriented GLSL library expansion.
 - `osgx/PBR.hpp` — PBR BRDF snippets and `OrbitLightRig`.
-- `osgx/IBL.hpp` — environment-map loading, BRDF-LUT baking, and diffuse irradiance helpers.
+- `osgx/IBL.hpp` — environment-map loading, BRDF-LUT baking (including the process-wide
+  `sharedBRDFLUT()` cache), SH9/Lambertian diffuse irradiance, and cubemap readback helpers
+  (`readCubeMapFaces()`, `BRDFLUTReadback`).
+- `osgx/CaptureCubeMap.hpp` — `CaptureCubeMapScene`, the low-level frame-driven reflection-probe
+  primitive (six ordered FBO cameras capturing a caller-owned scene into a radiance cubemap).
 - `osgx/GGXPrefilter.hpp` — GPU GGX prefilter scene construction, rebaking, and readback.
-- `osgx/LambertianBake.hpp` — frame-driven GPU Lambertian/diffuse cubemap baking.
-- `osgx.hpp` — convenience umbrella that includes all osgx facilities.
+- `osgx/LambertianBake.hpp` — frame-driven GPU Lambertian/diffuse cubemap baking and readback
+  (`LambertianBakeScene`, `LambertianCubeReadback`).
+- `osgx.hpp` — convenience umbrella that includes all of the above (but not `osgx::debug` or
+  `osgx::imgui` — see below).
+- `osgx/Version.hpp` — `OSGX_VERSION_MAJOR`/`MINOR`/`PATCH` and the `OSGX_VERSION` string, generated
+  from the CMake project version.
 
 ## Shader libraries
 
@@ -115,7 +140,7 @@ are left intact for other shader tooling or the GLSL compiler.
 - `tick` and `call()` provide lightweight `osg::Timer`-based timing around arbitrary callables.
 - `getFirstParent<T>()` walks an OSG parent chain and returns the first parent matching a requested type.
 - `ring_buffer<T, N>` and `aring_buffer<T, N>` keep fixed-size recent samples, with the arithmetic version adding averages.
-- 'findDataFile` wraps the `osgDB` file utils, letting you specify multiple paths/suffixes in one call.
+- `findDataFile()` wraps the `osgDB` file utils, letting you specify multiple paths/suffixes in one call.
 - `LambdaVisitor`, `IndexedVisitor`, `NameVisitor`, and `DescribeSceneVisitor` make common scene-graph traversal, naming, and tree-printing tasks less boilerplate-heavy.
 - `VisitorEventHandler` runs a visitor against the viewer scene root when a key is released.
 - `LambdaKeyHandler` binds one or more key presses to a lambda with optional access to the pressed key.
@@ -131,15 +156,20 @@ are left intact for other shader tooling or the GLSL compiler.
 - `Ortho2DManipulator` is an orthographic 2D camera manipulator with pan, geometric zoom, pixel-nudge zoom, optional Ctrl-drag 3D tilt, and automatic near/far projection setup.
 - `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
 - `osgx::pbr` provides reusable BRDF GLSL snippets and `OrbitLightRig` for direct-light uniforms.
-- `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking, GGX-prefiltered environment maps, and SH9 or Lambertian diffuse irradiance.
+- `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking (`sharedBRDFLUT()`), GPU GGX-prefiltered/Lambertian environment baking (`GGXPrefilterScene`, `LambertianBakeScene`), a generic reflection-probe primitive (`CaptureCubeMapScene`), and SH9 diffuse irradiance.
+
 glTF-specific material and rendering integration lives with the loader in osgGLTF. Generic osgx
 does not depend on or duplicate osgGLTF's public shader interface.
 
-# `osgDebug.hpp` Systems
+# `osgx::debug` — GL_KHR_debug + profiler
 
-`osgDebug.hpp` provides three independent systems that can be used together or separately.
+`osgx/Debug.hpp` provides three independent systems that can be used together or separately. It is
+not included by `osgx.hpp`; opt in explicitly with `#include "osgx/Debug.hpp"`.
 
-It also includes `osgDebug::Widget`, a Dear ImGui overlay for viewer tools with pluggable sections and built-in GPU-profiler, OSG-stats, and scene-texture views.
+For a Dear ImGui front-end, see `osgx/ImGui.hpp` / `osgx::imgui::Widget` below — it is a sibling of
+`osgx::debug`, not nested under it, since most of it (sliders, `Panel`, texture/stats browsers) has
+nothing to do with `GL_KHR_debug` specifically; only its `ProfilerSection` reaches into
+`osgx::debug`.
 
 ---
 
@@ -150,11 +180,11 @@ an error, a performance warning, or a shader issue, it calls your registered fun
 This is a completely separate pipe from the other two systems — no queries, no groups,
 just the driver reporting what it observed.
 
-- `osgDebug::initialize(gc)` — resolves all `GL_KHR_debug` extension pointers for a context.
-- `osgDebug::installDefaultCallback()` — registers a callback that writes driver messages to `osg::notify`.
-- `osgDebug::setCallback(fn)` / `clearCallback()` — install or remove a custom callback.
-- `osgDebug::enableDebugOutput()` / `disableDebugOutput()` — toggle `GL_DEBUG_OUTPUT[_SYNCHRONOUS]`.
-- `osgDebug::GraphicsOperation` — a `setRealizeOperation()` helper that calls `initialize()` once the context exists.
+- `osgx::debug::initialize(gc)` — resolves all `GL_KHR_debug` extension pointers for a context.
+- `osgx::debug::installDefaultCallback()` — registers a callback that writes driver messages to `osg::notify`.
+- `osgx::debug::setCallback(fn)` / `clearCallback()` — install or remove a custom callback.
+- `osgx::debug::enableDebugOutput()` / `disableDebugOutput()` — toggle `GL_DEBUG_OUTPUT[_SYNCHRONOUS]`.
+- `osgx::debug::GraphicsOperation` — a `setRealizeOperation()` helper that calls `initialize()` once the context exists.
 
 ---
 
@@ -175,10 +205,10 @@ Sub-groups of a single camera's scene cannot be individually annotated this way;
 per-group bracketing, each group needs its own RTT camera. For per-drawable bracketing,
 use `ProfilerCallback` instead.
 
-- `osgDebug::Scoped` — **use this by default.** RAII push/pop; construct on the stack inside any `drawImplementation` or draw callback. Begin and end are in the same scope.
-- `osgDebug::AnnotationGroup` — use only when begin and end must live in *separate* callback objects. Its sole purpose is to share push/pop state across `AnnotationBeginCallback` (`PRE_DRAW`) and `AnnotationEndCallback` (`FINAL_DRAW`) so the group remains matched across the camera's frame boundary. Not a general-purpose annotation type.
-- `osgDebug::AnnotationBeginCallback` / `AnnotationEndCallback` — install an `AnnotationGroup` on a camera's `PRE_DRAW` or `FINAL_DRAW` slot so it fires at the correct time.
-- `osgDebug::appendCameraDrawCallback()` / `prependCameraDrawCallback()` — safely add callbacks to an existing slot without clobbering others.
+- `osgx::debug::Scoped` — **use this by default.** RAII push/pop; construct on the stack inside any `drawImplementation` or draw callback. Begin and end are in the same scope.
+- `osgx::debug::AnnotationGroup` — use only when begin and end must live in *separate* callback objects. Its sole purpose is to share push/pop state across `AnnotationBeginCallback` (`PRE_DRAW`) and `AnnotationEndCallback` (`FINAL_DRAW`) so the group remains matched across the camera's frame boundary. Not a general-purpose annotation type.
+- `osgx::debug::AnnotationBeginCallback` / `AnnotationEndCallback` — install an `AnnotationGroup` on a camera's `PRE_DRAW` or `FINAL_DRAW` slot so it fires at the correct time.
+- `osgx::debug::appendCameraDrawCallback()` / `prependCameraDrawCallback()` — safely add callbacks to an existing slot without clobbering others.
 
 Groups nest naturally. `FrameByFrameViewer` installs a single `Frame` group on its
 camera automatically. Any other object with its own RTT camera (e.g. an `osgSlug::Atlas`)
@@ -214,9 +244,9 @@ after all draws: read GL_QUERY_RESULT → update ring buffers → print/report
 ```
 Blocks only on the last outstanding query. Install on the camera's `FINAL_DRAW` slot.
 
-- `osgDebug::ProfilerCallback<N>` — drawable wrapper; issues timestamp queries and measures CPU time.
-- `osgDebug::ProfilerVisitor<N>` — walks the scene graph and installs `ProfilerCallback` on every drawable.
-- `osgDebug::ProfilerFinalCallback<N>` — camera callback that drains `FrameAccumulator` results.
+- `osgx::debug::ProfilerCallback<N>` — drawable wrapper; issues timestamp queries and measures CPU time.
+- `osgx::debug::ProfilerVisitor<N>` — walks the scene graph and installs `ProfilerCallback` on every drawable.
+- `osgx::debug::ProfilerFinalCallback<N>` — camera callback that drains `FrameAccumulator` results.
 - `QueryMode::SYNC` (default) — blocks per-query; suitable for step-by-step viewers.
 - `QueryMode::ASYNC` — drains the previous frame's results with zero meaningful stall; use for continuous renderers.
 
@@ -229,9 +259,9 @@ GL driver ──glDebugMessageCallback──► your callback (errors, warnings)
 
 you ──AnnotationBegin/EndCallback──► GL driver ──► apitrace / RenderDoc
 
-ProfilerCallback ──► FrameAccumulator ──► ProfilerFinalCallback ──► osg::notify (or future ImGui panel)
+ProfilerCallback ──► FrameAccumulator ──► ProfilerFinalCallback ──► osg::notify (or osgx::imgui::Widget)
 
-FrameByFrameViewer::requestRender() ◄── 'n' key (or future ImGui button)
+FrameByFrameViewer::requestRender() ◄── 'n' key (or an osgx::imgui button)
 ```
 
 The three flows are independent. Annotations never need to know the profiler exists,
@@ -250,6 +280,16 @@ session does not flood with unintended frames. On first render it automatically 
 
 ---
 
+## `osgx::imgui` — Dear ImGui overlay
+
+`osgx/ImGui.hpp` (gated behind `OSGDEBUG_IMGUI`, requiring Dear ImGui via pkg-config) provides
+`osgx::imgui::Widget`, a self-contained Dear ImGui overlay with pluggable sections
+(`addStatsSection()`, `addProfilerSection()`, `addTextureSection()`, or a custom
+`addSection(label, fn)`), and `osgx::imgui::Panel`, the same section machinery for an
+application that already owns its own ImGui context/frame/window.
+
+---
+
 # Extensions
 
 - [GL_KHR_debug](https://registry.khronos.org/OpenGL/extensions/KHR/KHR_debug.txt)
@@ -261,7 +301,7 @@ session does not flood with unintended frames. On first render it automatically 
 # Examples
 
 ```
-export LSAN_OPTIONS=suppressions=/home/cubicool/osgdebug/OSG/lsan.supp
+export LSAN_OPTIONS=suppressions=/home/cubicool/dev/osgdebug/OSG/lsan.supp
 export OSG_GL_CONTEXT_VERSION=3.0
 ```
 
@@ -276,3 +316,9 @@ literal six-face GL cubemap cross:
 Press `c` to switch between the diffuse skybox and cross views, or `p` to inspect the original
 tone-mapped equirectangular HDR panorama. Future generic source/GGX/LUT modes belong in this tool
 rather than in glTF-specific examples.
+
+`osgx-callback`, `osgx-notifyfilter`, and `osgx-viewer` demonstrate the `osgx::debug` systems
+above (`FrameByFrameViewer`, `ProfilerVisitor`/`ProfilerFinalCallback`, `DescribeSceneVisitor`).
+`osgx-imgui` and `osgx-imgui-external` demonstrate `osgx::imgui::Widget` and the app-owned
+`osgx::imgui::Panel` pattern, respectively. `osgx-drawables` (in `utils/`) attaches
+`ProfilerCallback` via `ProfilerVisitor` to a loaded model from the command line.

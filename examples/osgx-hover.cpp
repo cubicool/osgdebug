@@ -14,14 +14,22 @@
 //
 // Scene: five spheres, pick IDs 1-5. ID 0 = background.
 
-#include "../osgx.hpp"
+#include "../osgx/Core.hpp"
+#include "../osgx/Picking.hpp"
 
 OSGX_DISABLE_WARNINGS
 
+#include <osg/ArgumentParser>
+#include <osg/Geode>
+#include <osg/Group>
 #include <osg/Image>
+#include <osg/MatrixTransform>
+#include <osg/Shape>
+#include <osg/ShapeDrawable>
 #include <osg/Uniform>
 
 #include <osgGA/TrackballManipulator>
+#include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
 OSGX_ENABLE_WARNINGS

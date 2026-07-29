@@ -19,7 +19,7 @@ OSGX_ENABLE_WARNINGS
 #include <cstring>
 #endif
 
-namespace osgDebug {
+namespace osgx {
 
 #ifdef OSGDEBUG_IMGUI
 namespace imgui {
@@ -27,7 +27,7 @@ namespace imgui {
 // The system imgui package (pkg-config `imgui`) isn't built from the docking
 // branch (no IMGUI_HAS_DOCK/DockSpaceOverViewport), so there's no drag-to-dock
 // here the way osgEarth's ImGuiEventHandler does it with its own vendored
-// docking-branch imgui.h. Dock::LEFT/RIGHT instead just pins the "osgDebug"
+// docking-branch imgui.h. Dock::LEFT/RIGHT instead just pins the "osgx::imgui"
 // window to that edge, full viewport height, every frame -- no dragging, but
 // no new build dependency either.
 enum class Dock { NONE, LEFT, RIGHT };
@@ -540,11 +540,11 @@ public:
 	_sceneRoot(sceneRoot) {
 		refresh();
 
-		_finalCb = new ProfilerFinalCallback<>(0);
+		_finalCb = new debug::ProfilerFinalCallback<>(0);
 
-		appendCameraDrawCallback(
+		debug::appendCameraDrawCallback(
 			view.getCamera(),
-			CameraDrawCallbackSlot::FINAL_DRAW,
+			debug::CameraDrawCallbackSlot::FINAL_DRAW,
 			_finalCb
 		);
 	}
@@ -555,24 +555,24 @@ public:
 	void refresh() {
 		if(!_sceneRoot.valid()) return;
 
-		ProfilerVisitor<> visitor;
+		debug::ProfilerVisitor<> visitor;
 		_sceneRoot->accept(visitor);
 	}
 
 	void operator()(osg::RenderInfo& ri) {
-		const auto& stats = profilerStats(ri.getState()->getContextID());
+		const auto& stats = debug::profilerStats(ri.getState()->getContextID());
 		const auto frameNum = ri.getState()->getFrameStamp()
 			? ri.getState()->getFrameStamp()->getFrameNumber()
 			: 0u
 		;
 
-		int modeIdx = _finalCb->getMode() == QueryMode::SYNC ? 0 : 1;
+		int modeIdx = _finalCb->getMode() == debug::QueryMode::SYNC ? 0 : 1;
 
-		if(ImGui::RadioButton("SYNC", &modeIdx, 0)) _finalCb->setMode(QueryMode::SYNC);
+		if(ImGui::RadioButton("SYNC", &modeIdx, 0)) _finalCb->setMode(debug::QueryMode::SYNC);
 
 		ImGui::SameLine();
 
-		if(ImGui::RadioButton("ASYNC", &modeIdx, 1)) _finalCb->setMode(QueryMode::ASYNC);
+		if(ImGui::RadioButton("ASYNC", &modeIdx, 1)) _finalCb->setMode(debug::QueryMode::ASYNC);
 
 		ImGui::SameLine();
 		ImGui::TextDisabled("|");
@@ -583,8 +583,8 @@ public:
 		GLuint64 totalNs = 0;
 
 		for(const auto& [path, ps] : stats) {
-			const bool unknown = ps.cullState == CullState::UNKNOWN;
-			const bool visibleThisFrame = !isCullStale(ps.cullFrame, frameNum) && ps.cullState == CullState::VISIBLE;
+			const bool unknown = ps.cullState == debug::CullState::UNKNOWN;
+			const bool visibleThisFrame = !debug::isCullStale(ps.cullFrame, frameNum) && ps.cullState == debug::CullState::VISIBLE;
 
 			if(unknown || visibleThisFrame) totalNs += ps.gpuBuffer.average();
 		}
@@ -606,8 +606,8 @@ public:
 			for(const auto& [path, ps] : stats) {
 				const GLuint64 avgNs = ps.gpuBuffer.average();
 				const double avgUs = static_cast<double>(avgNs) / 1000.0;
-				const bool culled = ps.cullState != CullState::UNKNOWN
-					&& (isCullStale(ps.cullFrame, frameNum) || ps.cullState == CullState::CULLED)
+				const bool culled = ps.cullState != debug::CullState::UNKNOWN
+					&& (debug::isCullStale(ps.cullFrame, frameNum) || ps.cullState == debug::CullState::CULLED)
 				;
 				const float fraction = totalNs > 0
 					? static_cast<float>(avgNs) / static_cast<float>(totalNs)
@@ -650,10 +650,10 @@ public:
 
 private:
 	osg::observer_ptr<osg::Node> _sceneRoot;
-	ProfilerFinalCallback<>* _finalCb = nullptr;
+	debug::ProfilerFinalCallback<>* _finalCb = nullptr;
 };
 
-// Reusable osgDebug content for an application-owned Dear ImGui frame. Panel
+// Reusable osgx::imgui content for an application-owned Dear ImGui frame. Panel
 // deliberately creates no ImGui context, backend, window, or event handler:
 // call draw() after the host has begun the window that should contain these
 // sections. Widget below is the convenience driver that supplies those pieces.
@@ -931,7 +931,7 @@ private:
 			flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
 		}
 
-		if(ImGui::Begin("osgDebug", nullptr, flags)) {
+		if(ImGui::Begin("osgx::imgui", nullptr, flags)) {
 			if(_opts.showGPUInfo) {
 				static const auto* glRenderer = glGetString(GL_RENDERER);
 				static const auto* glVersion = glGetString(GL_VERSION);

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../osgx.hpp"
+#include "Callbacks.hpp"
+#include "Core.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -23,7 +24,7 @@ OSGX_ENABLE_WARNINGS
 // TODO: Make some macro wrappers for pushGroup/insertMessage that use __FUNCTION__, __FILE__, etc.
 // TODO: pushGroup/insertMessage accept an "id", which we probably should manage automatically.
 
-namespace osgDebug {
+namespace osgx::debug {
 
 using namespace osgx::literals;
 
@@ -159,7 +160,7 @@ namespace detail {
 	inline glDebugMessageCallbackFunc _messageCallback = nullptr;
 	inline glDebugMessageControlFunc _messageControl = nullptr;
 
-	// All osgDebug log output - internal diagnostics, GL annotation mirrors, driver
+	// All osgx::debug log output - internal diagnostics, GL annotation mirrors, driver
 	// messages - flows through this single sink. Replace it to redirect to spdlog,
 	// Qt logging, an ImGui scrollback, etc. Default: osg::notify(NOTICE).
 	inline std::function<void(std::string_view)> _sink = [](std::string_view s) {
@@ -194,7 +195,7 @@ namespace detail {
 
 		std::ostringstream oss;
 
-		oss << "osgDebug | source=" << toString(src)
+		oss << "osgx::debug | source=" << toString(src)
 			<< " type=" << toString(typ)
 			<< " severity=" << toString(sev)
 			<< " id=" << id
@@ -213,7 +214,7 @@ namespace detail {
 			message.c_str()
 		);
 
-		notify("osgDebug::pushGroup | ", message);
+		notify("osgx::debug::pushGroup | ", message);
 	}
 
 	inline void popGroup() {
@@ -233,7 +234,7 @@ namespace detail {
 
 		_messageInsert(source, type, id, severity, -1, message.c_str());
 
-		notify("osgDebug::messageInsert | ", message);
+		notify("osgx::debug::messageInsert | ", message);
 	}
 
 	inline void setCallback(GLDEBUGPROC callback, const void* userParam=nullptr) {
@@ -296,10 +297,10 @@ namespace detail {
 		if(f) {
 			*func = reinterpret_cast<T>(f);
 
-			notify("osgDebug | Bound function '", name, "' to @", (void*)(*func));
+			notify("osgx::debug | Bound function '", name, "' to @", (void*)(*func));
 		}
 
-		else notify("osgDebug | FAILED to bind '", name, "'");
+		else notify("osgx::debug | FAILED to bind '", name, "'");
 	}
 
 	// Per-context accumulator for two-phase GPU timing. ProfilerCallback (phase 1) pushes
@@ -473,7 +474,7 @@ namespace detail {
 				if(shouldPrint) {
 					// TODO: This is annoyingly AWFUL and should be fixed; SOON!
 					notify(
-						"osgDebug::Profiler | [", e.path, "] GPU: ", gpuNs / 1000u, "us",
+						"osgx::debug::Profiler | [", e.path, "] GPU: ", gpuNs / 1000u, "us",
 						" | avg: ", avgNs / 1000u, "us",
 						" Frame: ", frameNum
 					);
@@ -552,7 +553,7 @@ inline void installDefaultCallback(bool synchronous=true) {
 	detail::installDefaultCallback(synchronous);
 }
 
-// Replace the log sink for all osgDebug output (internal diagnostics, GL annotation
+// Replace the log sink for all osgx::debug output (internal diagnostics, GL annotation
 // mirrors, driver messages). The default writes to osg::notify(NOTICE).
 inline void setSink(std::function<void(std::string_view)> sink) {
 	detail::_sink = std::move(sink);
@@ -846,8 +847,8 @@ private:
 //
 // Usage:
 //
-// root->accept(osgDebug::ProfilerVisitor());
-// appendCameraDrawCallback(cam, FINAL_DRAW, new osgDebug::ProfilerFinalCallback());
+// root->accept(osgx::debug::ProfilerVisitor());
+// appendCameraDrawCallback(cam, FINAL_DRAW, new osgx::debug::ProfilerFinalCallback());
 enum class QueryMode { SYNC, ASYNC };
 
 class ProfilerCallbackBase: public osg::Drawable::DrawCallback {
@@ -1046,13 +1047,13 @@ public:
 		if(auto* profiler = dynamic_cast<ProfilerCallbackBase*>(d.getDrawCallback())) {
 			profiler->setProfilerName(path);
 
-			detail::notify("osgDebug::ProfilerVisitor | Updating ProfilerCallback on ", path);
+			detail::notify("osgx::debug::ProfilerVisitor | Updating ProfilerCallback on ", path);
 		}
 
 		else {
 			auto dcb = new ProfilerCallback<N>(path, d.getDrawCallback());
 
-			detail::notify("osgDebug::ProfilerVisitor | Setting ProfilerCallback on ", path);
+			detail::notify("osgx::debug::ProfilerVisitor | Setting ProfilerCallback on ", path);
 
 			d.setDrawCallback(dcb);
 		}
@@ -1060,13 +1061,13 @@ public:
 		if(auto* profiler = dynamic_cast<ProfilerCullCallbackBase*>(d.getCullCallback())) {
 			profiler->setProfilerName(path);
 
-			detail::notify("osgDebug::ProfilerVisitor | Updating ProfilerCullCallback on ", path);
+			detail::notify("osgx::debug::ProfilerVisitor | Updating ProfilerCullCallback on ", path);
 		}
 
 		else {
 			auto ccb = new ProfilerCullCallback(path, d.getCullCallback());
 
-			detail::notify("osgDebug::ProfilerVisitor | Setting ProfilerCullCallback on ", path);
+			detail::notify("osgx::debug::ProfilerVisitor | Setting ProfilerCullCallback on ", path);
 
 			d.setCullCallback(ccb);
 		}
@@ -1087,7 +1088,7 @@ class GraphicsOperation: public osg::GraphicsOperation {
 public:
 	GraphicsOperation():
 	osg::Referenced(true),
-	osg::GraphicsOperation("osgDebug::initialize Operation", false) {}
+	osg::GraphicsOperation("osgx::debug::initialize Operation", false) {}
 
 	virtual void operator()(osg::GraphicsContext* gc) {
 		initialize(gc);
@@ -1152,13 +1153,13 @@ public:
 				);
 
 				detail::notify(
-					"osgDebug::FrameByFrameViewer | render #", _count,
+					"osgx::debug::FrameByFrameViewer | render #", _count,
 					" @", wallTime, "s"
 				);
 
 				auto [_ut, ut] = osgx::call([this]() { updateTraversal(); });
 
-				detail::notify("osgDebug::FrameByFrameViewer | Update took ", ut, "us");
+				detail::notify("osgx::debug::FrameByFrameViewer | Update took ", ut, "us");
 
 				// Below are exactly what the typical `osgViewer::Viewer::renderingTraversals()`
 				// method does.
