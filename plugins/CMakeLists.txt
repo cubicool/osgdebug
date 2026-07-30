@@ -5,3 +5,7 @@
 if(OSGX_BUILD_KTX2)
 	add_subdirectory("ktx2")
 endif()
+
+if(OSGX_BUILD_GLTF)
+	add_subdirectory("gltf")
+endif()

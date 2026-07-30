@@ -1,0 +1,310 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
+#define TINYGLTF_NOEXCEPTION
+
+#include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
+
+#include "Mesh.hpp"
+#include "Log.hpp"
+#include "Material.hpp"
+#include "Skin.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Geode>
+#include <osg/Geometry>
+
+#include <osgDB/Options>
+
+#include <osgUtil/SmoothingVisitor>
+
+OSGX_ENABLE_WARNINGS
+
+#include <osgx/gltf/Shader.hpp>
+
+#include <algorithm>
+#include <cstdlib>
+#include <map>
+#include <typeinfo>
+
+namespace osgx::gltf::detail {
+
+MeshBuilder::MeshBuilder(
+	const tinygltf::Model& model,
+	const osgDB::Options* readOptions,
+	MaterialBuilder& materialBuilder,
+	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
+	const std::vector<osg::ref_ptr<Skin>>& skins
+):
+_model(model),
+_readOptions(readOptions),
+_materialBuilder(materialBuilder),
+_arrays(arrays),
+_skins(skins) {}
+
+osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const {
+	GLTF_NOTIFY(1)
+		<< "makeMesh '" << mesh.name
+		<< "' skin=" << skinIdx
+		<< " - " << mesh.primitives.size() << " primitive(s)" << std::endl
+	;
+
+	osg::Group* group = new osg::Group();
+
+	group->setName(mesh.name);
+
+	std::size_t primIdx = 0;
+
+	for(auto& primitive : mesh.primitives) {
+		GLTF_NOTIFY(2)
+			<< "primitive[" << primIdx << "]"
+			<< " mode=" << primitive.mode
+			<< " indices=" << primitive.indices
+			<< " material=" << primitive.material
+			<< " attrs=" << primitive.attributes.size() << std::endl
+		;
+
+		osg::ref_ptr<osg::Geometry> geom = new osg::Geometry();
+
+		geom->setName(typeid(*this).name());
+		geom->setUseVertexBufferObjects(true);
+
+		osg::Vec4 baseColorFactor(1, 1, 1, 1);
+
+		// Vertex attributes are parsed before material application since texture-unit
+		// binding needs to know which UV set (TEXCOORD_n) each texture requests.
+		GLTF_NOTIFY(3) << "attributes:" << std::endl;
+
+		std::map<int, osg::Array*> texCoordSets;
+		int jointsAccessor = -1;
+		int weightsAccessor = -1;
+
+		for(auto& [attrName, accessorIdx] : primitive.attributes) {
+			const bool nonnegative = accessorIdx >= 0;
+			const std::size_t arrayIndex = nonnegative
+				? static_cast<std::size_t>(accessorIdx)
+				: 0
+			;
+			const bool valid =
+				nonnegative && arrayIndex < _arrays.size() && _arrays[arrayIndex].valid();
+
+			GLTF_NOTIFY(4)
+				<< "" << attrName
+				<< " -> accessor[" << accessorIdx << "]"
+				<< (valid ? " OK" : " NULL/INVALID") << std::endl
+			;
+
+			if(!valid) continue;
+
+			if(attrName == "POSITION") geom->setVertexArray(_arrays[arrayIndex]);
+			else if(attrName == "NORMAL") geom->setNormalArray(_arrays[arrayIndex]);
+			else if(attrName == "COLOR_0") geom->setColorArray(_arrays[arrayIndex]);
+			else if(attrName == "TANGENT") {
+				_arrays[arrayIndex]->setBinding(osg::Array::BIND_PER_VERTEX);
+
+				geom->setVertexAttribArray(
+					osgx::gltf::shader::TANGENT_ATTRIBUTE,
+					_arrays[arrayIndex]
+				);
+			}
+			else if(attrName.rfind("TEXCOORD_", 0) == 0) {
+				int uvSet = std::atoi(attrName.c_str() + 9);
+
+				texCoordSets[uvSet] = _arrays[arrayIndex];
+			}
+
+			else if(attrName == "JOINTS_0") jointsAccessor = accessorIdx;
+			else if(attrName == "WEIGHTS_0") weightsAccessor = accessorIdx;
+		}
+
+		if(jointsAccessor >= 0 || weightsAccessor >= 0) {
+			GLTF_NOTIFY(3)
+				<< "skinning attrs:"
+				<< " JOINTS_0=" << jointsAccessor
+				<< " WEIGHTS_0=" << weightsAccessor << std::endl
+			;
+
+			if(skinIdx >= 0 && static_cast<std::size_t>(skinIdx) < _skins.size()) {
+				if(jointsAccessor >= 0) {
+					const std::size_t jointsIndex = static_cast<std::size_t>(jointsAccessor);
+
+					_arrays[jointsIndex]->setBinding(osg::Array::BIND_PER_VERTEX);
+					_arrays[jointsIndex]->setPreserveDataType(true);
+					geom->setVertexAttribArray(
+						osgx::gltf::shader::JOINT_INDICES_ATTRIBUTE,
+						_arrays[jointsIndex]
+					);
+				}
+
+				if(weightsAccessor >= 0) {
+					const std::size_t weightsIndex = static_cast<std::size_t>(weightsAccessor);
+
+					_arrays[weightsIndex]->setBinding(osg::Array::BIND_PER_VERTEX);
+					geom->setVertexAttribArray(
+						osgx::gltf::shader::JOINT_WEIGHTS_ATTRIBUTE,
+						_arrays[weightsIndex]
+					);
+				}
+			}
+
+			else {
+				GLTF_NOTIFY(3)
+					<< "skinning attrs present, but node has no valid skin; not binding them"
+					<< std::endl
+				;
+			}
+		}
+
+		// A missing material means glTF's defined default material, not “leave
+		// whatever render state happened to be inherited.” MaterialBuilder also
+		// validates positive indices before looking them up.
+		GLTF_NOTIFY(3) << "applyMaterial " << primitive.material << std::endl;
+
+		_materialBuilder.applyMaterial(
+			primitive.material,
+			baseColorFactor,
+			geom,
+			texCoordSets
+		);
+
+		// Fall back to a solid color if COLOR_0 is absent.
+		if(!geom->getColorArray()) {
+			auto* verts = static_cast<osg::Vec3Array*>(geom->getVertexArray());
+			const unsigned int count = verts
+				? static_cast<unsigned int>(verts->size())
+				: 1
+			;
+			auto* colors = new osg::Vec4Array(count);
+
+			std::fill(colors->begin(), colors->end(), baseColorFactor);
+
+			geom->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
+		}
+
+		// Index primitive set: uint8, uint16, or uint32.
+		const bool haveIndex = primitive.indices >= 0;
+		const std::size_t indexAccessor = haveIndex
+			? static_cast<std::size_t>(primitive.indices)
+			: 0
+		;
+
+		if(
+			haveIndex &&
+			indexAccessor < _arrays.size() &&
+			indexAccessor < _model.accessors.size() &&
+			_arrays[indexAccessor].valid()
+		) {
+			const GLenum glMode = _primitiveMode(primitive.mode);
+			const tinygltf::Accessor& idxAcc = _model.accessors[indexAccessor];
+			osg::Array* indexArray = _arrays[indexAccessor];
+
+			switch(idxAcc.componentType) {
+				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+					auto* src = static_cast<osg::UByteArray*>(indexArray);
+					auto* de = new osg::DrawElementsUByte(
+						glMode,
+						static_cast<unsigned int>(idxAcc.count)
+					);
+
+					std::copy(src->begin(), src->end(), de->begin());
+
+					geom->addPrimitiveSet(de);
+
+					break;
+				}
+
+				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+					auto* src = static_cast<osg::UShortArray*>(indexArray);
+
+					geom->addPrimitiveSet(new osg::DrawElementsUShort(
+						glMode,
+						src->begin(),
+						src->end()
+					));
+
+					break;
+				}
+
+				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+					auto* src = static_cast<osg::UIntArray*>(indexArray);
+
+					geom->addPrimitiveSet(new osg::DrawElementsUInt(
+						glMode,
+						src->begin(),
+						src->end()
+					));
+
+					break;
+				}
+
+				default:
+					OSG_WARN
+						<< "unsupported index component type "
+						<< idxAcc.componentType << std::endl
+					;
+			}
+		}
+
+		else {
+			// Non-indexed: draw every vertex.
+			auto* verts = static_cast<osg::Vec3Array*>(geom->getVertexArray());
+
+			if(verts) geom->addPrimitiveSet(new osg::DrawArrays(
+				_primitiveMode(primitive.mode),
+				0,
+				static_cast<GLsizei>(verts->size())
+			));
+		}
+
+		// SmoothingVisitor assumes triangles; never call it for points or lines.
+		bool isTriangles = (
+			primitive.mode == TINYGLTF_MODE_TRIANGLES ||
+			primitive.mode == TINYGLTF_MODE_TRIANGLE_STRIP ||
+			primitive.mode == TINYGLTF_MODE_TRIANGLE_FAN
+		);
+
+		bool skipNormals =
+			_readOptions &&
+			_readOptions->getOptionString().find("gltfSkipNormals") != std::string::npos
+		;
+
+		osg::Geode* geode = new osg::Geode();
+
+		geode->addDrawable(geom);
+
+		if(isTriangles && !skipNormals && !geom->getNormalArray()) {
+			GLTF_NOTIFY(3) << "generating normals via SmoothingVisitor" << std::endl;
+
+			osgUtil::SmoothingVisitor sv;
+
+			geode->accept(sv);
+		}
+
+		GLTF_NOTIFY(3) << "addChild geode to mesh group" << std::endl;
+
+		group->addChild(geode);
+
+		primIdx++;
+	}
+
+	return group;
+}
+
+GLenum MeshBuilder::_primitiveMode(int gltfMode) {
+	switch(gltfMode) {
+		case TINYGLTF_MODE_POINTS: return GL_POINTS;
+		case TINYGLTF_MODE_LINE: return GL_LINES;
+		case TINYGLTF_MODE_LINE_LOOP: return GL_LINE_LOOP;
+		case TINYGLTF_MODE_LINE_STRIP: return GL_LINE_STRIP;
+		case TINYGLTF_MODE_TRIANGLES: return GL_TRIANGLES;
+		case TINYGLTF_MODE_TRIANGLE_STRIP: return GL_TRIANGLE_STRIP;
+		case TINYGLTF_MODE_TRIANGLE_FAN: return GL_TRIANGLE_FAN;
+		default: return GL_TRIANGLES;
+	}
+}
+
+}

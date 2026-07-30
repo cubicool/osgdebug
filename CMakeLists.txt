@@ -15,6 +15,7 @@ option(OSGX_BUILD_EXAMPLES "Build the osgx examples" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_UTILS "Build the osgx utilities" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_PYTHON "Build the osgx Python module" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_KTX2 "Build the KTX2 osgDB plugin (osgdb_ktx2) and the osgx::ktx2 static library" ${OSGX_IS_TOP_LEVEL})
+option(OSGX_BUILD_GLTF "Build the glTF osgDB plugin (osgdb_gltf) and the osgx::gltf/osgx::gltf_pbribl static libraries" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_INSTALL "Generate osgx installation rules" ${OSGX_IS_TOP_LEVEL})
 
 if(WIN32)
@@ -117,7 +118,7 @@ target_sources(osgx_core INTERFACE
 )
 set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
-add_library(osgx
+add_library(osgx SHARED
 	src/CaptureCubeMap.cpp
 	src/Cursor.cpp
 	src/Debug.cpp
@@ -284,14 +285,6 @@ function(OSGX_ADD_EXECUTABLE _prefix _topic)
 	target_include_directories("${_target}" BEFORE PRIVATE "${PROJECT_SOURCE_DIR}")
 endfunction()
 
-if(OSGX_BUILD_EXAMPLES)
-	add_subdirectory("examples")
-endif()
-
-if(OSGX_BUILD_UTILS)
-	add_subdirectory("utils")
-endif()
-
 # ---------------------------------------------------------------------------
 # KTX-Software (ext/KTX-Software submodule)
 # Disable everything we don't need to keep the build fast.
@@ -305,7 +298,21 @@ if(OSGX_BUILD_KTX2)
 	add_subdirectory("ext/KTX-Software")
 endif()
 
+if(OSGX_BUILD_GLTF)
+	add_subdirectory("src/gltf")
+endif()
+
 add_subdirectory("plugins")
+
+# examples/ and utils/ must come after the blocks above -- some utils (the osgx::gltf tools) link
+# osgx::gltf_pbribl/osgx::ktx2, which are only defined by that point in the configure pass.
+if(OSGX_BUILD_EXAMPLES)
+	add_subdirectory("examples")
+endif()
+
+if(OSGX_BUILD_UTILS)
+	add_subdirectory("utils")
+endif()
 
 if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# TODO: Make this an option too!
@@ -342,5 +349,24 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 
 	if(NOT OSGX_WITH_GBM)
 		message(STATUS "OSGX_WITH_GBM is OFF; osgx.platform.createGBMWindow will be unavailable")
+	endif()
+
+	# osgx.gltf, unlike imgui/EGL/GBM above, isn't already carried by osgx::osgx -- it needs its
+	# own explicit link (osgx::gltf_pbribl, which pulls in osgx::gltf + osgx::osgx transitively) plus
+	# the tinygltf headers and a preprocessor define to guard the bindings in ext/osgx-python.cpp.
+	if(OSGX_BUILD_GLTF)
+		target_compile_definitions(osgx_python PRIVATE OSGX_GLTF)
+		target_include_directories(osgx_python PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
+		target_link_libraries(osgx_python PRIVATE osgx::gltf_pbribl)
+
+		# tinygltf's bundled json.hpp uses the deprecated std::is_pod trait, same as everywhere
+		# else it's included in this repo.
+		if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+			set_source_files_properties("ext/osgx-python.cpp" PROPERTIES
+				COMPILE_OPTIONS "-Wno-deprecated-declarations"
+			)
+		endif()
+	else()
+		message(STATUS "OSGX_BUILD_GLTF is OFF; osgx.gltf Python bindings will be unavailable")
 	endif()
 endif()
