@@ -41,6 +41,7 @@ void PointerCapture::setCaptured(bool captured) {
 
 	_accum.set(0.0f, 0.0f);
 	_recenterPending = captured;
+	_echoPending = false;
 }
 
 osg::Vec2 PointerCapture::consume() {
@@ -56,23 +57,42 @@ bool PointerCapture::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAd
 
 	if(!_captured) return false;
 
+	if(
+		ea.getEventType() != osgGA::GUIEventAdapter::MOVE &&
+		ea.getEventType() != osgGA::GUIEventAdapter::DRAG
+	) return false;
+
+	_centerX = 0.5f * (ea.getXmin() + ea.getXmax());
+	_centerY = 0.5f * (ea.getYmin() + ea.getYmax());
+
 	if(_recenterPending) {
-		_centerX = 0.5f * (ea.getXmin() + ea.getXmax());
-		_centerY = 0.5f * (ea.getYmin() + ea.getYmax());
 		_recenterPending = false;
+		_echoPending = true;
 
 		aa.requestWarpPointer(_centerX, _centerY);
 
 		return false;
 	}
 
-	if(
-		ea.getEventType() != osgGA::GUIEventAdapter::MOVE &&
-		ea.getEventType() != osgGA::GUIEventAdapter::DRAG
-	) return false;
+	// This event may be the echo of our own warp above rather than real user motion: GraphicsWindow
+	// implementations typically drain their native event queue in a loop and requestWarpPointer()
+	// forces a round trip (e.g. XWarpPointer+XSync on X11) before returning, so the synthetic
+	// MOVE/DRAG it generates is often already pending and gets processed in this same pass. That
+	// echo rarely lands exactly on (_centerX, _centerY) -- float/int truncation in the warp call,
+	// plus a Y-flip round trip some GUIActionAdapter implementations apply -- so treating it as real
+	// input would accumulate a small, consistently-signed leftover delta AND re-warp, forming a
+	// self-reinforcing loop that swamps real motion within a single frame. Absorb exactly one event
+	// per warp as the presumed echo instead of re-warping again from it.
+	if(_echoPending) {
+		_echoPending = false;
+
+		return false;
+	}
 
 	_accum.x() += ea.getX() - _centerX;
 	_accum.y() += ea.getY() - _centerY;
+
+	_echoPending = true;
 
 	aa.requestWarpPointer(_centerX, _centerY);
 

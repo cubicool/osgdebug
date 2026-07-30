@@ -108,7 +108,19 @@ public:
 		double w = ea.getXmax() - ea.getXmin();
 		double h = ea.getYmax() - ea.getYmin();
 
-		if(w > 0.0 && h > 0.0) manip->orbitByDelta(2.0 * delta.x() / w, 2.0 * delta.y() / h);
+		// PointerCapture reports raw ea.getX()/getY() units by design (see osgx/Cursor.hpp) -- it
+		// doesn't know or care what those units mean to a caller. orbitByDelta()'s dy, though,
+		// matches getYnormalized() (up-positive), the same convention OrbitAxisManipulator's own
+		// live MOVE/DRAG tracking uses internally. Raw Y is up-positive or down-positive depending on
+		// the window's mouse orientation (X11 defaults to Y_INCREASING_DOWNWARDS), so it must be
+		// flipped to match here -- otherwise height responds backwards relative to the uncaptured
+		// feel. X has no such flip: getXnormalized() has no orientation dependence.
+		double dy = ea.getMouseYOrientation() == osgGA::GUIEventAdapter::Y_INCREASING_DOWNWARDS
+			? -delta.y()
+			: delta.y()
+		;
+
+		if(w > 0.0 && h > 0.0) manip->orbitByDelta(2.0 * delta.x() / w, 2.0 * dy / h);
 
 		return false;
 	}

@@ -64,7 +64,8 @@ private:
 	osg::observer_ptr<osgViewer::View> _view;
 
 	bool _captured = false;
-	bool _recenterPending = false;
+	bool _recenterPending = false; // need to actively warp on the next MOVE/DRAG (capture-start/resize)
+	bool _echoPending = false; // next MOVE/DRAG is presumed to be this handler's own warp echo
 
 	float _centerX = 0.0f;
 	float _centerY = 0.0f;
