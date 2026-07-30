@@ -58,17 +58,35 @@ find_package(OpenGL REQUIRED)
 # Detected once here (not per-subdirectory/per-target) so OSGX_WITH_IMGUI and the
 # IMGUI_* variables are already set by the time add_subdirectory(examples)/ext are
 # reached below -- CMake subdirectories inherit the parent's variables at the point
-# add_subdirectory() is called.
-find_package(PkgConfig)
+# add_subdirectory() is called. REQUIRED because osgx::platform's Linux.cpp (X11/XRandr) is an
+# unconditional part of libosgx -- see the X11 pkg_check_modules() call below.
+find_package(PkgConfig REQUIRED)
 
-if(PkgConfig_FOUND)
-	pkg_check_modules(IMGUI imgui)
-endif()
+pkg_check_modules(IMGUI imgui)
+pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xrandr)
+pkg_check_modules(EGL egl)
+pkg_check_modules(GBM gbm libdrm)
 
 option(OSGX_WITH_IMGUI "Compile osgx::imgui (Dear ImGui overlay) into libosgx" ${IMGUI_FOUND})
 
 if(OSGX_WITH_IMGUI AND NOT IMGUI_FOUND)
 	message(FATAL_ERROR "OSGX_WITH_IMGUI is ON but Dear ImGui was not found via pkg-config")
+endif()
+
+# osgx::platform's Linux.cpp (X11/XRandr) is not optional -- osgViewer already requires X11 for
+# its GLX backend on Linux, so this carries no more risk than the existing OpenGL::GL dependency
+# below. GraphicsWindowEGL/GBM are genuinely optional: EGL and GBM+libdrm are niche dev packages
+# a box building osgx may not have installed, so they get the same auto-detected option treatment
+# as OSGX_WITH_IMGUI.
+option(OSGX_WITH_EGL "Compile osgx::platform's EGL-backed GraphicsWindowEGL into libosgx" ${EGL_FOUND})
+option(OSGX_WITH_GBM "Compile osgx::platform's GBM/DRM-backed GraphicsWindowGBM into libosgx" ${GBM_FOUND})
+
+if(OSGX_WITH_EGL AND NOT EGL_FOUND)
+	message(FATAL_ERROR "OSGX_WITH_EGL is ON but EGL was not found via pkg-config")
+endif()
+
+if(OSGX_WITH_GBM AND NOT GBM_FOUND)
+	message(FATAL_ERROR "OSGX_WITH_GBM is ON but GBM/libdrm was not found via pkg-config")
 endif()
 
 configure_file(
@@ -100,11 +118,13 @@ set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
 add_library(osgx
 	src/CaptureCubeMap.cpp
+	src/Cursor.cpp
 	src/Debug.cpp
 	src/GGXPrefilter.cpp
 	src/Grid.cpp
 	src/IBL.cpp
 	src/LambertianBake.cpp
+	src/Linux.cpp
 	src/Manipulators.cpp
 	src/PBR.cpp
 	src/Picking.cpp
@@ -115,7 +135,7 @@ add_library(osgx::osgx ALIAS osgx)
 target_compile_features(osgx PUBLIC cxx_std_20)
 target_link_libraries(osgx
 	PUBLIC osgx::core
-	PRIVATE OpenGL::GL
+	PRIVATE OpenGL::GL PkgConfig::X11
 )
 target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/osgx.hpp>"
@@ -130,6 +150,10 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Shader.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Debug.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/ImGui.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Linux.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GraphicsWindowEGL.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GraphicsWindowGBM.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Cursor.hpp>"
 )
 set_target_properties(osgx PROPERTIES
 	EXPORT_NAME osgx
@@ -143,6 +167,20 @@ if(OSGX_WITH_IMGUI)
 	target_compile_definitions(osgx PUBLIC OSGX_IMGUI)
 	target_include_directories(osgx PUBLIC ${IMGUI_INCLUDE_DIRS})
 	target_link_libraries(osgx PUBLIC ${IMGUI_LINK_LIBRARIES})
+endif()
+
+if(OSGX_WITH_EGL)
+	target_sources(osgx PRIVATE src/GraphicsWindowEGL.cpp)
+	target_compile_definitions(osgx PUBLIC OSGX_EGL)
+	target_include_directories(osgx PRIVATE ${EGL_INCLUDE_DIRS})
+	target_link_libraries(osgx PRIVATE ${EGL_LINK_LIBRARIES})
+endif()
+
+if(OSGX_WITH_GBM)
+	target_sources(osgx PRIVATE src/GraphicsWindowGBM.cpp)
+	target_compile_definitions(osgx PUBLIC OSGX_GBM)
+	target_include_directories(osgx PRIVATE ${GBM_INCLUDE_DIRS})
+	target_link_libraries(osgx PRIVATE ${GBM_LINK_LIBRARIES})
 endif()
 
 if(OSGX_INSTALL)
@@ -279,5 +317,15 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# and link libraries as PUBLIC usage requirements when OSGX_WITH_IMGUI is on.
 	if(NOT OSGX_WITH_IMGUI)
 		message(STATUS "OSGX_WITH_IMGUI is OFF; osgx.imgui Python bindings will be unavailable")
+	endif()
+
+	# Same story for osgx.platform's createEGLWindow()/createGBMWindow() -- OSGX_EGL/OSGX_GBM ride
+	# along from osgx::osgx the same way OSGX_IMGUI does above.
+	if(NOT OSGX_WITH_EGL)
+		message(STATUS "OSGX_WITH_EGL is OFF; osgx.platform.createEGLWindow will be unavailable")
+	endif()
+
+	if(NOT OSGX_WITH_GBM)
+		message(STATUS "OSGX_WITH_GBM is OFF; osgx.platform.createGBMWindow will be unavailable")
 	endif()
 endif()

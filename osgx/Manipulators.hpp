@@ -16,6 +16,7 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace osgx {
@@ -128,7 +129,11 @@ public:
 		_pixelNudge(m._pixelNudge),
 		_wheelZoomFactor(m._wheelZoomFactor),
 		_rotateSensitivity(m._rotateSensitivity),
+		_invertY(m._invertY),
+		_invertX(m._invertX),
 		_rotation(m._rotation),
+		_yawAngle(m._yawAngle),
+		_pitchAngle(m._pitchAngle),
 		_node(m._node) {}
 
 	OSGX_ENABLE_WARNINGS
@@ -141,7 +146,22 @@ public:
 	double getWheelZoomFactor() const { return _wheelZoomFactor; }
 
 	void setZoomLimits(double minH, double maxH) { _minHalfExtent = minH; _maxHalfExtent = maxH; }
+	std::pair<double, double> getZoomLimits() const { return {_minHalfExtent, _maxHalfExtent}; }
+
 	void setRotateSensitivity(double s) { _rotateSensitivity = s; }
+	double getRotateSensitivity() const { return _rotateSensitivity; }
+
+	// Inverts the Y axis used by the Ctrl+drag 3D pitch/yaw tilt ONLY -- plain (non-Ctrl) pan is
+	// unaffected. Default true: dragging up tilts the view up. Set false to restore the raw,
+	// uninverted feel.
+	void setInvertY(bool invert) { _invertY = invert; }
+	bool getInvertY() const { return _invertY; }
+
+	// Inverts the X axis used by the Ctrl+drag 3D yaw ONLY -- plain (non-Ctrl) pan is unaffected.
+	// Default false: dragging right rotates the model's near side to the right (matching a
+	// direct-manipulation "grab and drag" feel). Set true to restore the raw, uninverted feel.
+	void setInvertX(bool invert) { _invertX = invert; }
+	bool getInvertX() const { return _invertX; }
 
 	// State
 	void setCenter(const osg::Vec3d& c) { _center = c; }
@@ -190,8 +210,12 @@ private:
 	double _pixelNudge{1.0};
 	double _wheelZoomFactor{1.15};
 	double _rotateSensitivity{2.0};
+	bool _invertY{true};
+	bool _invertX{false};
 
 	osg::Quat _rotation; // identity = pure top-down 2D
+	double _yawAngle{0.0}; // world Y; independent of _pitchAngle -- see handle()'s ctrl branch
+	double _pitchAngle{0.0}; // world X, clamped short of +-90 degrees
 	osg::ref_ptr<osg::Node> _node;
 
 	bool _dragging{false};
@@ -256,6 +280,7 @@ public:
 		_yawSensitivity(m._yawSensitivity),
 		_heightSensitivity(m._heightSensitivity),
 		_wheelZoomFactor(m._wheelZoomFactor),
+		_invertY(m._invertY),
 		_node(m._node) {}
 
 	OSGX_ENABLE_WARNINGS
@@ -274,10 +299,48 @@ public:
 		_maxCoverage = maxCoverage;
 	}
 
+	std::pair<double, double> getCoverageLimits() const { return {_minCoverage, _maxCoverage}; }
+	double getYawSensitivity() const { return _yawSensitivity; }
+	double getHeightSensitivity() const { return _heightSensitivity; }
+	double getWheelZoomFactor() const { return _wheelZoomFactor; }
+
+	// Inverts the Y axis used for height (both the raw MOVE/DRAG path and orbitByDelta()).
+	// Default true: dragging/moving up raises the camera. Set false to restore the raw,
+	// uninverted feel.
+	void setInvertY(bool invert) { _invertY = invert; }
+	bool getInvertY() const { return _invertY; }
+
 	// State
 	double getYaw() const { return _yaw; }
 	double getHeight() const { return _height; }
 	double getDistance() const { return _distance; }
+
+	// Applies a pre-computed (dx, dy) directly, in the same normalized (roughly [-1, 1] per axis)
+	// units as GUIEventAdapter::getXnormalized()/getYnormalized() -- the same units handle()
+	// itself derives internally via _orbit(). This is the hook for driving orbit/height from
+	// something other than raw MOVE/DRAG events, e.g. osgx::platform::PointerCapture's
+	// accumulated delta (normalize its pixel delta by the window's half-width/half-height first
+	// to match this scale). Deliberately NOT wired to PointerCapture internally -- see the
+	// layering note on osgx::platform::PointerCapture in osgx/Cursor.hpp.
+	void orbitByDelta(double dx, double dy);
+
+	// Disables the raw MOVE/DRAG-driven orbit path (handle()'s call into _orbit()) without
+	// affecting scroll-zoom or Space/Home reset. orbitByDelta() always works regardless of this
+	// flag. Exists so an external mouse-capture scheme (e.g. osgx::platform::PointerCapture) can
+	// drive orbitByDelta() exclusively: osgViewer::Viewer::eventTraversal() delivers every event
+	// to the camera manipulator AND every other installed GUIEventHandler unconditionally (a
+	// handler's return value does not stop propagation to the others), so without this the
+	// manipulator would independently re-track the same raw cursor position, AND misinterpret a
+	// capture scheme's own warp-to-center jumps as huge manual drags. Re-enabling reseeds the
+	// next MOVE/DRAG event so there's no spurious jump from wherever the cursor drifted while
+	// disabled.
+	void setLiveOrbitEnabled(bool enabled) {
+		_liveOrbitEnabled = enabled;
+
+		if(enabled) _initialized = false;
+	}
+
+	bool isLiveOrbitEnabled() const { return _liveOrbitEnabled; }
 
 	// CameraManipulator interface
 	void setNode(osg::Node* node) override { _node = node; }
@@ -312,10 +375,12 @@ private:
 	double _yawSensitivity{osg::PI};
 	double _heightSensitivity{0.5};
 	double _wheelZoomFactor{1.15};
+	bool _invertY{true};
 
 	osg::ref_ptr<osg::Node> _node;
 
 	bool _initialized{false};
+	bool _liveOrbitEnabled{true};
 	double _lastX{0.0};
 	double _lastY{0.0};
 };

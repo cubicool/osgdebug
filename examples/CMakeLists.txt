@@ -9,6 +9,7 @@ set(OSGX_EXAMPLES
 	"manipulator"
 	"notifyfilter"
 	"picking"
+	"platform"
 	"viewer"
 	"visitor"
 )

@@ -1,9 +1,19 @@
 //vimrun! ./test.py
 
 #include "osgx/osgx.hpp"
+#include "osgx/Cursor.hpp"
 #include "osgx/Debug.hpp"
 #include "osgx/ImGui.hpp"
+#include "osgx/Linux.hpp"
 #include "pyosg/pyosg.hpp"
+
+#ifdef OSGX_EGL
+#include "osgx/GraphicsWindowEGL.hpp"
+#endif
+
+#ifdef OSGX_GBM
+#include "osgx/GraphicsWindowGBM.hpp"
+#endif
 
 #include "pybind11x.hpp"
 
@@ -70,6 +80,161 @@ PYBIND11_MODULE(osgx, m) {
 			),
 			"corner"_a, "width_vec"_a, "height_vec"_a
 		)
+	;
+
+	// osgx::Ortho2DManipulator / OrbitAxisManipulator / MultiCameraManipulator (osgx/Manipulators.hpp).
+	// All three derive from osgGA::CameraManipulator, already registered by pyosgGA.cpp as
+	// "CameraManipulator" -- its node/matrix/inverseMatrix/homePosition properties and
+	// home()/init()/handle() methods come along automatically via virtual dispatch, so only each
+	// subclass's OWN new surface needs binding here.
+	py::class_<
+		osgx::Ortho2DManipulator,
+		osgGA::CameraManipulator,
+		osg::ref_ptr<osgx::Ortho2DManipulator>
+	>(m, "Ortho2DManipulator")
+		.def(py::init<>())
+		.def_property(
+			"pixelNudge",
+			&osgx::Ortho2DManipulator::getPixelNudge,
+			&osgx::Ortho2DManipulator::setPixelNudge
+		)
+		.def_property(
+			"wheelZoomFactor",
+			&osgx::Ortho2DManipulator::getWheelZoomFactor,
+			&osgx::Ortho2DManipulator::setWheelZoomFactor
+		)
+		.def_property(
+			"rotateSensitivity",
+			&osgx::Ortho2DManipulator::getRotateSensitivity,
+			&osgx::Ortho2DManipulator::setRotateSensitivity
+		)
+		.def_property(
+			"invertY",
+			&osgx::Ortho2DManipulator::getInvertY,
+			&osgx::Ortho2DManipulator::setInvertY,
+			"Inverts the Y axis for Ctrl-drag 3D pitch only; plain pan is unaffected."
+		)
+		.def_property(
+			"invertX",
+			&osgx::Ortho2DManipulator::getInvertX,
+			&osgx::Ortho2DManipulator::setInvertX,
+			"Inverts the X axis for Ctrl-drag 3D yaw only; plain pan is unaffected."
+		)
+		.def_property(
+			"center",
+			&osgx::Ortho2DManipulator::getCenter,
+			&osgx::Ortho2DManipulator::setCenter
+		)
+		.def_property(
+			"halfExtentY",
+			&osgx::Ortho2DManipulator::getHalfExtentY,
+			&osgx::Ortho2DManipulator::setHalfExtentY
+		)
+		.def_property(
+			"zoomLimits",
+			&osgx::Ortho2DManipulator::getZoomLimits,
+			[](osgx::Ortho2DManipulator& self, py::object obj) {
+				auto vals = pyx::try_unpack_sequence<double, double>(obj);
+
+				if(!vals) throw py::type_error(
+					"Expected a (minHalfExtent, maxHalfExtent) sequence of length 2"
+				);
+
+				auto& [minH, maxH] = *vals;
+
+				self.setZoomLimits(minH, maxH);
+			},
+			"(minHalfExtent, maxHalfExtent) clamp for halfExtentY."
+		)
+	;
+
+	py::class_<
+		osgx::OrbitAxisManipulator,
+		osgGA::CameraManipulator,
+		osg::ref_ptr<osgx::OrbitAxisManipulator>
+	>(m, "OrbitAxisManipulator")
+		.def(py::init<>())
+		.def_property(
+			"yawSensitivity",
+			&osgx::OrbitAxisManipulator::getYawSensitivity,
+			&osgx::OrbitAxisManipulator::setYawSensitivity
+		)
+		.def_property(
+			"heightSensitivity",
+			&osgx::OrbitAxisManipulator::getHeightSensitivity,
+			&osgx::OrbitAxisManipulator::setHeightSensitivity
+		)
+		.def_property(
+			"wheelZoomFactor",
+			&osgx::OrbitAxisManipulator::getWheelZoomFactor,
+			&osgx::OrbitAxisManipulator::setWheelZoomFactor
+		)
+		.def_property(
+			"invertY",
+			&osgx::OrbitAxisManipulator::getInvertY,
+			&osgx::OrbitAxisManipulator::setInvertY,
+			"Inverts the Y axis used for height, in both the raw MOVE/DRAG path and orbitByDelta()."
+		)
+		.def_property(
+			"coverageLimits",
+			&osgx::OrbitAxisManipulator::getCoverageLimits,
+			[](osgx::OrbitAxisManipulator& self, py::object obj) {
+				auto vals = pyx::try_unpack_sequence<double, double>(obj);
+
+				if(!vals) throw py::type_error(
+					"Expected a (minCoverage, maxCoverage) sequence of length 2"
+				);
+
+				auto& [minC, maxC] = *vals;
+
+				self.setCoverageLimits(minC, maxC);
+			},
+			"(minCoverage, maxCoverage) viewport-coverage fractions at the zoom extremes."
+		)
+		.def_property(
+			"liveOrbitEnabled",
+			&osgx::OrbitAxisManipulator::isLiveOrbitEnabled,
+			&osgx::OrbitAxisManipulator::setLiveOrbitEnabled,
+			"Disable to drive orbit/height exclusively via orbitByDelta() (e.g. from "
+			"osgx.platform.PointerCapture) instead of raw MOVE/DRAG cursor tracking."
+		)
+		.def_property_readonly("yaw", &osgx::OrbitAxisManipulator::getYaw)
+		.def_property_readonly("height", &osgx::OrbitAxisManipulator::getHeight)
+		.def_property_readonly("distance", &osgx::OrbitAxisManipulator::getDistance)
+		.def(
+			"orbitByDelta",
+			&osgx::OrbitAxisManipulator::orbitByDelta,
+			"dx"_a,
+			"dy"_a,
+			"Applies a pre-computed (dx, dy) directly, in the same normalized units as "
+			"GUIEventAdapter.xNormalized/yNormalized."
+		)
+	;
+
+	py::class_<
+		osgx::MultiCameraManipulator,
+		osgGA::CameraManipulator,
+		osg::ref_ptr<osgx::MultiCameraManipulator>
+	>(m, "MultiCameraManipulator")
+		.def(py::init<>())
+		.def_property(
+			"toggleKey",
+			&osgx::MultiCameraManipulator::getToggleKey,
+			&osgx::MultiCameraManipulator::setToggleKey
+		)
+		.def_property_readonly("activeIndex", &osgx::MultiCameraManipulator::getActiveIndex)
+		.def_property_readonly("numTargets", &osgx::MultiCameraManipulator::getNumTargets)
+		.def(
+			"addTarget",
+			&osgx::MultiCameraManipulator::addTarget,
+			"name"_a,
+			"manipulator"_a,
+			"camera"_a=nullptr,
+			"scene"_a=nullptr,
+			"setActive"_a=std::function<void(bool)>()
+		)
+		.def("activate", &osgx::MultiCameraManipulator::activate, "index"_a)
+		.def("next", &osgx::MultiCameraManipulator::next)
 	;
 
 	// osgx::pbr / osgx::ibl - ported from the STATIC path of pyosg-lighting/09-ibl.py and
@@ -212,8 +377,8 @@ PYBIND11_MODULE(osgx, m) {
 		osg::Camera::DrawCallback,
 		osg::ref_ptr<osgx::ibl::GGXPrefilterReadback>
 	>(m_ibl, "GGXPrefilterReadback")
-		.def("isDone", &osgx::ibl::GGXPrefilterReadback::isDone)
-		.def("getResult", &osgx::ibl::GGXPrefilterReadback::getResult)
+		.def_property_readonly("done", &osgx::ibl::GGXPrefilterReadback::isDone)
+		.def_property_readonly("result", &osgx::ibl::GGXPrefilterReadback::getResult)
 		.def("reset", &osgx::ibl::GGXPrefilterReadback::reset)
 	;
 
@@ -553,6 +718,113 @@ PYBIND11_MODULE(osgx, m) {
 		)
 	;
 #endif
+
+	// osgx::platform -- X11/XRandr window helpers (alwaysOnTop, listMonitors, moveWindow) plus,
+	// when built (see OSGX_WITH_EGL/OSGX_WITH_GBM in CMakeLists.txt), the EGL- and GBM/DRM-backed
+	// GraphicsWindow factories. Moved here from OSG.py's pyosg/linux -- was never actually
+	// OSG.py-specific, so osgx is the right home; see osgx/Linux.hpp.
+	auto m_platform = m.def_submodule("platform", "osgx::platform - X11/EGL/GBM window helpers");
+
+	m_platform.def(
+		"alwaysOnTop",
+		&osgx::platform::alwaysOnTop,
+		"viewer"_a,
+		"enabled"_a=true,
+		"Pin the viewer's native X11 window above other windows (EWMH _NET_WM_STATE_ABOVE)."
+	);
+
+	py::class_<osgx::platform::Monitor>(m_platform, "Monitor")
+		.def_readonly("name", &osgx::platform::Monitor::name)
+		.def_readonly("x", &osgx::platform::Monitor::x)
+		.def_readonly("y", &osgx::platform::Monitor::y)
+		.def_readonly("width", &osgx::platform::Monitor::width)
+		.def_readonly("height", &osgx::platform::Monitor::height)
+		.def_readonly("primary", &osgx::platform::Monitor::primary)
+		.def("__repr__", [](const osgx::platform::Monitor& self) {
+			return
+				"Monitor(name='"s + self.name + "', "
+				"x="s + std::to_string(self.x) + ", "
+				"y="s + std::to_string(self.y) + ", "
+				"width="s + std::to_string(self.width) + ", "
+				"height="s + std::to_string(self.height) + ", "
+				"primary="s + (self.primary ? "True"s : "False"s) + ")"s
+			;
+		})
+	;
+
+	m_platform.def(
+		"listMonitors",
+		&osgx::platform::listMonitors,
+		"Query the real XRandR monitor layout (position/size in root-window coordinates). Monitors "
+		"are NOT assumed to be flush/adjacent -- use these rects directly for placement math."
+	);
+
+	m_platform.def(
+		"moveWindow",
+		&osgx::platform::moveWindow,
+		"viewer"_a,
+		"x"_a,
+		"y"_a,
+		"width"_a=-1,
+		"height"_a=-1,
+		"Reposition (and optionally resize) an already-realized X11 window, keeping OSG's own "
+		"viewport bookkeeping in sync. Pass width/height <= 0 to keep the current size."
+	);
+
+#ifdef OSGX_EGL
+	m_platform.def(
+		"createEGLWindow",
+		&osgx::platform::createEGLWindow,
+		"traits"_a,
+		"Create an X11 window driven by EGL (instead of GLX). Skeleton/proof-of-concept: assign "
+		"the result to `camera.graphicsContext`."
+	);
+#endif
+
+#ifdef OSGX_GBM
+	m_platform.def(
+		"createGBMWindow",
+		&osgx::platform::createGBMWindow,
+		"traits"_a,
+		"Create a direct-scanout DRM/KMS+GBM window (no X11, no window manager). Skeleton/proof-"
+		"of-concept: requires exclusive DRM master access, so it will fail under a running X "
+		"server. Assign the result to `camera.graphicsContext`."
+	);
+#endif
+
+	m_platform.def(
+		"setCursorVisible",
+		&osgx::platform::setCursorVisible,
+		"view"_a,
+		"visible"_a=true,
+		"Show/hide the OS cursor for the view's current window."
+	);
+
+	m_platform.def(
+		"warpPointer",
+		&osgx::platform::warpPointer,
+		"view"_a,
+		"x"_a,
+		"y"_a,
+		"Warp the OS pointer to (x, y) in view/event coordinates (GUIEventAdapter.x/y space, not "
+		"window-local pixels) without the jump itself registering as motion."
+	);
+
+	// Software hide+warp+accumulate mouse capture for turntable/FPS-style relative-motion look
+	// controls. NOT true OS-level pointer confinement -- see osgx/Cursor.hpp.
+	py::class_<
+		osgx::platform::PointerCapture,
+		osgGA::GUIEventHandler,
+		osg::ref_ptr<osgx::platform::PointerCapture>
+	>(m_platform, "PointerCapture")
+		.def(py::init<osgViewer::View&>(), "view"_a)
+		.def_property(
+			"captured",
+			&osgx::platform::PointerCapture::isCaptured,
+			&osgx::platform::PointerCapture::setCaptured
+		)
+		.def("consume", &osgx::platform::PointerCapture::consume)
+	;
 
 	py::dict info;
 

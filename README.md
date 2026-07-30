@@ -1,17 +1,25 @@
 # osgx
 
 osgx is a small, compiled C++20 utility layer on top of OpenSceneGraph. It modernizes common OSG
-idioms (concepts, ranges, spans, lambdas) and adds two optional, explicitly-included subsystems:
+idioms (concepts, ranges, spans, lambdas) and adds three optional, explicitly-included subsystems:
+
+> [!NOTE]
+> The `x` in `osgx` just means "eXtras"; it has nothing to do with `X11` or
+> anything else Xorg-centric (`osgx::platform`'s X11/XRandr window helpers notwithstanding).
 
 - `osgx::debug` — `GL_KHR_debug` integration (driver message callback, KHR debug-group annotations)
   plus a two-phase GPU/CPU per-drawable profiler.
 - `osgx::imgui` — a Dear ImGui overlay (`Widget`/`Panel`) with pluggable sections and a built-in
   GPU-profiler, OSG-stats, and scene-texture browser.
+- `osgx::platform` — X11/XRandr window helpers (`alwaysOnTop`, `listMonitors`, `moveWindow`),
+  EGL- and GBM/DRM-backed `GraphicsWindow` factories for driving a window without GLX or X11 at
+  all, and `PointerCapture` for hide+warp+accumulate mouse capture (turntable/FPS-style look
+  controls).
 
-Both live under `osgx/` and use the `osgx` namespace, but neither is included by the `osgx.hpp`
-umbrella header — pulling in `GL_KHR_debug` or Dear ImGui is always an explicit opt-in
-(`#include "osgx/Debug.hpp"` / `#include "osgx/ImGui.hpp"`), never something a consumer gets for
-free just by including the umbrella.
+All three live under `osgx/` and use the `osgx` namespace, but none of them is included by the
+`osgx.hpp` umbrella header — pulling in `GL_KHR_debug`, Dear ImGui, or X11/EGL/GBM is always an
+explicit opt-in (`#include "osgx/Debug.hpp"` / `#include "osgx/ImGui.hpp"` / `#include
+"osgx/Linux.hpp"`), never something a consumer gets for free just by including the umbrella.
 
 # CMake
 
@@ -57,8 +65,8 @@ no longer needed.
 
 Use `osgx::core` for the low-level, header-only facilities (`Core.hpp`, `Array.hpp`,
 `Callbacks.hpp`, `Shader.hpp`, `Visitors.hpp`, `Warnings.hpp`) or `osgx::osgx` for the complete
-utility layer, including `osgx::debug`/`osgx::imgui`. `osgx::osgx` is the compiled `libosgx`
-library and includes `osgx::core`.
+utility layer, including `osgx::debug`/`osgx::imgui`/`osgx::platform`. `osgx::osgx` is the compiled
+`libosgx` library and includes `osgx::core`.
 
 ## Fresh checkout build order
 
@@ -87,7 +95,7 @@ by concern:
 - `osgx/Array.hpp` — `Array<BaseArray>` / `DrawElements<BaseElements>` wrappers.
 - `osgx/Callbacks.hpp` — callback-group and lambda-callback adapters.
 - `osgx/Picking.hpp` — object-ID picking cameras, readback, and hover/click handlers.
-- `osgx/Manipulators.hpp` — `Ortho2DManipulator` and `MultiCameraManipulator`.
+- `osgx/Manipulators.hpp` — `Ortho2DManipulator`, `OrbitAxisManipulator`, and `MultiCameraManipulator`.
 - `osgx/Grid.hpp` — procedurally generated, antialiased grid overlay/ground-plane geometry.
 - `osgx/Shader.hpp` — generic, line-oriented GLSL library expansion.
 - `osgx/PBR.hpp` — PBR BRDF snippets and `OrbitLightRig`.
@@ -154,6 +162,7 @@ are left intact for other shader tooling or the GLSL compiler.
 - `PickCameraSync`, `PickHoverCallback`, and `PickHandler` wire pick cameras and readback state into viewer camera updates, hover transitions, and mouse input.
 - `MultiCameraManipulator` routes input to one active manipulator while letting each target drive either the main viewer camera or its own camera, useful for RTT and multi-view tools.
 - `Ortho2DManipulator` is an orthographic 2D camera manipulator with pan, geometric zoom, pixel-nudge zoom, optional Ctrl-drag 3D tilt, and automatic near/far projection setup.
+- `OrbitAxisManipulator` is a "turntable" model-viewer camera manipulator: it orbits a fixed vertical axis through the model's bounds, always looking level, with mouse move/drag always active (no button needed) and dolly zoom clamped by viewport coverage. `orbitByDelta(dx, dy)` applies a pre-computed delta directly, and `setLiveOrbitEnabled(false)` disables its own raw-cursor tracking -- together the hooks for composing with an external mouse-capture scheme like `osgx::platform::PointerCapture` (see `examples/osgx-manipulator.cpp`'s `OrbitCaptureBridge`) without giving the manipulator a dependency on `osgx::platform`.
 - `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
 - `osgx::pbr` provides reusable BRDF GLSL snippets and `OrbitLightRig` for direct-light uniforms.
 - `osgx::ibl` provides reusable IBL GLSL snippets plus helpers for BRDF-LUT baking (`sharedBRDFLUT()`), GPU GGX-prefiltered/Lambertian environment baking (`GGXPrefilterScene`, `LambertianBakeScene`), a generic reflection-probe primitive (`CaptureCubeMapScene`), and SH9 diffuse irradiance.
@@ -292,6 +301,50 @@ application that already owns its own ImGui context/frame/window.
 
 ---
 
+## `osgx::platform` — X11/EGL/GBM window helpers
+
+`osgx/Linux.hpp` provides X11/XRandr window helpers that are always compiled into `libosgx` (X11
+is already a hard dependency of `osgViewer`'s GLX backend on Linux, so this carries no more risk
+than the existing OpenGL dependency):
+
+- `alwaysOnTop(viewer, enabled=true)` — pins the viewer's X11 window above other windows via the
+  EWMH `_NET_WM_STATE` ClientMessage protocol.
+- `Monitor` / `listMonitors()` — the real XRandR monitor layout (position/size in root-window
+  coordinates; monitors are **not** assumed to be flush/adjacent).
+- `moveWindow(viewer, x, y, width=-1, height=-1)` — repositions (and optionally resizes) an
+  already-realized X11 window, keeping OSG's own viewport/camera bookkeeping in sync.
+
+`osgx/GraphicsWindowEGL.hpp` and `osgx/GraphicsWindowGBM.hpp` (gated behind `OSGX_EGL`/`OSGX_GBM`,
+requiring EGL and GBM+libdrm respectively via pkg-config; set via the `OSGX_WITH_EGL`/
+`OSGX_WITH_GBM` CMake options, which auto-detect and compile into `libosgx` when found — same
+pattern as `OSGX_WITH_IMGUI`) provide two experimental `osgViewer::GraphicsWindow` factories:
+
+- `createEGLWindow(traits)` — an ordinary X11 window driven by EGL instead of GLX.
+  Skeleton/proof-of-concept: no input/resize handling, but does watch `WM_DELETE_WINDOW` so
+  closing the window shuts the viewer down cleanly.
+- `createGBMWindow(traits)` — direct-scanout DRM/KMS + GBM, no X11 or window manager at all
+  (kiosk/embedded-style). Requires exclusive DRM master access, so it fails under a running X
+  server or Wayland compositor.
+
+`osgx/Cursor.hpp` provides mouse capture built purely on portable `osgGA`/`osgViewer` virtuals
+(`GraphicsWindow::useCursor()`, `View::requestWarpPointer()`) — no X11 dependency of its own, but
+grouped under `osgx::platform` since that's where the motivating need already lived:
+
+- `setCursorVisible(view, visible=true)` / `warpPointer(view, x, y)` — small standalone action
+  helpers (not a get/set pair — OSG's `GraphicsWindow` has no visibility getter of its own).
+- `PointerCapture` — a `GUIEventHandler` implementing the standard hide+warp+accumulate trick for
+  turntable/FPS-style relative-motion look controls: while `setCaptured(true)`, hides the cursor
+  and re-centers it on every move, accumulating the delta for `consume()` to poll once per update
+  traversal. **Not** true OS-level pointer confinement (nothing stops the cursor visibly darting to
+  the screen edge for one frame between warps on some window managers) — that needs real
+  `XGrabPointer` work, tracked in `TODO.md`.
+
+Migrated from `OpenSceneGraph.py`'s `pyosg/linux/` (it was never actually OSG.py-specific); see
+`examples/osgx-platform.cpp` for a worked example of all of the above, including both alternate
+window backends.
+
+---
+
 # Extensions
 
 - [GL_KHR_debug](https://registry.khronos.org/OpenGL/extensions/KHR/KHR_debug.txt)
@@ -324,3 +377,7 @@ above (`FrameByFrameViewer`, `ProfilerVisitor`/`ProfilerFinalCallback`, `Describ
 `osgx-imgui` and `osgx-imgui-external` demonstrate `osgx::imgui::Widget` and the app-owned
 `osgx::imgui::Panel` pattern, respectively. `osgx-drawables` (in `utils/`) attaches
 `ProfilerCallback` via `ProfilerVisitor` to a loaded model from the command line.
+
+`osgx-platform` demonstrates `osgx::platform`: prints the real XRandR monitor layout, moves and
+pins the (default GLX) window via `moveWindow()`/`alwaysOnTop()`, and, when built with
+`OSGX_WITH_EGL`/`OSGX_WITH_GBM`, drives the same scene through `--egl` or `--gbm` instead.

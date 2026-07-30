@@ -228,6 +228,8 @@ void Ortho2DManipulator::updateCamera(osg::Camera& cam) {
 
 void Ortho2DManipulator::home(const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter& aa) {
 	_rotation = osg::Quat();
+	_yawAngle = 0.0;
+	_pitchAngle = 0.0;
 
 	if(_node.valid()) {
 		auto bs = _node->getBound();
@@ -272,14 +274,37 @@ bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActi
 		bool ctrl = (ea.getModKeyMask() & osgGA::GUIEventAdapter::MODKEY_CTRL) != 0;
 
 		if(ctrl) {
-			// 3D: pitch/yaw orbit around center.
-			// Yaw rotates around world Y; pitch rotates around the camera's current right axis.
-			osg::Vec3d right = _rotation.conj() * osg::Vec3d(1.0, 0.0, 0.0);
+			// 3D: pitch/yaw orbit around center. Tracked as two independent scalar angles and
+			// reconstructed fresh each time (NOT accumulated onto the previous _rotation via a
+			// path-dependent "current right" axis) -- yaw always rotates around fixed world Y,
+			// pitch always around the fixed original world X, so yaw behaves identically
+			// regardless of how much pitch has already accumulated. Mixing a path-dependent axis
+			// (the old "current right", derived from _rotation itself) with a fixed one is
+			// exactly what made yaw appear to rotate around the wrong axis after any pitch.
+			// Clamped just short of +-90 degrees to avoid the one unavoidable Euler-angle
+			// singularity (true gimbal lock, where yaw and roll become indistinguishable).
+			//
+			// _invertY/_invertX apply ONLY here (Ctrl-drag pitch/yaw) -- plain pan below is
+			// unaffected. Yaw's default (un-inverted) sign matches a direct-manipulation "grab and
+			// drag" feel: dragging right rotates the model's near side to the right.
+			static const double MAX_PITCH = osg::DegreesToRadians(89.0);
 
+			double pitchDy = _invertY ? -dy : dy;
+			double yawDx = _invertX ? -dx : dx;
+
+			_yawAngle += yawDx * _rotateSensitivity;
+			_pitchAngle = std::clamp(_pitchAngle + pitchDy * _rotateSensitivity, -MAX_PITCH, MAX_PITCH);
+
+			// NOTE: this order looks backwards vs. standard quaternion composition (where
+			// q1*q2 applied via .rotate() applies q2 first), but OSG's row-vector convention
+			// reverses that for a product quaternion converted via Matrixd::rotate() + v*M:
+			// verified empirically that this order applies pitch first (around the fixed
+			// original world X), then yaw (around fixed world Y) -- the order needed so yaw
+			// never drifts the apparent pitch. Swapping this order was the actual fix for a
+			// real reported bug where any yaw after a pitch rotated around the wrong axis.
 			_rotation =
-				osg::Quat(dy * _rotateSensitivity, right) *
-				osg::Quat(-dx * _rotateSensitivity, osg::Vec3d(0.0, 1.0, 0.0)) *
-				_rotation
+				osg::Quat(_pitchAngle, osg::Vec3d(1.0, 0.0, 0.0)) *
+				osg::Quat(_yawAngle, osg::Vec3d(0.0, 1.0, 0.0))
 			;
 		}
 
@@ -420,6 +445,14 @@ void OrbitAxisManipulator::home(const osgGA::GUIEventAdapter&, osgGA::GUIActionA
 	aa.requestRedraw();
 }
 
+void OrbitAxisManipulator::orbitByDelta(double dx, double dy) {
+	if(_invertY) dy = -dy;
+
+	_yaw -= dx * _yawSensitivity;
+	_height += dy * _heightSensitivity * (_topY - _groundY);
+	_height = std::clamp(_height, _groundY, _topY);
+}
+
 // Always active: MOVE and DRAG are handled identically, with no button gate. The first event
 // after construction (or after home()) just seeds _lastX/_lastY so we don't apply a spurious
 // jump on the initial mouse position.
@@ -438,17 +471,17 @@ void OrbitAxisManipulator::_orbit(double nx, double ny) {
 	_lastX = nx;
 	_lastY = ny;
 
-	_yaw -= dx * _yawSensitivity;
-	_height += dy * _heightSensitivity * (_topY - _groundY);
-	_height = std::clamp(_height, _groundY, _topY);
+	orbitByDelta(dx, dy);
 }
 
 bool OrbitAxisManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) {
 	switch(ea.getEventType()) {
 	case osgGA::GUIEventAdapter::MOVE:
 	case osgGA::GUIEventAdapter::DRAG:
-		_orbit(ea.getXnormalized(), ea.getYnormalized());
-		aa.requestRedraw();
+		if(_liveOrbitEnabled) {
+			_orbit(ea.getXnormalized(), ea.getYnormalized());
+			aa.requestRedraw();
+		}
 
 		return false;
 
