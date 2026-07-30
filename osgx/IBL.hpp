@@ -163,9 +163,9 @@ void main() {
 }
 )GLSL";
 
-// Loads a pre-baked GGX-prefiltered cubemap from a .ktx2 file (see osgGLTF's
-// ReaderWriterKTX2.cpp for the plugin that makes this format readable -- must be registered
-// with osgDB, same as any other reader/writer plugin). The KTX2 is expected to carry its own
+// Loads a pre-baked GGX-prefiltered cubemap from a .ktx2 file (see
+// plugins/ktx2/ReaderWriterKTX2.cpp for the plugin that makes this format readable -- must be
+// registered with osgDB, same as any other reader/writer plugin). The KTX2 is expected to carry its own
 // hand-baked mip chain, one level per roughness step -- hardware mipmap generation is disabled
 // so OSG doesn't overwrite it.
 //

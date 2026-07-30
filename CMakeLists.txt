@@ -14,6 +14,7 @@ endif()
 option(OSGX_BUILD_EXAMPLES "Build the osgx examples" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_UTILS "Build the osgx utilities" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_PYTHON "Build the osgx Python module" ${OSGX_IS_TOP_LEVEL})
+option(OSGX_BUILD_KTX2 "Build the KTX2 osgDB plugin (osgdb_ktx2) and the osgx::ktx2 static library" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_INSTALL "Generate osgx installation rules" ${OSGX_IS_TOP_LEVEL})
 
 if(WIN32)
@@ -290,7 +291,21 @@ endif()
 if(OSGX_BUILD_UTILS)
 	add_subdirectory("utils")
 endif()
-# add_subdirectory("plugins") # TODO: Disabled
+
+# ---------------------------------------------------------------------------
+# KTX-Software (ext/KTX-Software submodule)
+# Disable everything we don't need to keep the build fast.
+# ---------------------------------------------------------------------------
+if(OSGX_BUILD_KTX2)
+	set(KTX_FEATURE_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
+	set(KTX_FEATURE_TOOLS OFF CACHE BOOL "" FORCE)
+	set(KTX_FEATURE_TESTS OFF CACHE BOOL "" FORCE)
+	set(KTX_FEATURE_DOC OFF CACHE BOOL "" FORCE)
+	set(KTX_FEATURE_LOADTEST_APPS OFF CACHE BOOL "" FORCE)
+	add_subdirectory("ext/KTX-Software")
+endif()
+
+add_subdirectory("plugins")
 
 if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# TODO: Make this an option too!

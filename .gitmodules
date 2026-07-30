@@ -1,0 +1,3 @@
+[submodule "ext/KTX-Software"]
+	path = ext/KTX-Software
+	url = https://github.com/KhronosGroup/KTX-Software.git
