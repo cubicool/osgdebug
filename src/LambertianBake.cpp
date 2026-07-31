@@ -99,7 +99,7 @@ void main() {
 	vec3 bitangent = cross(normal, tangent);
 	vec3 irradiance = vec3(0.0);
 
-	for(int i = 0; i < sampleCount; ++i) {
+	for(int i = 0; i < sampleCount; i++) {
 		vec2 xi = hammersley(uint(i), uint(sampleCount));
 		float sinTheta = sqrt(xi.y);
 		float cosTheta = sqrt(1.0 - xi.y);
@@ -181,7 +181,7 @@ LambertianBakeScene createLambertianBakeScene(
 	auto quad = makeFullscreenQuad();
 	osg::ref_ptr<osg::Camera> completionCamera;
 
-	for(int face = 0; face < 6; ++face) {
+	for(int face = 0; face < 6; face++) {
 		auto camera = new osg::Camera();
 
 		camera->setName("osgx_LambertianBake_f" + std::to_string(face));

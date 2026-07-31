@@ -8,6 +8,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/CullSettings>
 #include <osg/Math>
 #include <osg/Matrix>
+#include <osg/Vec2>
 #include <osg/observer_ptr>
 #include <osgGA/CameraManipulator>
 #include <osgGA/GUIActionAdapter>
@@ -96,7 +97,7 @@ private:
 //
 // Controls:
 //
-// Left drag pan in world XY
+// Left drag pan in the configured 2D plane
 // Scroll geometric zoom (_wheelZoomFactor per click)
 // Shift+Scroll pixel-nudge zoom (_pixelNudge screen pixels per click)
 // Ctrl+Left drag 3D pitch/yaw (unlocks rotation around center)
@@ -124,13 +125,14 @@ public:
 		osgGA::CameraManipulator(m, co),
 		_center(m._center),
 		_halfExtentY(m._halfExtentY),
-		_minHalfExtent(m._minHalfExtent),
-		_maxHalfExtent(m._maxHalfExtent),
+		_halfExtentLimits(m._halfExtentLimits),
 		_pixelNudge(m._pixelNudge),
 		_wheelZoomFactor(m._wheelZoomFactor),
 		_rotateSensitivity(m._rotateSensitivity),
 		_invertY(m._invertY),
 		_invertX(m._invertX),
+		_planeNormal(m._planeNormal),
+		_screenUp(m._screenUp),
 		_rotation(m._rotation),
 		_yawAngle(m._yawAngle),
 		_pitchAngle(m._pitchAngle),
@@ -145,8 +147,8 @@ public:
 	void setWheelZoomFactor(double f) { _wheelZoomFactor = f; }
 	double getWheelZoomFactor() const { return _wheelZoomFactor; }
 
-	void setZoomLimits(double minH, double maxH) { _minHalfExtent = minH; _maxHalfExtent = maxH; }
-	std::pair<double, double> getZoomLimits() const { return {_minHalfExtent, _maxHalfExtent}; }
+	void setZoomLimits(double minH, double maxH) { _halfExtentLimits.set(minH, maxH); }
+	std::pair<double, double> getZoomLimits() const { return {_halfExtentLimits.x(), _halfExtentLimits.y()}; }
 
 	void setRotateSensitivity(double s) { _rotateSensitivity = s; }
 	double getRotateSensitivity() const { return _rotateSensitivity; }
@@ -163,12 +165,20 @@ public:
 	void setInvertX(bool invert) { _invertX = invert; }
 	bool getInvertX() const { return _invertX; }
 
+	// The unrotated 2D plane. Defaults to XY with a +Z normal and +Y at screen top.
+	// screenUp is orthogonalized against planeNormal; a zero normal is ignored and a parallel
+	// existing screenUp is replaced with a stable perpendicular direction.
+	void setPlaneNormal(const osg::Vec3d& normal);
+	const osg::Vec3d& getPlaneNormal() const { return _planeNormal; }
+	void setScreenUp(const osg::Vec3d& up);
+	const osg::Vec3d& getScreenUp() const { return _screenUp; }
+
 	// State
 	void setCenter(const osg::Vec3d& c) { _center = c; }
 	const osg::Vec3d& getCenter() const { return _center; }
 
 	void setHalfExtentY(double h) {
-		_halfExtentY = std::clamp(h, _minHalfExtent, _maxHalfExtent);
+		_halfExtentY = std::clamp(h, _halfExtentLimits.x(), _halfExtentLimits.y());
 	}
 
 	double getHalfExtentY() const { return _halfExtentY; }
@@ -202,32 +212,37 @@ public:
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override;
 
 private:
+	osg::Vec3d _right() const { return _screenUp ^ _planeNormal; }
+	osg::Vec3d _toWorld(const osg::Vec3d& local) const {
+		return _right() * local.x() + _screenUp * local.y() + _planeNormal * local.z();
+	}
+
 	osg::Vec3d _center{0.0, 0.0, 0.0};
 
 	double _halfExtentY{1.0};
-	double _minHalfExtent{1e-4};
-	double _maxHalfExtent{1e6};
+	osg::Vec2d _halfExtentLimits{1e-4, 1e6};
 	double _pixelNudge{1.0};
 	double _wheelZoomFactor{1.15};
 	double _rotateSensitivity{2.0};
 	bool _invertY{true};
 	bool _invertX{false};
+	osg::Vec3d _planeNormal{0.0, 0.0, 1.0};
+	osg::Vec3d _screenUp{0.0, 1.0, 0.0};
 
 	osg::Quat _rotation; // identity = pure top-down 2D
-	double _yawAngle{0.0}; // world Y; independent of _pitchAngle -- see handle()'s ctrl branch
-	double _pitchAngle{0.0}; // world X, clamped short of +-90 degrees
+	double _yawAngle{0.0}; // screenUp; independent of _pitchAngle -- see handle()'s ctrl branch
+	double _pitchAngle{0.0}; // screen right, clamped short of +-90 degrees
 	osg::ref_ptr<osg::Node> _node;
 
 	bool _dragging{false};
-	double _lastX{0.0};
-	double _lastY{0.0};
+	osg::Vec2d _lastPointer{0.0, 0.0};
 };
 
 // ================================================================================================
 // OrbitAxisManipulator
 //
 // "Turntable" camera manipulator for model-viewer-style presentation (see: the Batman Arkham
-// series' character/suit viewer). The camera orbits a fixed vertical guide line through the
+// series' character/suit viewer). The camera orbits a fixed up-axis guide line through the
 // model's bounds, always looking level (never pitching up/down) at whatever height it's currently
 // at, and dollies toward/away from that line on zoom. The model itself never moves or scales.
 //
@@ -237,8 +252,8 @@ private:
 // Scroll dolly zoom, clamped by viewport-coverage fraction (see below)
 // Space / Home reset to home
 //
-// State is cylindrical: yaw around the guide line, height along it (clamped to the bound's
-// vertical extent -- never below "ground", never above the top), and distance from it (clamped
+// State is cylindrical: yaw around the guide line, axial height along it (clamped to the bound's
+// extent along the configured up axis), and distance from it (clamped
 // so the model can't be zoomed past ~50% visible or zoomed out past a ~5% viewport margin, in
 // terms of the camera's current vertical FOV -- see updateCamera()).
 //
@@ -268,19 +283,18 @@ public:
 		):
 		osgGA::CameraManipulator(m, co),
 		_axis(m._axis),
-		_groundY(m._groundY),
-		_topY(m._topY),
+		_axialLimits(m._axialLimits),
 		_height(m._height),
 		_yaw(m._yaw),
 		_distance(m._distance),
-		_minDistance(m._minDistance),
-		_maxDistance(m._maxDistance),
-		_minCoverage(m._minCoverage),
-		_maxCoverage(m._maxCoverage),
+		_distanceLimits(m._distanceLimits),
+		_coverageLimits(m._coverageLimits),
 		_yawSensitivity(m._yawSensitivity),
 		_heightSensitivity(m._heightSensitivity),
 		_wheelZoomFactor(m._wheelZoomFactor),
 		_invertY(m._invertY),
+		_upAxis(m._upAxis),
+		_homeDirection(m._homeDirection),
 		_node(m._node) {}
 
 	OSGX_ENABLE_WARNINGS
@@ -290,25 +304,33 @@ public:
 	void setHeightSensitivity(double s) { _heightSensitivity = s; }
 	void setWheelZoomFactor(double f) { _wheelZoomFactor = f; }
 
-	// minCoverage/maxCoverage are fractions of the viewport's vertical extent that the model's
+	// minCoverage/maxCoverage are fractions of the viewport's up-axis extent that the model's
 	// bound should occupy at the zoomed-out/zoomed-in extremes, respectively (e.g. 0.95 = 5%
 	// margin top/bottom when zoomed out; 2.0 = model is 2x viewport height, ~50% visible, when
 	// zoomed in).
 	void setCoverageLimits(double minCoverage, double maxCoverage) {
-		_minCoverage = minCoverage;
-		_maxCoverage = maxCoverage;
+		_coverageLimits.set(minCoverage, maxCoverage);
 	}
 
-	std::pair<double, double> getCoverageLimits() const { return {_minCoverage, _maxCoverage}; }
+	std::pair<double, double> getCoverageLimits() const { return {_coverageLimits.x(), _coverageLimits.y()}; }
 	double getYawSensitivity() const { return _yawSensitivity; }
 	double getHeightSensitivity() const { return _heightSensitivity; }
 	double getWheelZoomFactor() const { return _wheelZoomFactor; }
 
-	// Inverts the Y axis used for height (both the raw MOVE/DRAG path and orbitByDelta()).
+	// Inverts the pointer Y axis used for axial motion (both the raw MOVE/DRAG path and
+	// orbitByDelta()).
 	// Default true: dragging/moving up raises the camera. Set false to restore the raw,
 	// uninverted feel.
 	void setInvertY(bool invert) { _invertY = invert; }
 	bool getInvertY() const { return _invertY; }
+
+	// The turntable frame. Defaults to Z-up, looking from -Y at yaw == 0.
+	// homeDirection is projected onto the plane perpendicular to upAxis. A zero up axis is
+	// ignored; changing upAxis with a parallel existing homeDirection chooses a stable fallback.
+	void setUpAxis(const osg::Vec3d& up);
+	const osg::Vec3d& getUpAxis() const { return _upAxis; }
+	void setHomeDirection(const osg::Vec3d& direction);
+	const osg::Vec3d& getHomeDirection() const { return _homeDirection; }
 
 	// State
 	double getYaw() const { return _yaw; }
@@ -361,28 +383,27 @@ public:
 
 private:
 	void _orbit(double nx, double ny);
+	osg::Vec3d _orbitRight() const { return _upAxis ^ _homeDirection; }
 
-	osg::Vec3d _axis{0.0, 0.0, 0.0}; // guide line: x/z fixed, y spans [_groundY, _topY]
-	double _groundY{0.0};
-	double _topY{1.0};
-	double _height{0.5};
+	osg::Vec3d _axis{0.0, 0.0, 0.0}; // point on the guide line
+	osg::Vec2d _axialLimits{-0.5, 0.5};
+	double _height{0.0}; // signed distance along _upAxis from _axis
 	double _yaw{0.0};
 	double _distance{1.0};
-	double _minDistance{1e-4};
-	double _maxDistance{1e6};
-	double _minCoverage{0.95};
-	double _maxCoverage{2.0};
+	osg::Vec2d _distanceLimits{1e-4, 1e6};
+	osg::Vec2d _coverageLimits{0.95, 2.0};
 	double _yawSensitivity{osg::PI};
 	double _heightSensitivity{0.5};
 	double _wheelZoomFactor{1.15};
 	bool _invertY{true};
+	osg::Vec3d _upAxis{0.0, 0.0, 1.0};
+	osg::Vec3d _homeDirection{0.0, -1.0, 0.0};
 
 	osg::ref_ptr<osg::Node> _node;
 
 	bool _initialized{false};
 	bool _liveOrbitEnabled{true};
-	double _lastX{0.0};
-	double _lastY{0.0};
+	osg::Vec2d _lastPointer{0.0, 0.0};
 };
 
 }

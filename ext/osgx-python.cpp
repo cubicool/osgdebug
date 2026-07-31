@@ -776,6 +776,18 @@ PYBIND11_MODULE(osgx, m) {
 			"Inverts the X axis for Ctrl-drag 3D yaw only; plain pan is unaffected."
 		)
 		.def_property(
+			"planeNormal",
+			&osgx::Ortho2DManipulator::getPlaneNormal,
+			&osgx::Ortho2DManipulator::setPlaneNormal,
+			"Normal of the unrotated 2D plane (default: +Z)."
+		)
+		.def_property(
+			"screenUp",
+			&osgx::Ortho2DManipulator::getScreenUp,
+			&osgx::Ortho2DManipulator::setScreenUp,
+			"Up direction of the unrotated 2D plane (default: +Y)."
+		)
+		.def_property(
 			"center",
 			&osgx::Ortho2DManipulator::getCenter,
 			&osgx::Ortho2DManipulator::setCenter
@@ -828,7 +840,19 @@ PYBIND11_MODULE(osgx, m) {
 			"invertY",
 			&osgx::OrbitAxisManipulator::getInvertY,
 			&osgx::OrbitAxisManipulator::setInvertY,
-			"Inverts the Y axis used for height, in both the raw MOVE/DRAG path and orbitByDelta()."
+			"Inverts the pointer Y axis used for axial motion, in both the raw MOVE/DRAG path and orbitByDelta()."
+		)
+		.def_property(
+			"upAxis",
+			&osgx::OrbitAxisManipulator::getUpAxis,
+			&osgx::OrbitAxisManipulator::setUpAxis,
+			"Turntable up axis (default: +Z)."
+		)
+		.def_property(
+			"homeDirection",
+			&osgx::OrbitAxisManipulator::getHomeDirection,
+			&osgx::OrbitAxisManipulator::setHomeDirection,
+			"Horizontal camera direction at yaw == 0 (default: -Y)."
 		)
 		.def_property(
 			"coverageLimits",

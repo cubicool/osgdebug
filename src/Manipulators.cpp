@@ -2,6 +2,30 @@
 
 namespace osgx {
 
+namespace {
+
+bool normalize(osg::Vec3d& v) {
+	if(v.length2() <= 1e-20) return false;
+
+	v.normalize();
+
+	return true;
+}
+
+// Returns a stable unit vector perpendicular to axis.
+osg::Vec3d perpendicularTo(const osg::Vec3d& axis) {
+	osg::Vec3d reference = std::abs(axis.z()) < 0.9
+		? osg::Vec3d(0.0, 0.0, 1.0)
+		: osg::Vec3d(0.0, 1.0, 0.0)
+	;
+	osg::Vec3d result = reference ^ axis;
+	normalize(result);
+
+	return result;
+}
+
+}
+
 void MultiCameraManipulator::addTarget(
 	const std::string& name,
 	osgGA::CameraManipulator* manipulator,
@@ -164,6 +188,27 @@ void MultiCameraManipulator::_updateCamera(osg::Camera& mainCamera) {
 }
 
 // Extract pan center from the translation component of the camera-to-world matrix.
+void Ortho2DManipulator::setPlaneNormal(const osg::Vec3d& normal) {
+	osg::Vec3d planeNormal = normal;
+
+	if(!normalize(planeNormal)) return;
+
+	osg::Vec3d screenUp = _screenUp - planeNormal * (_screenUp * planeNormal);
+
+	if(!normalize(screenUp)) screenUp = perpendicularTo(planeNormal);
+
+	_planeNormal = planeNormal;
+	_screenUp = screenUp;
+}
+
+void Ortho2DManipulator::setScreenUp(const osg::Vec3d& up) {
+	osg::Vec3d screenUp = up - _planeNormal * (up * _planeNormal);
+
+	if(!normalize(screenUp)) return;
+
+	_screenUp = screenUp;
+}
+
 void Ortho2DManipulator::setByMatrix(const osg::Matrixd& m) {
 	_center.set(m(3, 0), m(3, 1), m(3, 2));
 }
@@ -176,15 +221,13 @@ osg::Matrixd Ortho2DManipulator::getMatrix() const {
 	return osg::Matrixd::inverse(getInverseMatrix());
 }
 
-// World-to-camera (view matrix).
-// Orbit convention: center to origin -> rotate (pivot is now at origin) -> pull back.
-// OSG uses row vectors, so A*B*C applies A first; pull-back must come last.
+// World-to-camera (view matrix). _rotation is expressed in the configured plane's local frame.
 osg::Matrixd Ortho2DManipulator::getInverseMatrix() const {
-	return
-		osg::Matrixd::translate(-_center) *
-		osg::Matrixd::rotate(_rotation) *
-		osg::Matrixd::translate(0.0, 0.0, -1.0)
-	;
+	osg::Quat inverseRotation = _rotation.conj();
+	osg::Vec3d eye = _center + _toWorld(inverseRotation * osg::Vec3d(0.0, 0.0, 1.0));
+	osg::Vec3d up = _toWorld(inverseRotation * osg::Vec3d(0.0, 1.0, 0.0));
+
+	return osg::Matrixd::lookAt(eye, _center, up);
 }
 
 void Ortho2DManipulator::updateCamera(osg::Camera& cam) {
@@ -205,10 +248,9 @@ void Ortho2DManipulator::updateCamera(osg::Camera& cam) {
 		osg::BoundingSphere bs = _node->getBound();
 
 		if(bs.radius() > 0.0) {
-			// Eye position and forward vector in world space, derived from the view matrix.
-			// Orbit: eye = center + rotation.conj() * (0, 0, 1)
-			osg::Vec3d eye = _center + _rotation.conj() * osg::Vec3d(0.0, 0.0, 1.0);
-			osg::Vec3d fwd = _rotation.conj() * osg::Vec3d(0.0, 0.0, -1.0);
+			osg::Quat inverseRotation = _rotation.conj();
+			osg::Vec3d eye = _center + _toWorld(inverseRotation * osg::Vec3d(0.0, 0.0, 1.0));
+			osg::Vec3d fwd = _toWorld(inverseRotation * osg::Vec3d(0.0, 0.0, -1.0));
 
 			// Signed depth of the scene center along the view axis.
 			double depth = (osg::Vec3d(bs.center()) - eye) * fwd;
@@ -249,8 +291,7 @@ void Ortho2DManipulator::home(const osgGA::GUIEventAdapter&, osgGA::GUIActionAda
 bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) {
 	switch(ea.getEventType()) {
 	case osgGA::GUIEventAdapter::PUSH:
-		_lastX = ea.getXnormalized();
-		_lastY = ea.getYnormalized();
+		_lastPointer.set(ea.getXnormalized(), ea.getYnormalized());
 		_dragging = (ea.getButton() == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
 
 		return false;
@@ -265,19 +306,18 @@ bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActi
 
 		double nx = ea.getXnormalized();
 		double ny = ea.getYnormalized();
-		double dx = nx - _lastX;
-		double dy = ny - _lastY;
+		double dx = nx - _lastPointer.x();
+		double dy = ny - _lastPointer.y();
 
-		_lastX = nx;
-		_lastY = ny;
+		_lastPointer.set(nx, ny);
 
 		bool ctrl = (ea.getModKeyMask() & osgGA::GUIEventAdapter::MODKEY_CTRL) != 0;
 
 		if(ctrl) {
 			// 3D: pitch/yaw orbit around center. Tracked as two independent scalar angles and
 			// reconstructed fresh each time (NOT accumulated onto the previous _rotation via a
-			// path-dependent "current right" axis) -- yaw always rotates around fixed world Y,
-			// pitch always around the fixed original world X, so yaw behaves identically
+			// path-dependent "current right" axis) -- yaw always rotates around fixed screen up,
+			// pitch always around the fixed original screen right, so yaw behaves identically
 			// regardless of how much pitch has already accumulated. Mixing a path-dependent axis
 			// (the old "current right", derived from _rotation itself) with a fixed one is
 			// exactly what made yaw appear to rotate around the wrong axis after any pitch.
@@ -299,7 +339,7 @@ bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActi
 			// q1*q2 applied via .rotate() applies q2 first), but OSG's row-vector convention
 			// reverses that for a product quaternion converted via Matrixd::rotate() + v*M:
 			// verified empirically that this order applies pitch first (around the fixed
-			// original world X), then yaw (around fixed world Y) -- the order needed so yaw
+			// original screen right), then yaw (around fixed screen up) -- the order needed so yaw
 			// never drifts the apparent pitch. Swapping this order was the actual fix for a
 			// real reported bug where any yaw after a pitch rotated around the wrong axis.
 			_rotation =
@@ -315,8 +355,9 @@ bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActi
 				: 1.0
 			;
 
-			osg::Vec3d right = _rotation.conj() * osg::Vec3d(1.0, 0.0, 0.0);
-			osg::Vec3d up = _rotation.conj() * osg::Vec3d(0.0, 1.0, 0.0);
+			osg::Quat inverseRotation = _rotation.conj();
+			osg::Vec3d right = _toWorld(inverseRotation * osg::Vec3d(1.0, 0.0, 0.0));
+			osg::Vec3d up = _toWorld(inverseRotation * osg::Vec3d(0.0, 1.0, 0.0));
 
 			_center -= right * dx * _halfExtentY * aspect;
 			_center -= up * dy * _halfExtentY;
@@ -341,7 +382,7 @@ bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActi
 
 		else _halfExtentY *= up ? (1.0 / _wheelZoomFactor) : _wheelZoomFactor;
 
-		_halfExtentY = std::clamp(_halfExtentY, _minHalfExtent, _maxHalfExtent);
+		_halfExtentY = std::clamp(_halfExtentY, _halfExtentLimits.x(), _halfExtentLimits.y());
 
 		aa.requestRedraw();
 
@@ -364,35 +405,54 @@ bool Ortho2DManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActi
 	}
 }
 
-// Eye position, cylindrical around the guide line: x = axis.x + distance*sin(yaw),
-// z = axis.z + distance*cos(yaw), y = height. Look-at target is the guide line at the SAME
-// height as the eye, so the view direction always stays horizontal (never pitches).
+void OrbitAxisManipulator::setUpAxis(const osg::Vec3d& up) {
+	osg::Vec3d upAxis = up;
+
+	if(!normalize(upAxis)) return;
+
+	osg::Vec3d homeDirection = _homeDirection - upAxis * (_homeDirection * upAxis);
+
+	if(!normalize(homeDirection)) homeDirection = perpendicularTo(upAxis);
+
+	_upAxis = upAxis;
+	_homeDirection = homeDirection;
+}
+
+void OrbitAxisManipulator::setHomeDirection(const osg::Vec3d& direction) {
+	osg::Vec3d homeDirection = direction - _upAxis * (direction * _upAxis);
+
+	if(!normalize(homeDirection)) return;
+
+	_homeDirection = homeDirection;
+}
+
+// Eye position, cylindrical around the guide line. Look-at target is the guide line at the SAME
+// axial position as the eye, so the view direction always stays horizontal (never pitches).
 osg::Matrixd OrbitAxisManipulator::getInverseMatrix() const {
 	double s = std::sin(_yaw);
 	double c = std::cos(_yaw);
+	osg::Vec3d center = _axis + _upAxis * _height;
+	osg::Vec3d radial = _homeDirection * c + _orbitRight() * s;
+	osg::Vec3d eye = center + radial * _distance;
 
-	osg::Vec3d eye(_axis.x() + _distance * s, _height, _axis.z() + _distance * c);
-	osg::Vec3d center(_axis.x(), _height, _axis.z());
-	osg::Vec3d up(0.0, 1.0, 0.0);
-
-	return osg::Matrixd::lookAt(eye, center, up);
+	return osg::Matrixd::lookAt(eye, center, _upAxis);
 }
 
 osg::Matrixd OrbitAxisManipulator::getMatrix() const {
 	return osg::Matrixd::inverse(getInverseMatrix());
 }
 
-// Camera-to-world: derive yaw/height/distance from the eye position, keeping the guide line
-// (_axis/_groundY/_topY) as already established by setNode()/home().
+// Camera-to-world: derive yaw/axial height/distance from the eye position, keeping the guide line
+// (_axis/_axialLimits) as already established by setNode()/home().
 void OrbitAxisManipulator::setByMatrix(const osg::Matrixd& m) {
 	osg::Vec3d eye = m.getTrans();
+	osg::Vec3d offset = eye - _axis;
+	double height = offset * _upAxis;
+	osg::Vec3d radial = offset - _upAxis * height;
 
-	double dx = eye.x() - _axis.x();
-	double dz = eye.z() - _axis.z();
-
-	_distance = std::sqrt(dx * dx + dz * dz);
-	_yaw = std::atan2(dx, dz);
-	_height = std::clamp(eye.y(), _groundY, _topY);
+	_distance = radial.length();
+	_yaw = std::atan2(radial * _orbitRight(), radial * _homeDirection);
+	_height = std::clamp(height, _axialLimits.x(), _axialLimits.y());
 }
 
 void OrbitAxisManipulator::setByInverseMatrix(const osg::Matrixd& m) {
@@ -406,17 +466,19 @@ void OrbitAxisManipulator::updateCamera(osg::Camera& cam) {
 	double fovy, aspect, zNear, zFar;
 
 	if(cam.getProjectionMatrix().getPerspective(fovy, aspect, zNear, zFar)) {
-		double modelHeight = _topY - _groundY;
+		double modelHeight = _axialLimits.y() - _axialLimits.x();
 		double tanHalfFovy = std::tan(osg::DegreesToRadians(fovy) * 0.5);
 
 		if(modelHeight > 0.0 && tanHalfFovy > 0.0) {
 			// coverage = modelHeight / (2 * distance * tanHalfFovy) => distance = modelHeight / (2 * coverage * tanHalfFovy)
-			_minDistance = modelHeight / (2.0 * _maxCoverage * tanHalfFovy);
-			_maxDistance = modelHeight / (2.0 * _minCoverage * tanHalfFovy);
+			_distanceLimits.set(
+				modelHeight / (2.0 * _coverageLimits.y() * tanHalfFovy),
+				modelHeight / (2.0 * _coverageLimits.x() * tanHalfFovy)
+			);
 		}
 	}
 
-	_distance = std::clamp(_distance, _minDistance, _maxDistance);
+	_distance = std::clamp(_distance, _distanceLimits.x(), _distanceLimits.y());
 
 	cam.setViewMatrix(getInverseMatrix());
 }
@@ -426,18 +488,18 @@ void OrbitAxisManipulator::home(const osgGA::GUIEventAdapter&, osgGA::GUIActionA
 
 	if(_node.valid()) {
 		auto bs = _node->getBound();
+		osg::Vec3d center(bs.center());
+		double centerHeight = center * _upAxis;
 
-		_axis = osg::Vec3d(bs.center().x(), 0.0, bs.center().z());
-		_groundY = bs.center().y() - bs.radius();
-		_topY = bs.center().y() + bs.radius();
-		_height = bs.center().y();
+		_axis = center - _upAxis * centerHeight;
+		_axialLimits.set(centerHeight - bs.radius(), centerHeight + bs.radius());
+		_height = centerHeight;
 		_distance = (bs.radius() > 0.0) ? bs.radius() * 3.0 : 3.0;
 	}
 
 	else {
 		_axis.set(0.0, 0.0, 0.0);
-		_groundY = -1.0;
-		_topY = 1.0;
+		_axialLimits.set(-1.0, 1.0);
 		_height = 0.0;
 		_distance = 3.0;
 	}
@@ -449,27 +511,25 @@ void OrbitAxisManipulator::orbitByDelta(double dx, double dy) {
 	if(_invertY) dy = -dy;
 
 	_yaw -= dx * _yawSensitivity;
-	_height += dy * _heightSensitivity * (_topY - _groundY);
-	_height = std::clamp(_height, _groundY, _topY);
+	_height += dy * _heightSensitivity * (_axialLimits.y() - _axialLimits.x());
+	_height = std::clamp(_height, _axialLimits.x(), _axialLimits.y());
 }
 
 // Always active: MOVE and DRAG are handled identically, with no button gate. The first event
-// after construction (or after home()) just seeds _lastX/_lastY so we don't apply a spurious
+// after construction (or after home()) just seeds _lastPointer so we don't apply a spurious
 // jump on the initial mouse position.
 void OrbitAxisManipulator::_orbit(double nx, double ny) {
 	if(!_initialized) {
-		_lastX = nx;
-		_lastY = ny;
+		_lastPointer.set(nx, ny);
 		_initialized = true;
 
 		return;
 	}
 
-	double dx = nx - _lastX;
-	double dy = ny - _lastY;
+	double dx = nx - _lastPointer.x();
+	double dy = ny - _lastPointer.y();
 
-	_lastX = nx;
-	_lastY = ny;
+	_lastPointer.set(nx, ny);
 
 	orbitByDelta(dx, dy);
 }
@@ -489,7 +549,7 @@ bool OrbitAxisManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAc
 		bool up = (ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP);
 
 		_distance *= up ? (1.0 / _wheelZoomFactor) : _wheelZoomFactor;
-		_distance = std::clamp(_distance, _minDistance, _maxDistance);
+		_distance = std::clamp(_distance, _distanceLimits.x(), _distanceLimits.y());
 
 		aa.requestRedraw();
 

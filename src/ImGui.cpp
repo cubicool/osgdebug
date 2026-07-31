@@ -80,7 +80,7 @@ std::pair<bool, int> radioGroup(
 ) {
 	bool changed = false;
 
-	for(std::size_t i = 0; i < labels.size(); ++i) {
+	for(std::size_t i = 0; i < labels.size(); i++) {
 		const int option = static_cast<int>(i);
 
 		if(ImGui::RadioButton(labels[i].c_str(), &value, option)) changed = true;
@@ -194,7 +194,7 @@ public:
 		if(auto* stateset = node.getStateSet()) {
 			const auto& textureAttributes = stateset->getTextureAttributeList();
 
-			for(unsigned int unit = 0; unit < textureAttributes.size(); ++unit) {
+			for(unsigned int unit = 0; unit < textureAttributes.size(); unit++) {
 				auto* texture = dynamic_cast<osg::Texture*>(
 					stateset->getTextureAttribute(unit, osg::StateAttribute::TEXTURE)
 				);
@@ -231,7 +231,7 @@ void TextureSection::operator()(osg::RenderInfo& ri) {
 	const ImGuiStyle& style = ImGui::GetStyle();
 	const float windowVisibleX2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
 
-	for(std::size_t i = 0; i < _textures.size(); ++i) {
+	for(std::size_t i = 0; i < _textures.size(); i++) {
 		auto* texture = _textures[i].get();
 		const std::string name = texture->getName().empty() ? "Texture" : texture->getName();
 
