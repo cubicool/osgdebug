@@ -448,21 +448,38 @@ the shader ABI is a separate, wider-blast-radius decision left for later. Their 
 declaration comes directly from `osgx/gltf/Shader.hpp`. Python exposes the same API under
 `osgx.gltf.pbribl`. `utils/osgx-gltf-viewer` is the corresponding complete C++ consumer.
 
-## GPU/CPU IBL baking tools
+## PBR/IBL environment baking
 
-`utils/osgx-gltf-iblbake-gpu` and `utils/osgx-gltf-iblbake-cpu` bake a GGX-prefiltered specular
-cubemap (plus Lambertian diffuse irradiance and the BRDF LUT) from an HDR equirectangular source
-into KTX2:
+`utils/osgx-pbribl` turns one HDR equirectangular image into a complete
+`osgx_pbribl` environment bundle consumable by `utils/osgx-gltf-viewer --env`:
 
 ```bash
-utils/osgx-gltf-iblbake-gpu input.hdr output.ktx2 --prefilter-size 128
+utils/osgx-pbribl input.hdr environments/studio
+utils/osgx-gltf-viewer --env environments/studio.gltf model.gltf
 ```
 
-The GPU tool uses the frame-driven `osgx::ibl` scene/readback API directly (see
-`osgx/GGXPrefilter.hpp`); the CPU-only tool has no OpenGL dependency at all, using `stb_image` and
-`osgx::ktx2` instead. Both are generic osgx functionality — nothing glTF-specific about the bake
-itself, they're just packaged alongside the glTF tools since that's historically where the need
-first showed up.
+The command writes `studio-specular.ktx2`, `studio-diffuse.ktx2`,
+`studio-brdfLUT.ktx2`, and `studio.gltf`. The manifest refers to its three KTX2 files by basename,
+so keep them beside the generated `.gltf` file (or move the whole bundle together).
+
+The specular and diffuse cubemaps are derived from the HDR. The BRDF LUT is intentionally written
+alongside them for a portable, reproducible bundle: it is a property of the split-sum GGX shader
+contract, rather than of the input environment.
+
+Optional quality controls are `--prefilter-size`, `--samples`, `--diffuse-cube-size`,
+`--diffuse-samples`, and `--lut-size`.
+
+| Output | `osgx-pbribl` default | Khronos Sample Viewer reference default |
+| --- | ---: | ---: |
+| GGX specular cubemap base size (`--prefilter-size`) | 128 | 256 |
+| GGX samples per texel (`--samples`) | 1024 | 1024 |
+| Lambertian diffuse cubemap size (`--diffuse-cube-size`) | 256 | 256 |
+| Lambertian samples per texel (`--diffuse-samples`) | 2048 | 2048 |
+| BRDF LUT size (`--lut-size`) | 1024 | 1024 |
+| BRDF LUT integration samples | 512 (fixed) | 512 |
+
+`osgx-pbribl` emits the full specular mip chain down to 1×1. The Khronos reference environment
+uses an eight-level GGX chain; this mainly affects the roughest lookup levels.
 
 ---
 
@@ -504,8 +521,7 @@ pins the (default GLX) window via `moveWindow()`/`alwaysOnTop()`, and, when buil
 `OSGX_WITH_EGL`/`OSGX_WITH_GBM`, drives the same scene through `--egl` or `--gbm` instead.
 
 `osgx-ktx2-skybox` (in `examples/`) loads a KTX2 cubemap and displays it as a skybox, stepping
-through the mip chain interactively — useful for verifying a bake from either IBL tool below.
+through the mip chain interactively — useful for verifying a generated specular or diffuse cube.
 
 `utils/osgx-gltf-viewer` is the full glTF PBR/IBL reference viewer (`osgx::gltf::pbribl`);
-`utils/osgx-gltf-iblbake-gpu` and `utils/osgx-gltf-iblbake-cpu` are the GPU- and CPU-only IBL
-bakers described under `osgx::gltf` above.
+`utils/osgx-pbribl` generates its static `osgx_pbribl` environment bundles.

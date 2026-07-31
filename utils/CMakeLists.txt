@@ -18,14 +18,14 @@ if(OSGX_BUILD_GLTF)
 	target_include_directories(osgx-gltf-viewer PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
 	target_link_libraries(osgx-gltf-viewer PRIVATE osgx::gltf_pbribl)
 
-	# GPU IBL baker: HDR equirectangular image -> GGX-prefiltered KTX2 cubemap. Generic osgx::osgx
-	# baking machinery only -- no glTF-specific code.
-	add_executable(osgx-gltf-iblbake-gpu
-		"osgx-gltf-iblbake-gpu.cpp"
+	# HDR equirectangular image -> complete static PBR/IBL environment bundle: two cubemaps, a
+	# BRDF LUT, and a minimal osgx_pbribl glTF manifest consumable by osgx-gltf-viewer --env.
+	add_executable(osgx-pbribl
+		"osgx-pbribl.cpp"
 	)
 
-	osgx_compile_options(osgx-gltf-iblbake-gpu)
-	target_link_libraries(osgx-gltf-iblbake-gpu PRIVATE osgx::osgx)
+	osgx_compile_options(osgx-pbribl)
+	target_link_libraries(osgx-pbribl PRIVATE osgx::osgx)
 
 	if(OSGX_BUILD_KTX2)
 		# CPU-only IBL baker. Uses stb_image, osgx::ktx2, and OpenMP when available -- deliberately
