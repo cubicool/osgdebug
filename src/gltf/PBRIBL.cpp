@@ -185,6 +185,7 @@ void registerShaderLibs() {
 std::string resolveShaderLibs(std::string_view source) {
 	osgx::pbr::registerShaderLibs();
 	osgx::ibl::registerShaderLibs();
+
 	registerShaderLibs();
 
 	return osgx::resolveShaderLibs(std::string(source));
@@ -452,7 +453,9 @@ PBRIBLEnvironment preparePBRIBLEnvironment(
 	PBRIBLEnvironment environment;
 
 	environment.envMap = osgx::ibl::loadPrefilterCubemap(ktx2Path);
+
 	if(!environment.envMap) return environment;
+
 	environment.envMap->setUseHardwareMipMapGeneration(false);
 
 	auto lut = osgx::ibl::sharedBRDFLUT(lutSize);
@@ -461,13 +464,19 @@ PBRIBLEnvironment preparePBRIBLEnvironment(
 	environment.lutCamera = lut.camera; // null once another environment already baked this size
 
 	auto hdrImage = osgDB::readRefImageFile(hdrPath);
+
 	if(!hdrImage) return environment;
+
 	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
+
 	environment.diffuseBakeRoot = diffuseBake.root;
 	environment.diffuseEnv = diffuseBake.diffuseTexture;
 	environment.root = osgx::make_ref<osg::Group>();
+
 	if(environment.lutCamera) environment.root->addChild(environment.lutCamera);
+
 	environment.root->addChild(environment.diffuseBakeRoot);
+
 	return environment;
 }
 
@@ -513,7 +522,9 @@ PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& hdrPath, int lutSi
 	environment.envMap = specularBake.prefilterTexture;
 
 	environment.root = osgx::make_ref<osg::Group>();
+
 	if(environment.lutCamera) environment.root->addChild(environment.lutCamera);
+
 	environment.root->addChild(environment.diffuseBakeRoot);
 	environment.root->addChild(environment.specularBakeRoot);
 
@@ -551,7 +562,12 @@ IBLEnvironmentManifest decodeIBLEnvironment(const tinygltf::Value& entry) {
 	manifest.specular.prefilterSize = decodeInt(specular, "prefilterSize", 0);
 	manifest.specular.lowestMipLevel = decodeInt(specular, "lowestMipLevel", 0);
 	manifest.diffuse.uri = decodeString(entry.Get("diffuse"), "uri");
-	manifest.brdfLUT.uri = decodeString(entry.Get("brdfLUT"), "uri");
+
+	const auto& brdfLUT = entry.Get("brdfLUT");
+
+	manifest.brdfLUT.uri = decodeString(brdfLUT, "uri");
+	manifest.brdfLUT.builtin = decodeString(brdfLUT, "builtin");
+	manifest.brdfLUT.size = decodeInt(brdfLUT, "size", 1024);
 
 	return manifest;
 }
@@ -567,9 +583,9 @@ std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tinygltf::Value&
 
 	if(!environments.IsArray()) return result;
 
-	for(std::size_t i = 0; i < environments.ArrayLen(); i++) {
-		result.push_back(decodeIBLEnvironment(environments.Get(static_cast<int>(i))));
-	}
+	for(std::size_t i = 0; i < environments.ArrayLen(); i++) result.push_back(
+		decodeIBLEnvironment(environments.Get(static_cast<int>(i)))
+	);
 
 	return result;
 }
@@ -588,10 +604,35 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, 
 	// loadPrefilterCubemap() is content-agnostic despite its name -- it just loads a KTX2 as a
 	// TextureCubeMap, which is equally correct for the Lambertian diffuse cube as for GGX specular.
 	environment.envMap = osgx::ibl::loadPrefilterCubemap((base / manifest.specular.uri).string());
+
 	if(!environment.envMap) return environment;
 
 	environment.diffuseEnv = osgx::ibl::loadPrefilterCubemap((base / manifest.diffuse.uri).string());
+
 	if(!environment.diffuseEnv) return environment;
+
+	if(!manifest.brdfLUT.builtin.empty()) {
+		if(manifest.brdfLUT.builtin != "osgx:split-sum-ggx-v1" || manifest.brdfLUT.size < 1) {
+			OSG_WARN
+				<< "osgx::gltf::pbribl::loadPBRIBLEnvironment: unsupported built-in BRDF LUT "
+				<< manifest.brdfLUT.builtin << std::endl
+			;
+
+			return environment;
+		}
+
+		auto lut = osgx::ibl::sharedBRDFLUT(manifest.brdfLUT.size);
+
+		environment.brdfLUT = lut.texture;
+		environment.lutCamera = lut.camera;
+
+		if(environment.lutCamera) {
+			environment.root = osgx::make_ref<osg::Group>();
+			environment.root->addChild(environment.lutCamera);
+		}
+
+		return environment;
+	}
 
 	auto lutImage = osgDB::readRefImageFile((base / manifest.brdfLUT.uri).string());
 
@@ -657,18 +698,20 @@ PBRIBLScene createPBRIBLScene(
 	// this component's glTF catalog before expansion. This keeps the one-call helper independent of
 	// module-import order and avoids handing raw, uncompilable pragma text to the driver.
 	PBRIBLScene pis;
+
 	if(!node || !environment.valid()) return pis;
+
 	pis.node = node;
 
 	auto* ss = node->getOrCreateStateSet();
-
 	auto prog = osgx::make_ref<osg::Program>();
 
-	prog->setName("osgGLTF_PBRIBLScene");
 	// osgGLTF stores glTF's optional TANGENT accessor in generic vertex attribute 7.
 	// Bind it before linking, exactly as pyosg-khronos-viewer.py does; otherwise GLSL may
 	// assign osg_Tangent to another generic attribute and normal mapping reads a default value.
 	shader::configureProgram(*prog);
+
+	prog->setName("osgGLTF_PBRIBLScene");
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,

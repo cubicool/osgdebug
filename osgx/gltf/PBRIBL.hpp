@@ -42,9 +42,9 @@ void registerShaderLibs();
 // assumptions for Python and plugin consumers.
 std::string resolveShaderLibs(std::string_view source);
 
-// Prepared IBL resources. `root`, when present, contains the PRE_RENDER passes that populate the
-// generated BRDF LUT and diffuse cubemap; add it to a rendered scene graph before using them.
-// Pre-baked resources have no preparation root and can leave it null.
+// Prepared IBL resources. `root`, when present, contains the PRE_RENDER passes that populate a
+// generated BRDF LUT and/or cubemaps; add it to a rendered scene graph before using them.
+// Fully pre-baked resources have no preparation root and can leave it null.
 struct PBRIBLEnvironment {
 	osg::ref_ptr<osg::Group> root;
 	osg::ref_ptr<osg::Camera> lutCamera;
@@ -87,15 +87,24 @@ struct IBLEnvironmentManifest {
 	};
 
 	// Only `specular` carries bake-convention parameters today; see the GGXPrefilterOptions
-	// discussion in osgdebug/TODO.md for why diffuse/brdfLUT don't need equivalents yet.
+	// discussion in osgdebug/TODO.md for why diffuse doesn't need equivalents yet.
 	struct SpecularResource: Resource {
 		int prefilterSize = 0;
 		int lowestMipLevel = 0;
 	};
 
+	// Either a URI to a serialized LUT (for existing portable manifests), or the exact built-in
+	// contract understood by this renderer. The latter uses osgx::ibl::sharedBRDFLUT(size).
+	struct BRDFLUTResource: Resource {
+		std::string builtin;
+		int size = 1024;
+
+		bool valid() const { return !uri.empty() || !builtin.empty(); }
+	};
+
 	SpecularResource specular;
 	Resource diffuse;
-	Resource brdfLUT;
+	BRDFLUTResource brdfLUT;
 };
 
 // Decodes every `environments[]` entry out of an `osgx_pbribl` extension block. `extensionValue`
@@ -104,13 +113,10 @@ struct IBLEnvironmentManifest {
 // manifest document or a real asset's own embedded extension, so this one function covers both.
 std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tinygltf::Value& extensionValue);
 
-// Fully static/pre-baked path: loads all three IBL resources from disk with NO HDR decode/bake at
-// runtime at all -- specular + diffuse cubemaps as KTX2, BRDF LUT as a plain image wrapped into a
-// Texture2D (see osggltf-iblbake-gpu's --brdf-lut-only mode for why the LUT was never an HDR-
-// derived output). This is the TODO.md 2b "--env <environment.json>" shipping path. The returned
-// PBRIBLEnvironment has no bake root at all -- there is nothing left to bake, matching the struct's
-// own "pre-baked resources... can leave it null" contract. `manifest`'s relative URIs resolve
-// against `baseDir` (normally the manifest document's own directory).
+// Static/pre-baked path: loads specular + diffuse cubemaps as KTX2. A URI BRDF LUT is loaded as a
+// plain image; a recognized built-in BRDF LUT is shared and baked once per process/size. The latter
+// supplies a preparation root on its first use. `manifest`'s relative URIs resolve against
+// `baseDir` (normally the manifest document's own directory).
 PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, const std::string& baseDir);
 
 // Convenience overload: loads `manifestPath` as a glTF document -- a minimal standalone manifest or

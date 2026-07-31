@@ -464,13 +464,14 @@ utils/osgx-pbribl input.hdr environments/studio
 utils/osgx-gltf-viewer --env environments/studio.gltf model.gltf
 ```
 
-The command writes `studio-specular.ktx2`, `studio-diffuse.ktx2`,
-`studio-brdfLUT.ktx2`, and `studio.gltf`. The manifest refers to its three KTX2 files by basename,
-so keep them beside the generated `.gltf` file (or move the whole bundle together).
+The command writes `studio-specular.ktx2`, `studio-diffuse.ktx2`, and `studio.gltf`. The manifest
+refers to its two KTX2 files by basename, so keep them beside the generated `.gltf` file (or move
+the whole bundle together).
 
-The specular and diffuse cubemaps are derived from the HDR. The BRDF LUT is intentionally written
-alongside them for a portable, reproducible bundle: it is a property of the split-sum GGX shader
-contract, rather than of the input environment.
+The specular and diffuse cubemaps are derived from the HDR. The manifest identifies the built-in
+split-sum GGX BRDF LUT and its size instead of writing an HDR-independent LUT file; the renderer
+caches and bakes that LUT once per process. Existing manifests that provide a BRDF-LUT `uri` remain
+supported.
 
 Optional quality controls are `--prefilter-size`, `--samples`, `--diffuse-cube-size`,
 `--diffuse-samples`, and `--lut-size`.

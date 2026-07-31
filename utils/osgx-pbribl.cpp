@@ -5,13 +5,11 @@
 //       [--prefilter-size N] [--samples N] [--diffuse-cube-size N]
 //       [--diffuse-samples N] [--lut-size N]
 //
-// Produces <basename>-specular.ktx2, <basename>-diffuse.ktx2,
-// <basename>-brdfLUT.ktx2, and <basename>.gltf.  The first two are derived
-// from the HDR.  The LUT is deliberately bundled too: it belongs to the
-// split-sum BRDF contract, rather than to the HDR, and makes the manifest
-// portable and reproducible without relying on a process-local cache.
+// Produces <basename>-specular.ktx2, <basename>-diffuse.ktx2, and
+// <basename>.gltf. The manifest identifies the matching built-in BRDF LUT,
+// which the renderer caches and bakes once per process rather than serializing
+// an HDR-independent artifact beside every environment.
 
-#include <osgx/IBL.hpp>
 #include <osgx/GGXPrefilter.hpp>
 #include <osgx/LambertianBake.hpp>
 #include <osgx/Warnings.hpp>
@@ -40,7 +38,6 @@ namespace {
 struct OutputPaths {
 	std::filesystem::path specular;
 	std::filesystem::path diffuse;
-	std::filesystem::path brdfLUT;
 	std::filesystem::path manifest;
 };
 
@@ -50,7 +47,6 @@ OutputPaths makeOutputPaths(const std::filesystem::path& basename) {
 	return {
 		base + "-specular.ktx2",
 		base + "-diffuse.ktx2",
-		base + "-brdfLUT.ktx2",
 		base + ".gltf"
 	};
 }
@@ -58,7 +54,8 @@ OutputPaths makeOutputPaths(const std::filesystem::path& basename) {
 bool writeManifest(
 	const std::filesystem::path& path,
 	const OutputPaths& outputs,
-	int prefilterSize
+	int prefilterSize,
+	int lutSize
 ) {
 	std::ofstream file(path);
 
@@ -79,7 +76,7 @@ bool writeManifest(
 		<< "        \"specular\": {\"uri\": \"" << outputs.specular.filename().string()
 		<< "\", \"prefilterSize\": " << prefilterSize << ", \"lowestMipLevel\": 0}," << std::endl
 		<< "        \"diffuse\": {\"uri\": \"" << outputs.diffuse.filename().string() << "\"}," << std::endl
-		<< "        \"brdfLUT\": {\"uri\": \"" << outputs.brdfLUT.filename().string() << "\"}" << std::endl
+		<< "        \"brdfLUT\": {\"builtin\": \"osgx:split-sum-ggx-v1\", \"size\": " << lutSize << "}" << std::endl
 		<< "      }]" << std::endl
 		<< "    }" << std::endl
 		<< "  }" << std::endl
@@ -192,34 +189,6 @@ int main(int argc, char* argv[]) {
 
 	auto specularResult = osgx::ibl::finishGGXPrefilter(specular.readback);
 	auto diffuseResult = osgx::ibl::finishLambertianCubeReadback(diffuseReadback);
-	auto lut = osgx::ibl::sharedBRDFLUT(lutSize);
-
-	if(!lut.camera) {
-		OSG_WARN << "osgx-pbribl: failed to create BRDF LUT bake pass" << std::endl;
-
-		return 1;
-	}
-
-	// Keep the LUT in a second, isolated viewer. The OSG FBO/readback state used by the cubemap
-	// passes otherwise contaminates the LUT and GGX readbacks when all three are in one graph.
-	auto lutReadback = new osgx::ibl::BRDFLUTReadback(lut.texture);
-	auto lutRoot = new osg::Group();
-
-	lutRoot->addChild(lut.camera);
-
-	osgViewer::Viewer lutViewer;
-
-	lutViewer.setUpViewInWindow(0, 0, 128, 128);
-	lutViewer.setSceneData(lutRoot);
-	lutViewer.getCamera()->addPostDrawCallback(lutReadback);
-
-	for(int frame = 0; frame < 4 && !lutReadback->isDone(); ++frame) lutViewer.frame();
-
-	if(!lutReadback->isDone()) {
-		OSG_WARN << "osgx-pbribl: BRDF LUT readback did not complete" << std::endl;
-
-		return 1;
-	}
 
 	if(!specularResult || !osgDB::writeObjectFile(*specularResult, outputs.specular.string())) {
 		OSG_WARN << "osgx-pbribl: failed to write " << outputs.specular << std::endl;
@@ -233,15 +202,8 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	if(!lutReadback->getResult() || !osgDB::writeObjectFile(*lutReadback->getResult(), outputs.brdfLUT.string())) {
-		OSG_WARN << "osgx-pbribl: failed to write " << outputs.brdfLUT << std::endl;
-
-		return 1;
-	}
-
 	OSG_NOTICE << "osgx-pbribl: wrote " << outputs.specular << std::endl;
 	OSG_NOTICE << "osgx-pbribl: wrote " << outputs.diffuse << std::endl;
-	OSG_NOTICE << "osgx-pbribl: wrote " << outputs.brdfLUT << std::endl;
 
-	return writeManifest(outputs.manifest, outputs, specularOptions.prefilterSize) ? 0 : 1;
+	return writeManifest(outputs.manifest, outputs, specularOptions.prefilterSize, lutSize) ? 0 : 1;
 }
