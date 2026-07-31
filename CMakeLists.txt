@@ -318,31 +318,54 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# TODO: Make this an option too!
 	add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
 
-	pybind11_add_module(osgx_python "ext/osgx-python.cpp")
+	# The bindings are split across ext/python/osgx-*.cpp -- one translation unit per osgx::
+	# submodule (see ext/python/osgx-python.hpp for the bind_*() declarations) -- instead of one
+	# ~1700-line monolithic ext/osgx-python.cpp. osgx_python_bindings is a plain STATIC lib, not
+	# itself a Python module: touching one submodule's bindings only recompiles that one file plus
+	# a relink, a from-scratch build parallelizes across `make -j#`, and pybind11_add_module below
+	# only ever has to compile the thin ext/python/osgx.cpp PYBIND11_MODULE entry point.
+	add_library(osgx_python_bindings STATIC
+		"ext/python/osgx-core.cpp"
+		"ext/python/osgx-pbr.cpp"
+		"ext/python/osgx-ibl.cpp"
+		"ext/python/osgx-debug.cpp"
+		"ext/python/osgx-platform.cpp"
+	)
 
-	set_target_properties(osgx_python PROPERTIES OUTPUT_NAME "osgx")
-	target_include_directories(osgx_python PRIVATE
+	# PUBLIC, not PRIVATE: ext/python/osgx.cpp (compiled into the separate osgx_python target
+	# below, which links this one) also includes osgx-python.hpp and therefore needs every one of
+	# these same include dirs -- PRIVATE here would resolve fine for this target's own sources but
+	# leave osgx.cpp's #include "osgx/osgx.hpp"/"pyosg/pyosg.hpp"/"pybind11x.hpp" unable to find
+	# anything.
+	target_include_directories(osgx_python_bindings PUBLIC
 		"${CMAKE_CURRENT_SOURCE_DIR}"
 		${OPENSCENEGRAPH_INCLUDE_DIRS}
 		"/home/cubicool/dev/OpenSceneGraph.py"
 		"/home/cubicool/dev/OpenSceneGraph.py/etc"
 	)
-	target_link_libraries(osgx_python PRIVATE
+	# PUBLIC, not PRIVATE: osgx::osgx's OSGX_IMGUI/OSGX_EGL/OSGX_GBM compile definitions need to
+	# keep propagating all the way to the osgx_python target below (specifically ext/python/
+	# osgx.cpp's own #ifdef OSGX_IMGUI guard around the imgui submodule), not just stop here.
+	target_link_libraries(osgx_python_bindings PUBLIC
 		osgx::osgx
 		pybind11::module
 	)
-	osgx_compile_options(osgx_python)
-	set_target_properties(osgx_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
+	osgx_compile_options(osgx_python_bindings)
+	set_target_properties(osgx_python_bindings PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-	# osgx.imgui Python bindings ride along automatically: osgx_python links
-	# osgx::osgx, which already carries OSGX_IMGUI + the Dear ImGui include dirs
-	# and link libraries as PUBLIC usage requirements when OSGX_WITH_IMGUI is on.
-	if(NOT OSGX_WITH_IMGUI)
+	# osgx.imgui Python bindings ride along automatically: osgx_python_bindings links osgx::osgx,
+	# which already carries OSGX_IMGUI + the Dear ImGui include dirs and link libraries as PUBLIC
+	# usage requirements when OSGX_WITH_IMGUI is on. ext/python/osgx-imgui.cpp itself is a no-op
+	# (guarded out entirely) without that define, so only bother compiling it when it's on.
+	if(OSGX_WITH_IMGUI)
+		target_sources(osgx_python_bindings PRIVATE "ext/python/osgx-imgui.cpp")
+	else()
 		message(STATUS "OSGX_WITH_IMGUI is OFF; osgx.imgui Python bindings will be unavailable")
 	endif()
 
 	# Same story for osgx.platform's createEGLWindow()/createGBMWindow() -- OSGX_EGL/OSGX_GBM ride
-	# along from osgx::osgx the same way OSGX_IMGUI does above.
+	# along from osgx::osgx the same way OSGX_IMGUI does above; ext/python/osgx-platform.cpp
+	# guards those two bindings internally with #ifdef OSGX_EGL/OSGX_GBM.
 	if(NOT OSGX_WITH_EGL)
 		message(STATUS "OSGX_WITH_EGL is OFF; osgx.platform.createEGLWindow will be unavailable")
 	endif()
@@ -352,21 +375,33 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	endif()
 
 	# osgx.gltf, unlike imgui/EGL/GBM above, isn't already carried by osgx::osgx -- it needs its
-	# own explicit link (osgx::gltf_pbribl, which pulls in osgx::gltf + osgx::osgx transitively) plus
-	# the tinygltf headers and a preprocessor define to guard the bindings in ext/osgx-python.cpp.
+	# own explicit link (osgx::gltf_pbribl, which pulls in osgx::gltf + osgx::osgx transitively),
+	# the tinygltf headers, and a preprocessor define to guard ext/python/osgx-gltf.cpp (which also
+	# isn't added to the source list at all unless this is on). PUBLIC for the same reason as the
+	# osgx::osgx link above: ext/python/osgx.cpp's own #ifdef OSGX_GLTF guard needs to see it too.
 	if(OSGX_BUILD_GLTF)
-		target_compile_definitions(osgx_python PRIVATE OSGX_GLTF)
-		target_include_directories(osgx_python PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
-		target_link_libraries(osgx_python PRIVATE osgx::gltf_pbribl)
+		target_sources(osgx_python_bindings PRIVATE "ext/python/osgx-gltf.cpp")
+		target_compile_definitions(osgx_python_bindings PUBLIC OSGX_GLTF)
+		target_include_directories(osgx_python_bindings PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
+		target_link_libraries(osgx_python_bindings PRIVATE osgx::gltf_pbribl)
 
 		# tinygltf's bundled json.hpp uses the deprecated std::is_pod trait, same as everywhere
 		# else it's included in this repo.
 		if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-			set_source_files_properties("ext/osgx-python.cpp" PROPERTIES
+			set_source_files_properties("ext/python/osgx-gltf.cpp" PROPERTIES
 				COMPILE_OPTIONS "-Wno-deprecated-declarations"
 			)
 		endif()
 	else()
 		message(STATUS "OSGX_BUILD_GLTF is OFF; osgx.gltf Python bindings will be unavailable")
 	endif()
+
+	pybind11_add_module(osgx_python "ext/python/osgx.cpp")
+
+	set_target_properties(osgx_python PROPERTIES
+		OUTPUT_NAME "osgx"
+		POSITION_INDEPENDENT_CODE ON
+	)
+	target_link_libraries(osgx_python PRIVATE osgx_python_bindings)
+	osgx_compile_options(osgx_python)
 endif()

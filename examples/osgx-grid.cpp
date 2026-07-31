@@ -7,14 +7,174 @@ OSGX_DISABLE_WARNINGS
 
 #include <osg/Group>
 #include <osg/MatrixTransform>
+#include <osg/BlendFunc>
+#include <osg/Depth>
+#include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/Program>
 #include <osg/Quat>
+#include <osg/Shader>
 #include <osg/Shape>
 #include <osg/ShapeDrawable>
+#include <osgGA/TrackballManipulator>
 #include <osgViewer/Viewer>
 
 OSGX_ENABLE_WARNINGS
 
 namespace {
+
+// A fullscreen triangle is the conventional infinite-floor primitive: its fragment shader
+// reconstructs a world-space camera ray, intersects that ray with z=0, then procedurally draws
+// grid lines at the hit point. There is no world-space quad to run out of.
+constexpr const char* INFINITE_FLOOR_VERTEX_SHADER = R"GLSL(
+#version 330 core
+
+uniform mat4 osg_ProjectionMatrix;
+uniform mat4 osg_ViewMatrixInverse;
+
+in vec4 osg_Vertex;
+
+out vec3 nearPoint;
+out vec3 farPoint;
+
+vec3 unproject(vec2 ndc, float depth) {
+	vec4 view = inverse(osg_ProjectionMatrix) * vec4(ndc, depth, 1.0);
+	view /= view.w;
+
+	vec4 world = osg_ViewMatrixInverse * view;
+
+	return world.xyz / world.w;
+}
+
+void main() {
+	nearPoint = unproject(osg_Vertex.xy, -1.0);
+	farPoint = unproject(osg_Vertex.xy, 1.0);
+	gl_Position = osg_Vertex;
+}
+)GLSL";
+
+constexpr const char* INFINITE_FLOOR_FRAGMENT_SHADER = R"GLSL(
+#version 330 core
+
+uniform mat4 osg_ProjectionMatrix;
+uniform mat4 osg_ViewMatrix;
+uniform mat4 osg_ViewMatrixInverse;
+
+in vec3 nearPoint;
+in vec3 farPoint;
+
+out vec4 fragColor;
+
+float gridLine(vec2 position, float interval) {
+	vec2 coord = position / interval;
+	vec2 deriv = max(fwidth(coord), vec2(1e-6));
+	vec2 distanceToLine = abs(fract(coord - 0.5) - 0.5) / deriv;
+
+	return 1.0 - min(min(distanceToLine.x, distanceToLine.y), 1.0);
+}
+
+void main() {
+	vec3 ray = farPoint - nearPoint;
+
+	// The Z-up floor is the plane z=0. Parallel rays (the exact horizon) have no usable hit.
+	if(abs(ray.z) < 1e-6) discard;
+
+	float t = -nearPoint.z / ray.z;
+
+	if(t <= 0.0 || t > 1.0) discard;
+
+	vec3 hit = nearPoint + ray * t;
+	vec4 clip = osg_ProjectionMatrix * osg_ViewMatrix * vec4(hit, 1.0);
+	float ndcDepth = clip.z / clip.w;
+
+	if(ndcDepth < -1.0 || ndcDepth > 1.0) discard;
+
+	// A fullscreen primitive normally has no useful depth. Writing the ray/plane hit depth makes
+	// this behave like real ground: geometry on the floor occludes it, and it occludes the clear.
+	gl_FragDepth = ndcDepth * 0.5 + 0.5;
+
+	float minor = gridLine(hit.xy, 1.0);
+	float major = gridLine(hit.xy, 10.0);
+	vec3 camera = osg_ViewMatrixInverse[3].xyz / osg_ViewMatrixInverse[3].w;
+	float distanceFade = 1.0 - smoothstep(35.0, 180.0, length(hit - camera));
+	float horizonFade = smoothstep(0.015, 0.12, abs(normalize(ray).z));
+	float fade = distanceFade * horizonFade;
+
+	vec3 color = mix(vec3(0.11, 0.17, 0.25), vec3(0.42, 0.62, 0.88), major);
+	float alpha = max(minor * 0.32, major * 0.80) * fade;
+
+	fragColor = vec4(color, alpha);
+}
+)GLSL";
+
+osg::ref_ptr<osg::Node> makeInfiniteFloor() {
+	auto vertices = osgx::make_ref<osg::Vec3Array>();
+
+	// Oversized clip-space triangle covers the whole viewport without the diagonal seam a quad has.
+	vertices->push_back(osg::Vec3(-1.0f, -1.0f, 0.0f));
+	vertices->push_back(osg::Vec3(3.0f, -1.0f, 0.0f));
+	vertices->push_back(osg::Vec3(-1.0f, 3.0f, 0.0f));
+
+	auto floor = osgx::make_ref<osg::Geometry>();
+	floor->setVertexArray(vertices);
+	floor->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::TRIANGLES, 0, 3));
+
+	auto program = osgx::make_ref<osg::Program>();
+	program->addShader(new osg::Shader(osg::Shader::VERTEX, INFINITE_FLOOR_VERTEX_SHADER));
+	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, INFINITE_FLOOR_FRAGMENT_SHADER));
+
+	auto* stateSet = floor->getOrCreateStateSet();
+	stateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
+	stateSet->setAttributeAndModes(
+		new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+		osg::StateAttribute::ON
+	);
+	stateSet->setAttributeAndModes(
+		new osg::Depth(osg::Depth::LESS, 0.0, 1.0, true),
+		osg::StateAttribute::ON
+	);
+	stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+	stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+
+	auto geode = osgx::make_ref<osg::Geode>();
+	geode->setCullingActive(false);
+	geode->addDrawable(floor);
+
+	return geode;
+}
+
+osg::ref_ptr<osg::Node> makeInfiniteFloorScene() {
+	auto root = osgx::make_ref<osg::Group>();
+	auto objects = osgx::make_ref<osg::Geode>();
+
+	auto addBox = [&](const osg::Vec3& center, const osg::Vec3& size, const osg::Vec4& color) {
+		auto box = osgx::make_ref<osg::ShapeDrawable>(new osg::Box(center, size.x(), size.y(), size.z()));
+
+		box->setColor(color);
+		objects->addDrawable(box);
+	};
+
+	addBox(
+		osg::Vec3(-2.0f, 0.5f, 1.0f),
+		osg::Vec3(2.0f, 2.0f, 2.0f),
+		osg::Vec4(0.88f, 0.32f, 0.24f, 1.0f)
+	);
+	addBox(
+		osg::Vec3(1.5f, 1.5f, 1.5f),
+		osg::Vec3(1.5f, 1.5f, 3.0f),
+		osg::Vec4(0.22f, 0.65f, 0.94f, 1.0f)
+	);
+	addBox(
+		osg::Vec3(3.8f, -1.2f, 0.6f),
+		osg::Vec3(1.2f, 1.2f, 1.2f),
+		osg::Vec4(0.95f, 0.76f, 0.22f, 1.0f)
+	);
+
+	root->addChild(objects);
+	root->addChild(makeInfiniteFloor());
+
+	return root;
+}
 
 osg::ref_ptr<osg::Node> makeFrameRod(
 	const osg::Vec3& start,
@@ -137,6 +297,7 @@ void addGridRoom(osg::Group* root) {
 
 int main(int argc, char** argv) {
 	bool orthoMode = argc > 1 && std::string(argv[1]) == "ortho";
+	bool floorMode = argc > 1 && std::string(argv[1]) == "floor";
 
 	osg::ref_ptr<osg::Node> root;
 
@@ -154,6 +315,8 @@ int main(int argc, char** argv) {
 		root = grid->orthoCamera();
 	}
 
+	else if(floorMode) root = makeInfiniteFloorScene();
+
 	else {
 		auto room = osgx::make_ref<osg::Group>();
 
@@ -165,6 +328,20 @@ int main(int argc, char** argv) {
 
 	viewer.setSceneData(root);
 	viewer.getCamera()->setClearColor(osg::Vec4(0.015f, 0.020f, 0.035f, 1.0f));
+
+	if(floorMode) {
+		auto manipulator = new osgGA::TrackballManipulator();
+
+		manipulator->setHomePosition(
+			osg::Vec3d(12.0, -16.0, 10.0),
+			osg::Vec3d(0.0, 0.0, 0.0),
+			osg::Vec3d(0.0, 0.0, 1.0)
+		);
+
+		viewer.getCamera()->setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
+		viewer.setCameraManipulator(manipulator);
+		viewer.home();
+	}
 
 	// The ortho camera's own clear IS the frame's first paint; stop the viewer's main
 	// camera from immediately stomping it with a second COLOR_BUFFER_BIT clear.

@@ -20,8 +20,8 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <string>
 
-#ifndef GL_RGB16F
-#  define GL_RGB16F 0x881B
+#ifndef GL_RGB32F
+#  define GL_RGB32F 0x8815
 #endif
 #ifndef GL_COLOR_BUFFER_BIT
 #  define GL_COLOR_BUFFER_BIT 0x00004000
@@ -155,7 +155,11 @@ LambertianBakeScene createLambertianBakeScene(
 	const int sampleCount = std::max(options.sampleCount, 1);
 	auto sourceTexture = new osg::Texture2D();
 
-	sourceTexture->setInternalFormat(GL_RGB16F);
+	// Full float, not half: a source HDR's peak radiance can exceed half-float's ~65504 max and
+	// silently become +Infinity on upload, which then poisons the cosine-weighted hemisphere
+	// average for any output texel whose sample set happens to hit it (see GGXPrefilter.cpp for
+	// the same fix on the specular path).
+	sourceTexture->setInternalFormat(GL_RGB32F);
 	sourceTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
 	sourceTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
 	sourceTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -167,7 +171,7 @@ LambertianBakeScene createLambertianBakeScene(
 
 	diffuseTexture->setDataVariance(osg::Object::DYNAMIC);
 	diffuseTexture->setTextureSize(cubeSize, cubeSize);
-	diffuseTexture->setInternalFormat(GL_RGB16F);
+	diffuseTexture->setInternalFormat(GL_RGB32F);
 	diffuseTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
 	diffuseTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
 	diffuseTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -275,7 +279,7 @@ void LambertianCubeReadback::operator()(osg::RenderInfo& ri) const {
 
 	texObj->bind();
 
-	readCubeMapFaces(ri.getContextID(), GL_HALF_FLOAT, false, _result);
+	readCubeMapFaces(ri.getContextID(), GL_FLOAT, false, _result);
 
 	_done = true;
 }

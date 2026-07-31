@@ -21,11 +21,8 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <string>
 
-#ifndef GL_RGB16F
-#  define GL_RGB16F 0x881B
-#endif
-#ifndef GL_HALF_FLOAT
-#  define GL_HALF_FLOAT 0x140B
+#ifndef GL_RGB32F
+#  define GL_RGB32F 0x8815
 #endif
 #ifndef GL_COLOR_BUFFER_BIT
 #  define GL_COLOR_BUFFER_BIT 0x00004000
@@ -191,7 +188,11 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 
 	prefilterTex->setDataVariance(osg::Object::DYNAMIC);
 	prefilterTex->setTextureSize(prefilterSize, prefilterSize);
-	prefilterTex->setInternalFormat(GL_RGB16F);
+	// Full float, not half: a source HDR's peak radiance (e.g. a photographed sun disc) can
+	// exceed half-float's ~65504 max and silently become +Infinity on upload/write, which then
+	// poisons the importance-sampled weighted average for every texel whose sample cone touches
+	// it (see equirectTex/envTex below -- this is the same tradeoff, mirrored on the output side).
+	prefilterTex->setInternalFormat(GL_RGB32F);
 	prefilterTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
 	prefilterTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
 	prefilterTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -296,7 +297,7 @@ void GGXPrefilterReadback::operator()(osg::RenderInfo& ri) const {
 
 	texObj->bind();
 
-	readCubeMapFaces(ri.getContextID(), GL_HALF_FLOAT, true, result);
+	readCubeMapFaces(ri.getContextID(), GL_FLOAT, true, result);
 
 	done = true;
 }
@@ -318,7 +319,9 @@ GGXPrefilterScene createGGXPrefilterScene(
 	envTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
 	envTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
 	envTex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
-	envTex->setInternalFormat(GL_RGB16F);
+	// See the matching comment on prefilterTex above -- a source HDR's peak radiance can exceed
+	// half-float's range, so the source upload needs full float too.
+	envTex->setInternalFormat(GL_RGB32F);
 	envTex->setResizeNonPowerOfTwoHint(false);
 	envTex->setImage(equirectImage);
 
