@@ -107,6 +107,12 @@ by concern:
 - `osgx/Version.hpp` — `OSGX_VERSION_MAJOR`/`MINOR`/`PATCH` and the `OSGX_VERSION` string, generated
   from the CMake project version.
 
+> [!NOTE]
+> If you want to avoid having to `make install` before testing locally, you can
+> use a command like the following: `export OSG_LIBRARY_PATH="$PWD/plugins/gltf:$PWD/plugins/ktx2${OSG_LIBRARY_PATH:+:$OSG_LIBRARY_PATH}"`
+> This will ensure your local build's `osgdb_{ktx2,gltf}` files are used
+> instead.
+
 ## Shader libraries
 
 `osgx/Shader.hpp` provides a reusable GLSL-snippet catalog rather than a project-specific
