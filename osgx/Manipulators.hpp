@@ -284,6 +284,9 @@ public:
 		osgGA::CameraManipulator(m, co),
 		_axis(m._axis),
 		_axialLimits(m._axialLimits),
+		_heightLimits(m._heightLimits),
+		_hasHeightLimits(m._hasHeightLimits),
+		_hasHeightReference(m._hasHeightReference),
 		_height(m._height),
 		_yaw(m._yaw),
 		_distance(m._distance),
@@ -310,6 +313,35 @@ public:
 	// zoomed in).
 	void setCoverageLimits(double minCoverage, double maxCoverage) {
 		_coverageLimits.set(minCoverage, maxCoverage);
+	}
+
+	// Restricts the camera's axial height to the inclusive [minHeight, maxHeight] interval.
+	// Heights are signed world-space distances along upAxis, so for the default Z-up frame they
+	// are simply world Z coordinates. This does not affect model framing or dolly limits.
+	//
+	// Calling this before home() is safe: the range is remembered and applied only once home()
+	// establishes the subject's reference axis and height.
+	void setHeightLimits(double minHeight, double maxHeight) {
+		if(minHeight > maxHeight) std::swap(minHeight, maxHeight);
+
+		_heightLimits.set(minHeight, maxHeight);
+		_hasHeightLimits = true;
+
+		if(_hasHeightReference) _clampHeight();
+	}
+
+	// Restores the automatic range derived from the current subject bounds.
+	void clearHeightLimits() {
+		_hasHeightLimits = false;
+
+		if(_hasHeightReference) _clampHeight();
+	}
+
+	bool hasHeightLimits() const { return _hasHeightLimits; }
+	std::pair<double, double> getHeightLimits() const {
+		const auto& limits = _effectiveHeightLimits();
+
+		return {limits.x(), limits.y()};
 	}
 
 	std::pair<double, double> getCoverageLimits() const { return {_coverageLimits.x(), _coverageLimits.y()}; }
@@ -365,7 +397,10 @@ public:
 	bool isLiveOrbitEnabled() const { return _liveOrbitEnabled; }
 
 	// CameraManipulator interface
-	void setNode(osg::Node* node) override { _node = node; }
+	void setNode(osg::Node* node) override {
+		_node = node;
+		_hasHeightReference = false;
+	}
 	const osg::Node* getNode() const override { return _node.get(); }
 	osg::Node* getNode() override { return _node.get(); }
 
@@ -383,10 +418,23 @@ public:
 
 private:
 	void _orbit(double nx, double ny);
+	const osg::Vec2d& _effectiveHeightLimits() const {
+		return _hasHeightLimits ? _heightLimits : _axialLimits;
+	}
+
+	void _clampHeight() {
+		const auto& limits = _effectiveHeightLimits();
+
+		_height = std::clamp(_height, limits.x(), limits.y());
+	}
+
 	osg::Vec3d _orbitRight() const { return _upAxis ^ _homeDirection; }
 
 	osg::Vec3d _axis{0.0, 0.0, 0.0}; // point on the guide line
 	osg::Vec2d _axialLimits{-0.5, 0.5};
+	osg::Vec2d _heightLimits{-0.5, 0.5};
+	bool _hasHeightLimits{false};
+	bool _hasHeightReference{false};
 	double _height{0.0}; // signed distance along _upAxis from _axis
 	double _yaw{0.0};
 	double _distance{1.0};

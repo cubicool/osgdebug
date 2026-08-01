@@ -332,6 +332,9 @@ int main(int argc, char** argv) {
 	viewer.setCameraManipulator(manipulator);
 	manipulator->setNode(subject);
 	viewer.home();
+	// The placeholders rest on the z=0 stage. Apply this after home() establishes the subject
+	// axis and height, so it cannot disturb viewer/manipulator initialization.
+	manipulator->setHeightLimits(0.25, 4.0);
 
 	auto capture = osgx::make_ref<osgx::platform::PointerCapture>(viewer);
 

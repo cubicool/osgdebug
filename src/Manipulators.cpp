@@ -452,7 +452,9 @@ void OrbitAxisManipulator::setByMatrix(const osg::Matrixd& m) {
 
 	_distance = radial.length();
 	_yaw = std::atan2(radial * _orbitRight(), radial * _homeDirection);
-	_height = std::clamp(height, _axialLimits.x(), _axialLimits.y());
+	_height = height;
+
+	if(_hasHeightReference) _clampHeight();
 }
 
 void OrbitAxisManipulator::setByInverseMatrix(const osg::Matrixd& m) {
@@ -504,6 +506,9 @@ void OrbitAxisManipulator::home(const osgGA::GUIEventAdapter&, osgGA::GUIActionA
 		_distance = 3.0;
 	}
 
+	_hasHeightReference = true;
+	_clampHeight();
+
 	aa.requestRedraw();
 }
 
@@ -511,8 +516,13 @@ void OrbitAxisManipulator::orbitByDelta(double dx, double dy) {
 	if(_invertY) dy = -dy;
 
 	_yaw -= dx * _yawSensitivity;
-	_height += dy * _heightSensitivity * (_axialLimits.y() - _axialLimits.x());
-	_height = std::clamp(_height, _axialLimits.x(), _axialLimits.y());
+
+	if(_hasHeightReference) {
+		const auto& limits = _effectiveHeightLimits();
+
+		_height += dy * _heightSensitivity * (limits.y() - limits.x());
+		_clampHeight();
+	}
 }
 
 // Always active: MOVE and DRAG are handled identically, with no button gate. The first event

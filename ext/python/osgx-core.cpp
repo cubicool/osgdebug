@@ -212,6 +212,23 @@ void bind_core(py::module_& m) {
 			"(minCoverage, maxCoverage) viewport-coverage fractions at the zoom extremes."
 		)
 		.def_property(
+			"heightLimits",
+			&osgx::OrbitAxisManipulator::getHeightLimits,
+			[](osgx::OrbitAxisManipulator& self, py::object obj) {
+				auto vals = pyx::try_unpack_sequence<double, double>(obj);
+
+				if(!vals) throw py::type_error(
+					"Expected a (minHeight, maxHeight) sequence of length 2"
+				);
+
+				auto& [minHeight, maxHeight] = *vals;
+				self.setHeightLimits(minHeight, maxHeight);
+			},
+			"(minHeight, maxHeight) world-space distances along upAxis that constrain camera height."
+		)
+		.def("clearHeightLimits", &osgx::OrbitAxisManipulator::clearHeightLimits)
+		.def_property_readonly("hasHeightLimits", &osgx::OrbitAxisManipulator::hasHeightLimits)
+		.def_property(
 			"liveOrbitEnabled",
 			&osgx::OrbitAxisManipulator::isLiveOrbitEnabled,
 			&osgx::OrbitAxisManipulator::setLiveOrbitEnabled,
