@@ -20,6 +20,13 @@ namespace osgx::ibl {
 struct LambertianBakeOptions {
 	int cubeSize = 256;
 	int sampleCount = 2048;
+
+	// Same firefly-suppression tradeoff as GGXPrefilterOptions::fireflyClamp (see that comment
+	// for the full explanation, including why the default has to sit near the scene's *normal*
+	// luminance range rather than merely "below the sun") -- caps a single equirect sample's
+	// luminance before it enters the cosine-weighted hemisphere average, so a bright sun disc
+	// doesn't show up as visible Hammersley-pattern speckle in the diffuse irradiance cube.
+	float fireflyClamp = 8.0f;
 };
 
 // A frame-driven GPU bake. Add root to a viewer scene, advance frames, then use diffuseTexture

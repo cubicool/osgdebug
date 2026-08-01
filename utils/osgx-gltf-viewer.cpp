@@ -264,6 +264,36 @@ bool loadOfficialIBL(const std::filesystem::path& directory, OfficialIBL& ibl) {
 	return true;
 }
 
+std::filesystem::path findModelFile(std::string_view filename) {
+	if(auto path = osgx::findDataFile(filename); !path.empty()) return path;
+
+	const std::filesystem::path requested(filename);
+
+	return osgx::findDataFile(
+		requested.stem().string(),
+		{"glTF-Sample-Assets/Models/{}/glTF/{}.gltf"}
+	);
+}
+
+std::filesystem::path findHDREnvironment(std::string_view filename) {
+	return osgx::findDataFile(
+		filename,
+		{
+			"{}",
+			"glTF-Sample-Environments/{}"
+		},
+		".hdr"
+	);
+}
+
+std::filesystem::path findEnvironmentManifest(std::string_view filename) {
+	if(auto path = osgx::findDataFile(filename); !path.empty()) return path;
+
+	const std::filesystem::path requested(filename);
+
+	return osgx::findDataFile(requested.stem().string(), {"env/{}.gltf"});
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -351,7 +381,10 @@ int main(int argc, char** argv) {
 	// Registering it here first breaks the chicken-and-egg.
 	osgDB::Registry::instance()->addFileExtensionAlias("glb", "gltf");
 
-	osg::ref_ptr<osg::Node> model = osgDB::readRefNodeFile(args[1]);
+	const auto modelPath = findModelFile(args[1]);
+	osg::ref_ptr<osg::Node> model;
+
+	if(!modelPath.empty()) model = osgDB::readRefNodeFile(modelPath.string());
 
 	if(!model) {
 		std::cerr << "Failed to load: " << args[1] << std::endl;
@@ -360,6 +393,17 @@ int main(int argc, char** argv) {
 	}
 
 	osgx::gltf::pbribl::PBRIBLEnvironment environment;
+	std::filesystem::path hdrEnvironment;
+
+	if(haveHdr) {
+		hdrEnvironment = findHDREnvironment(hdrPath);
+
+		if(hdrEnvironment.empty()) {
+			std::cerr << "Failed to find HDR environment: " << hdrPath << std::endl;
+
+			return 1;
+		}
+	}
 
 	if(haveOfficialIBL) {
 		OfficialIBL officialIBL;
@@ -377,15 +421,23 @@ int main(int argc, char** argv) {
 	}
 
 	else if(haveEnv) {
-		environment = osgx::gltf::pbribl::loadPBRIBLEnvironment(envPath);
+		const auto manifest = findEnvironmentManifest(envPath);
+
+		if(manifest.empty()) {
+			std::cerr << "Failed to find environment manifest: " << envPath << std::endl;
+
+			return 1;
+		}
+
+		environment = osgx::gltf::pbribl::loadPBRIBLEnvironment(manifest.string());
 	}
 
 	else if(haveKtx2) {
-		environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(ktx2Path, hdrPath, 1024);
+		environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(ktx2Path, hdrEnvironment.string(), 1024);
 	}
 
 	else {
-		environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(hdrPath, 1024);
+		environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(hdrEnvironment.string(), 1024);
 	}
 
 	if(!environment.valid()) {

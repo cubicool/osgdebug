@@ -75,6 +75,7 @@ void bind_ibl(py::module_& m_ibl) {
 		.def(py::init<>())
 		.def_readwrite("prefilterSize", &osgx::ibl::GGXPrefilterOptions::prefilterSize)
 		.def_readwrite("sampleCount", &osgx::ibl::GGXPrefilterOptions::sampleCount)
+		.def_readwrite("fireflyClamp", &osgx::ibl::GGXPrefilterOptions::fireflyClamp)
 		.def_readwrite("maxFrames", &osgx::ibl::GGXPrefilterOptions::maxFrames)
 		.def_readwrite("readbackFrame", &osgx::ibl::GGXPrefilterOptions::readbackFrame)
 		.def_readwrite("syncReadback", &osgx::ibl::GGXPrefilterOptions::syncReadback)

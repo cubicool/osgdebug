@@ -52,8 +52,17 @@ uniform float roughness;
 uniform int equirectWidth;
 uniform int equirectHeight;
 uniform int sampleCount;
+uniform float fireflyClamp;
 in vec2 vUV;
 out vec4 fragColor;
+
+// Rescales `color` down (preserving hue) if its luminance exceeds `maxLuminance` -- see
+// GGXPrefilterOptions::fireflyClamp for why this exists.
+vec3 clampFirefly(vec3 color, float maxLuminance) {
+	float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+
+	return luminance > maxLuminance ? color * (maxLuminance / luminance) : color;
+}
 
 float RadicalInverse_VdC(uint bits) {
 	bits = (bits << 16u) | (bits >> 16u);
@@ -120,7 +129,8 @@ void main() {
 			float saSample = 1.0 / (float(NUM_SAMPLES) * pdf);
 			float mip = roughness == 0.0 ? 0.0 : max(0.5 * log2(saSample / saTexel), 0.0);
 			vec2 eqUV = equirect_uv(dir_gl_to_zup(L));
-			prefilteredColor += textureLod(equirectTex, eqUV, mip).rgb * NdotL;
+			vec3 sampleColor = clampFirefly(textureLod(equirectTex, eqUV, mip).rgb, fireflyClamp);
+			prefilteredColor += sampleColor * NdotL;
 			totalWeight += NdotL;
 		}
 	}
@@ -180,7 +190,8 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 	int prefilterSize,
 	int sampleCount,
 	int eqW,
-	int eqH
+	int eqH,
+	float fireflyClamp
 ) {
 	const int numMips = mipCountForSize(prefilterSize);
 
@@ -242,6 +253,7 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 			ss->addUniform(new osg::Uniform("faceIndex", face));
 			ss->addUniform(new osg::Uniform("roughness", roughness));
 			ss->addUniform(new osg::Uniform("sampleCount", sampleCount));
+			ss->addUniform(new osg::Uniform("fireflyClamp", fireflyClamp));
 			ss->addUniform(new osg::Uniform("equirectWidth", eqW));
 			ss->addUniform(new osg::Uniform("equirectHeight", eqH));
 			ss->setTextureAttributeAndModes(0, srcEquirect, osg::StateAttribute::ON);
@@ -329,7 +341,8 @@ GGXPrefilterScene createGGXPrefilterScene(
 	auto prefilterTex = makePrefilterBake(
 		envTex, root, prefilterSize, sampleCount,
 		equirectImage->s(),
-		equirectImage->t()
+		equirectImage->t(),
+		options.fireflyClamp
 	);
 
 	scene.root = root;

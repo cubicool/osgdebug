@@ -684,8 +684,21 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const std::string& manifestPath) {
 	}
 
 	const std::string baseDir = std::filesystem::path(manifestPath).parent_path().string();
+	const auto& manifest = environments.front();
+	auto environment = loadPBRIBLEnvironment(manifest, baseDir);
+	const std::string brdfLUT = !manifest.brdfLUT.uri.empty() ? manifest.brdfLUT.uri : manifest.brdfLUT.builtin;
 
-	return loadPBRIBLEnvironment(environments.front(), baseDir);
+	if(environment.valid()) {
+		OSG_NOTICE
+			<< "osgx::gltf::pbribl: loaded pre-baked environment manifest \"" << manifestPath
+			<< "\" (specular=\"" << manifest.specular.uri
+			<< "\", diffuse=\"" << manifest.diffuse.uri
+			<< "\", brdfLUT=\"" << brdfLUT << "\")"
+			<< std::endl
+		;
+	}
+
+	return environment;
 }
 
 PBRIBLScene createPBRIBLScene(

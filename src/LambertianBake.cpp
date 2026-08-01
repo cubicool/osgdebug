@@ -48,8 +48,17 @@ const float PI = 3.14159265359;
 uniform sampler2D equirectTex;
 uniform int faceIndex;
 uniform int sampleCount;
+uniform float fireflyClamp;
 in vec2 vUV;
 out vec4 fragColor;
+
+// Rescales `color` down (preserving hue) if its luminance exceeds `maxLuminance` -- see
+// LambertianBakeOptions::fireflyClamp for why this exists.
+vec3 clampFirefly(vec3 color, float maxLuminance) {
+	float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+
+	return luminance > maxLuminance ? color * (maxLuminance / luminance) : color;
+}
 
 float radicalInverseVdC(uint bits) {
 	bits = (bits << 16u) | (bits >> 16u);
@@ -107,7 +116,7 @@ void main() {
 		vec3 local = vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
 		vec3 direction = tangent * local.x + bitangent * local.y + normal * local.z;
 
-		irradiance += texture(equirectTex, equirectUV(direction)).rgb;
+		irradiance += clampFirefly(texture(equirectTex, equirectUV(direction)).rgb, fireflyClamp);
 	}
 
 	fragColor = vec4(irradiance / float(sampleCount), 1.0);
@@ -215,6 +224,7 @@ LambertianBakeScene createLambertianBakeScene(
 		stateSet->addUniform(new osg::Uniform("equirectTex", 0));
 		stateSet->addUniform(new osg::Uniform("faceIndex", face));
 		stateSet->addUniform(new osg::Uniform("sampleCount", sampleCount));
+		stateSet->addUniform(new osg::Uniform("fireflyClamp", options.fireflyClamp));
 		stateSet->setTextureAttributeAndModes(0, sourceTexture, osg::StateAttribute::ON);
 		camera->addChild(quad);
 		bakeGroup->addChild(camera);

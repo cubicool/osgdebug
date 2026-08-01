@@ -3,6 +3,28 @@
 namespace osgx_python {
 
 void bind_core(py::module_& m) {
+	m.def(
+		"findDataFile",
+		[](
+			const std::string& filename,
+			const std::vector<std::string>& candidates,
+			const std::string& suffix
+		) {
+			const std::span<const std::string> patterns(candidates);
+			const auto result = suffix.empty() ?
+				osgx::findDataFile(filename, patterns) :
+				osgx::findDataFile(filename, patterns, suffix)
+			;
+
+			return result.empty() ? std::string{} : result.string();
+		},
+		"filename"_a,
+		"candidates"_a=std::vector<std::string>{},
+		"suffix"_a="",
+		"Find filename through OSG_FILE_PATH, optionally trying each {} substitution candidate. "
+		"Returns an empty string when no file is found."
+	);
+
 	auto grid = py::class_<
 		osgx::Grid,
 		osg::Geometry,

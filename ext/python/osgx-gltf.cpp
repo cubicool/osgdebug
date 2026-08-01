@@ -768,6 +768,12 @@ void bind_gltf(py::module_& m_gltf) {
 		"PRE_RENDER passes can populate the generated textures."
 	);
 	m_gltf_pbribl.def(
+		"loadPBRIBLEnvironment",
+		py::overload_cast<const std::string&>(&osgx::gltf::pbribl::loadPBRIBLEnvironment),
+		"manifestPath"_a,
+		"Load a fully pre-baked osgx_pbribl environment manifest."
+	);
+	m_gltf_pbribl.def(
 		"createPBRIBLScene",
 		&osgx::gltf::pbribl::createPBRIBLScene,
 		"node"_a,

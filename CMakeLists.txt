@@ -265,6 +265,34 @@ set(CMAKE_SHARED_LINKER_FLAGS_ASAN
 function(OSGX_COMPILE_OPTIONS _target)
 	target_compile_features("${_target}" PUBLIC cxx_std_20)
 	target_link_libraries("${_target}" PUBLIC ${OPENSCENEGRAPH_LIBRARIES})
+	# BEFORE, not just PUBLIC: guarantees this checkout's own headers always win the #include <...>
+	# search over ${OPENSCENEGRAPH_INCLUDE_DIRS} below -- which, on this machine, is frequently the
+	# SAME prefix an earlier `cmake --install` put a stale copy of osgx's own headers into (OSG and
+	# osgx have historically shared an install prefix). Without this, a target can silently compile
+	# against a stale installed osgx/*.hpp instead of a live source-tree edit -- not just wrong
+	# behavior, but a real ABI mismatch for any public struct whose fields change, since callers and
+	# the freshly-compiled osgx implementation can then disagree about a type's size/layout.
+	#
+	# This used to only be applied in OSGX_ADD_EXECUTABLE below (examples/utils), not here -- so any
+	# LIBRARY calling this function directly (osgx_gltf, osgx_gltf_pbribl, osgx_ktx2, osgdb_gltf,
+	# osgdb_ktx2, osgdb_debug, osgx_python_bindings, osgx_python) was still exposed. Found the hard
+	# way 2026-07-31 via GGXPrefilterOptions::fireflyClamp: osgx_gltf_pbribl silently built against
+	# an installed GGXPrefilterOptions missing that field entirely while `osgx` itself (compiled
+	# fresh from source, via this same function but previously without this guard) read it,
+	# causing GGXPrefilterScene's bake to read past the end of the caller's undersized struct.
+	#
+	# PRIVATE, not PUBLIC: this only needs to win the #include <...> search for THIS target's own
+	# compilation -- every real compiled target in this project calls osgx_compile_options() on
+	# itself directly, so there's no need to propagate it to downstream consumers too. PUBLIC would
+	# also break `install(EXPORT osgxTargets ...)` for the library targets that use it (osgx_gltf,
+	# osgx_gltf_pbribl, osgx_ktx2, ...): CMake refuses to export a raw, unwrapped absolute
+	# source/build-tree path in INTERFACE_INCLUDE_DIRECTORIES, since it would be meaningless for an
+	# external consumer installing to a different prefix (confirmed by hitting exactly that "which
+	# is prefixed in the source directory" configure error on the first attempt at this fix).
+	target_include_directories("${_target}" BEFORE PRIVATE
+		"${PROJECT_SOURCE_DIR}"
+		"${PROJECT_BINARY_DIR}"
+	)
 	target_include_directories("${_target}" PUBLIC ${OPENSCENEGRAPH_INCLUDE_DIRS})
 	target_compile_options("${_target}" PRIVATE ${OSGX_WARNING_OPTIONS})
 endfunction()
@@ -279,10 +307,6 @@ function(OSGX_ADD_EXECUTABLE _prefix _topic)
 
 	target_link_libraries("${_target}" PRIVATE osgx::osgx)
 	osgx_compile_options("${_target}")
-	# Examples must exercise this checkout's public headers, not an older copy installed alongside
-	# OSG. The OpenSceneGraph package contributes its prefix before transitive osgx includes, so make
-	# the source root explicitly first.
-	target_include_directories("${_target}" BEFORE PRIVATE "${PROJECT_SOURCE_DIR}")
 endfunction()
 
 # ---------------------------------------------------------------------------
