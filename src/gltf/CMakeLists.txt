@@ -49,6 +49,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 		PROPERTIES
 		COMPILE_OPTIONS "-Wno-deprecated-declarations"
 	)
+	# nlohmann/json 3.5.0, bundled by this pinned tinygltf version, includes <ciso646>.
+	# GCC 15 emits a preprocessor warning for that header in C++20 mode; keep warnings-as-errors
+	# enabled for project code while isolating the third-party compatibility warning here.
+	set_property(SOURCE TinyGLTF.cpp APPEND PROPERTY COMPILE_OPTIONS "-Wno-cpp")
 endif()
 
 if(OSGX_INSTALL)

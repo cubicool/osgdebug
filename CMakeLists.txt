@@ -107,7 +107,7 @@ target_include_directories(osgx_core INTERFACE
 	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_INCLUDE_DIRS}>"
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_link_libraries(osgx_core INTERFACE "$<BUILD_INTERFACE:${OPENSCENEGRAPH_LIBRARIES}>")
+target_link_libraries(osgx_core INTERFACE ${OPENSCENEGRAPH_LIBRARIES})
 target_sources(osgx_core INTERFACE
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Warnings.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp>"
@@ -340,7 +340,7 @@ endif()
 
 if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# TODO: Make this an option too!
-	add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
+	add_subdirectory("/home/cubicool/dev/OpenSceneGraph.py/etc/pybind11" "ext/pybind11")
 
 	# The bindings are split across ext/python/osgx-*.cpp -- one translation unit per osgx::
 	# submodule (see ext/python/osgx-python.hpp for the bind_*() declarations) -- instead of one

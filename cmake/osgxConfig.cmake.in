@@ -34,8 +34,10 @@ include("${CMAKE_CURRENT_LIST_DIR}/osgxTargets.cmake")
 set_property(TARGET osgx::core APPEND PROPERTY
 	INTERFACE_INCLUDE_DIRECTORIES "${OPENSCENEGRAPH_INCLUDE_DIRS}"
 )
-set_property(TARGET osgx::core APPEND PROPERTY
-	INTERFACE_LINK_LIBRARIES "${OPENSCENEGRAPH_LIBRARIES}"
-)
+# OPENSCENEGRAPH_LIBRARIES may contain target_link_libraries() configuration
+# selectors such as "optimized" and "debug". Pass it through that command so
+# the selectors become configuration generator expressions rather than literal
+# library names ("-loptimized"/"-ldebug") in downstream link commands.
+target_link_libraries(osgx::core INTERFACE ${OPENSCENEGRAPH_LIBRARIES})
 
 check_required_components(osgx)
