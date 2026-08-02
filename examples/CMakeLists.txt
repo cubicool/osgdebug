@@ -11,7 +11,6 @@ set(OSGX_EXAMPLES
 	"notifyfilter"
 	"picking"
 	"platform"
-	"turntable"
 	"viewer"
 	"visitor"
 )
@@ -23,6 +22,13 @@ endforeach()
 find_package(OpenGL REQUIRED)
 target_link_libraries(osgx-hover PRIVATE OpenGL::GL)
 target_link_libraries(osgx-picking PRIVATE OpenGL::GL)
+
+if(OSGX_BUILD_GLTF)
+	osgx_add_executable("osgx" "turntable")
+	target_link_libraries(osgx-turntable PRIVATE osgx::gltf_pbribl)
+else()
+	message(STATUS "OSGX_BUILD_GLTF is OFF; skipping osgx-turntable")
+endif()
 
 # OSGX_WITH_IMGUI + the Dear ImGui detection (IMGUI_FOUND, etc.) come from the root
 # CMakeLists.txt -- already resolved by the time this subdirectory is processed.

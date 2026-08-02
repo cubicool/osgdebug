@@ -295,6 +295,7 @@ public:
 		_yawSensitivity(m._yawSensitivity),
 		_heightSensitivity(m._heightSensitivity),
 		_wheelZoomFactor(m._wheelZoomFactor),
+		_invertX(m._invertX),
 		_invertY(m._invertY),
 		_upAxis(m._upAxis),
 		_homeDirection(m._homeDirection),
@@ -348,6 +349,10 @@ public:
 	double getYawSensitivity() const { return _yawSensitivity; }
 	double getHeightSensitivity() const { return _heightSensitivity; }
 	double getWheelZoomFactor() const { return _wheelZoomFactor; }
+
+	// Inverts the pointer X axis used for yaw (both the raw MOVE/DRAG path and orbitByDelta()).
+	void setInvertX(bool invert) { _invertX = invert; }
+	bool getInvertX() const { return _invertX; }
 
 	// Inverts the pointer Y axis used for axial motion (both the raw MOVE/DRAG path and
 	// orbitByDelta()).
@@ -443,6 +448,7 @@ private:
 	double _yawSensitivity{osg::PI};
 	double _heightSensitivity{0.5};
 	double _wheelZoomFactor{1.15};
+	bool _invertX{true};
 	bool _invertY{true};
 	osg::Vec3d _upAxis{0.0, 0.0, 1.0};
 	osg::Vec3d _homeDirection{0.0, -1.0, 0.0};

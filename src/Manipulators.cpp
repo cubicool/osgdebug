@@ -513,9 +513,10 @@ void OrbitAxisManipulator::home(const osgGA::GUIEventAdapter&, osgGA::GUIActionA
 }
 
 void OrbitAxisManipulator::orbitByDelta(double dx, double dy) {
+	if(_invertX) dx = -dx;
 	if(_invertY) dy = -dy;
 
-	_yaw -= dx * _yawSensitivity;
+	_yaw += dx * _yawSensitivity;
 
 	if(_hasHeightReference) {
 		const auto& limits = _effectiveHeightLimits();
