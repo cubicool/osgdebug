@@ -7,6 +7,12 @@ foreach(util IN LISTS OSGX_UTILS)
 	osgx_add_executable("osgx" "${util}")
 endforeach()
 
+if(OSGX_BUILD_KTX2)
+	osgx_add_executable("osgx" "cubemap")
+else()
+	message(STATUS "OSGX_BUILD_KTX2 is OFF; skipping osgx-cubemap")
+endif()
+
 if(OSGX_BUILD_GLTF)
 	# glTF viewer: needs the tinygltf headers directly (Khronos-camera/IBL-manifest decoding) plus
 	# the osgx::gltf_pbribl adapter, not just the base osgx::gltf reader.
