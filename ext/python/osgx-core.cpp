@@ -2,6 +2,45 @@
 
 namespace osgx_python {
 
+// Only the TrackballManipulator instantiation is bound for now -- the only Base actually verified
+// working (examples/osgx-manipulator.cpp's "intents" mode).
+using TrackballCameraManipulator = osgx::CameraManipulator<osgGA::TrackballManipulator>;
+
+}
+
+// osgx::CameraManipulator<Base>::_callbacks introspection -- pyx::SequenceProxy over the read
+// accessors added alongside this (osgx/Manipulators.hpp's getNumUpdateCameraCallbacks()/
+// getUpdateCameraCallback()), modeled directly on osg::Program's SequenceTraits (OpenSceneGraph.py's
+// pyosg/osg/Program.hpp). Deliberately get/del only, no set()/append(): adding still goes through
+// addUpdateCameraCallback(cb, runOnce), which needs the extra bool a homogeneous-element sequence
+// can't carry.
+template<>
+struct pyx::SequenceTraits<osgx_python::TrackballCameraManipulator> {
+	using element_type = osg::Callback;
+	using value_type = element_type*;
+
+	static value_type from_python(py::handle h) { return h.cast<value_type>(); }
+
+	static size_t size(const osgx_python::TrackballCameraManipulator* m) {
+		return m->getNumUpdateCameraCallbacks();
+	}
+
+	static element_type* get(osgx_python::TrackballCameraManipulator* m, size_t i) {
+		return m->getUpdateCameraCallback(static_cast<unsigned int>(i));
+	}
+
+	static void del(osgx_python::TrackballCameraManipulator* m, size_t i) {
+		m->removeUpdateCameraCallback(m->getUpdateCameraCallback(static_cast<unsigned int>(i)));
+	}
+};
+
+namespace osgx_python {
+
+namespace detail {
+	using CallbacksProxy = pyx::SequenceProxy<TrackballCameraManipulator>;
+	using CallbacksStorage = pyx::ProxyStorageOSG<TrackballCameraManipulator, CallbacksProxy>;
+}
+
 void bind_core(py::module_& m) {
 	m.def(
 		"findDataFile",
@@ -280,9 +319,7 @@ void bind_core(py::module_& m) {
 	// Only the TrackballManipulator instantiation is bound for now -- the only Base actually
 	// verified working (examples/osgx-manipulator.cpp's "intents" mode) -- exposed as plain
 	// "CameraManipulator" to match osgx::CameraManipulator<>'s own default Base directly.
-	using TrackballCameraManipulator = osgx::CameraManipulator<osgGA::TrackballManipulator>;
-
-	py::class_<
+	auto cameraManipulator = py::class_<
 		TrackballCameraManipulator,
 		osgGA::CameraManipulator,
 		osg::ref_ptr<TrackballCameraManipulator>
@@ -314,10 +351,11 @@ void bind_core(py::module_& m) {
 				osg::Vec3d center,
 				osg::Vec3d up,
 				double duration,
-				std::function<float(float)> ease
+				std::function<float(float)> ease,
+				osgAnimation::Motion::TimeBehaviour tb
 			) {
 				self.addUpdateCameraCallback(
-					new osgx::FlyToCallback({eye, center, up}, duration, std::move(ease)),
+					new osgx::FlyToCallback({eye, center, up}, duration, std::move(ease), tb),
 					true
 				);
 			},
@@ -326,20 +364,36 @@ void bind_core(py::module_& m) {
 			"up"_a=osg::Vec3d(0.0, 0.0, 1.0),
 			"duration"_a,
 			"ease"_a=std::function<float(float)>(osgx::defaultEase),
+			"tb"_a=osgAnimation::Motion::CLAMP,
 			"Convenience wrapper: adds a one-shot FlyToCallback. `ease` is any (float) -> float "
 			"callable -- pass one of OpenSceneGraph's osgAnimation module's curves "
-			"(osgAnimation.inOutCubic, .outBounce, .outElastic, ...) or your own."
+			"(osgAnimation.inOutCubic, .outBounce, .outElastic, ...) or your own. `tb` is any "
+			"osgAnimation.Motion.TimeBehaviour -- CLAMP (default) arrives once and stays parked; "
+			"LOOP repeats forever (use FlyToCallback directly for a multi-waypoint patrol/loop)."
 		)
 		.def(
 			"shake",
-			[](TrackballCameraManipulator& self, double intensity, double duration) {
-				self.addUpdateCameraCallback(new osgx::ShakeCallback(intensity, duration), true);
+			[](
+				TrackballCameraManipulator& self,
+				double intensity,
+				double duration,
+				osgAnimation::Motion::TimeBehaviour tb
+			) {
+				self.addUpdateCameraCallback(new osgx::ShakeCallback(intensity, duration, tb), true);
 			},
 			"intensity"_a,
 			"duration"_a,
-			"Convenience wrapper: adds a one-shot ShakeCallback."
+			"tb"_a=osgAnimation::Motion::CLAMP,
+			"Convenience wrapper: adds a one-shot ShakeCallback. `tb`=LOOP gives a persistent "
+			"repeating rumble instead of a one-shot decay."
 		)
 	;
+
+	// .callbacks -- read-only introspection of what's currently attached (see the
+	// pyx::SequenceTraits<TrackballCameraManipulator> specialization above this function).
+	pyx::bind_proxy_property<detail::CallbacksProxy, TrackballCameraManipulator, detail::CallbacksStorage>(
+		cameraManipulator, "_Callbacks", "callbacks"
+	);
 
 	py::class_<osgx::Viewpoint>(m, "Viewpoint")
 		.def(py::init([](osg::Vec3d eye, osg::Vec3d center, osg::Vec3d up) {
@@ -360,8 +414,33 @@ void bind_core(py::module_& m) {
 		osg::Callback,
 		osg::ref_ptr<osgx::FlyToCallback>
 	>(m, "FlyToCallback")
-		.def(py::init<const osgx::Viewpoint&, double, std::function<float(float)>>(),
-			"target"_a, "duration"_a, "ease"_a=std::function<float(float)>(osgx::defaultEase)
+		.def(
+			py::init<
+				const osgx::Viewpoint&,
+				double,
+				std::function<float(float)>,
+				osgAnimation::Motion::TimeBehaviour
+			>(),
+			"target"_a,
+			"duration"_a,
+			"ease"_a=std::function<float(float)>(osgx::defaultEase),
+			"tb"_a=osgAnimation::Motion::CLAMP
+		)
+		.def(
+			py::init<
+				std::vector<osgx::Viewpoint>,
+				std::vector<double>,
+				std::function<float(float)>,
+				osgAnimation::Motion::TimeBehaviour
+			>(),
+			"waypoints"_a,
+			"durations"_a,
+			"ease"_a=std::function<float(float)>(osgx::defaultEase),
+			"tb"_a=osgAnimation::Motion::CLAMP,
+			"Multi-waypoint constructor: waypoints.size() == durations.size(), leg i flies from "
+			"waypoints[i - 1] (or the camera's current pose, for i == 0) to waypoints[i]. tb=LOOP "
+			"repeats the whole path forever -- for a smooth ping-pong, author waypoints so the last "
+			"and first points coincide or are close (e.g. waypoints=[B, A])."
 		)
 	;
 
@@ -370,7 +449,10 @@ void bind_core(py::module_& m) {
 		osg::Callback,
 		osg::ref_ptr<osgx::ShakeCallback>
 	>(m, "ShakeCallback")
-		.def(py::init<double, double>(), "intensity"_a, "duration"_a)
+		.def(
+			py::init<double, double, osgAnimation::Motion::TimeBehaviour>(),
+			"intensity"_a, "duration"_a, "tb"_a=osgAnimation::Motion::CLAMP
+		)
 	;
 
 	// osgx::pbr / osgx::ibl - ported from the STATIC path of pyosg-lighting/09-ibl.py and

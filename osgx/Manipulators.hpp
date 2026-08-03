@@ -522,6 +522,24 @@ public:
 		_pendingRemoves.push_back(cb);
 	}
 
+	// Read-only introspection of what's currently attached -- reflects _callbacks as of the last
+	// completed updateCamera() call: an addUpdateCameraCallback()/removeUpdateCameraCallback() made
+	// from outside a frame (e.g. from a Python REPL between frames) only lands in _pendingAdds/
+	// _pendingRemoves until the NEXT updateCamera(), so these can lag by up to one frame behind a
+	// call that was just made -- not a bug, the same async-apply design that protects the callback
+	// loop in updateCamera() from mutating _callbacks mid-iteration.
+	unsigned int getNumUpdateCameraCallbacks() const {
+		return static_cast<unsigned int>(_callbacks.size());
+	}
+
+	osg::Callback* getUpdateCameraCallback(unsigned int i) const {
+		return _callbacks[i].callback.get();
+	}
+
+	bool getUpdateCameraCallbackRunOnce(unsigned int i) const {
+		return _callbacks[i].runOnce;
+	}
+
 	// Peeks at FRAME events to cache the current time for intents to read via currentTime() --
 	// matches how OSG's own animated manipulators source time (from the FRAME event, not a polled
 	// osg::Timer), and keeps intent timing deterministically testable later by injecting FRAME

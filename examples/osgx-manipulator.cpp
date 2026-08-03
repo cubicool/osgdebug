@@ -197,19 +197,85 @@ int main(int argc, char** argv) {
 			osg::Vec3d(0.0, 0.0, 1.0)
 		};
 
+		// Two viewpoints swept ~80 degrees apart across the SAME side of the model (not diametrically
+		// opposite) -- '3' patrols between them forever via a single multi-waypoint FlyToCallback
+		// under osgAnimation::Motion::LOOP, no hand-rolled C++ ping-pong driver needed.
+		// FlyToCallback's orientation interpolation is a plain slerp between two fixed lookAt()
+		// quaternions, not an arc/orbit -- two viewpoints ~180 degrees apart (e.g. directly opposite
+		// sides, both looking at the same center) makes that slerp degenerate: the rotation angle
+		// being interpolated is maximal/near-ambiguous, so partway through the flight the camera can
+		// face some arbitrary perpendicular direction, losing the model out of the view frustum
+		// entirely instead of smoothly sweeping past it. Keeping both waypoints within well under
+		// 180 degrees of each other keeps the model in frame throughout the whole flight.
+		//
+		// The camera's own current pose becomes the implicit leg-0 start, and LOOP wraps the WHOLE
+		// path (including that captured start) back to t=0 every cycle -- per FlyToCallback's own
+		// documented convention (matching osg::AnimationPath's LOOP), a seamless loop is the caller's
+		// job. Pressing '3' from near patrolA/patrolB keeps that wrap unnoticeable in practice;
+		// pressing it from an arbitrary orbit position will visibly snap back through that starting
+		// pose once per cycle -- expected, not a bug.
+		osgx::Viewpoint patrolA{
+			osg::Vec3d(bs.center()) + osg::Vec3d(bs.radius() * 2.0, -bs.radius() * 1.8, bs.radius() * 0.5),
+			osg::Vec3d(bs.center()),
+			osg::Vec3d(0.0, 0.0, 1.0)
+		};
+		osgx::Viewpoint patrolB{
+			osg::Vec3d(bs.center()) + osg::Vec3d(bs.radius() * 2.0, bs.radius() * 1.8, bs.radius() * 0.5),
+			osg::Vec3d(bs.center()),
+			osg::Vec3d(0.0, 0.0, 1.0)
+		};
+
+		// Tracks the currently-running patrol (if any) so '3' TOGGLES it -- press once to start,
+		// press again to stop -- rather than stacking a new LOOP FlyToCallback (which never
+		// finishes on its own) on every press. Captured by value + mutable: the LambdaKeyHandler
+		// owns one persistent copy of this lambda, so the ref_ptr genuinely persists across calls.
+		osg::ref_ptr<osgx::FlyToCallback> patrol;
+		osg::Camera* camera = viewer.getCamera();
+
 		viewer.addEventHandler(new osgx::LambdaKeyHandler(
-			{'1', '2'},
-			[manip, flyTarget](
+			{'1', '2', '3'},
+			[manip, camera, flyTarget, patrolA, patrolB, patrol](
 				const osgGA::GUIEventAdapter&,
 				osgGA::GUIActionAdapter&,
 				osgx::LambdaKeyHandler::Key key
-			) {
+			) mutable {
 				if(key == '1') {
 					manip->addUpdateCameraCallback(new osgx::FlyToCallback(flyTarget, 1.5), true);
 				}
 
 				else if(key == '2') {
 					manip->addUpdateCameraCallback(new osgx::ShakeCallback(3.0, 0.4), true);
+				}
+
+				else if(key == '3') {
+					if(patrol.valid()) {
+						manip->removeUpdateCameraCallback(patrol.get());
+
+						// While active, the patrol overwrote the camera's view matrix every frame --
+						// Base::updateCamera() still ran first each frame though, so the underlying
+						// TrackballManipulator kept silently accumulating from any mouse input that
+						// happened to arrive meanwhile (Base::handle() is never intercepted, only
+						// peeked at). Without this resync, removing the patrol would snap the view to
+						// that stale hidden state instead of resuming smoothly from wherever the
+						// patrol left the camera -- same resync FlyToCallback already does on normal
+						// CLAMP arrival, just triggered by an interrupt instead of completion.
+						manip->setByMatrix(osg::Matrixd::inverse(camera->getViewMatrix()));
+
+						patrol = nullptr;
+					}
+
+					else {
+						patrol = new osgx::FlyToCallback(
+							{patrolA, patrolB},
+							{2.0, 2.0},
+							osgx::defaultEase,
+							osgAnimation::Motion::LOOP
+						);
+
+						// LOOP never finishes on its own -- runOnce is inert here either way; the
+						// toggle above is what actually stops it.
+						manip->addUpdateCameraCallback(patrol.get(), false);
+					}
 				}
 
 				return true;
@@ -221,6 +287,8 @@ int main(int argc, char** argv) {
 			<< " Normal trackball orbit/pan/zoom, Space/Home reset" << std::endl
 			<< " '1' FlyToCallback to an alternate viewpoint (1.5s)" << std::endl
 			<< " '2' ShakeCallback (0.4s)" << std::endl
+			<< " '3' toggle a multi-waypoint FlyToCallback LOOP patrol between two viewpoints" << std::endl
+			<< " '1'/'2' both compose cleanly on top of an active '3' patrol -- try it" << std::endl
 		;
 	}
 
