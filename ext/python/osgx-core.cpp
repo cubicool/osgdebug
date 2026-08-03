@@ -274,6 +274,105 @@ void bind_core(py::module_& m) {
 		.def("next", &osgx::MultiCameraManipulator::next)
 	;
 
+	// osgx::CameraManipulator<Base> (osgx/Manipulators.hpp) -- CRTP mixin merging one-shot/
+	// persistent "camera intent" callbacks onto a SINGLE real manipulator instance (as opposed to
+	// wrapping/replacing it, see the header's own class comment for why that distinction mattered).
+	// Only the TrackballManipulator instantiation is bound for now -- the only Base actually
+	// verified working (examples/osgx-manipulator.cpp's "intents" mode) -- exposed as plain
+	// "CameraManipulator" to match osgx::CameraManipulator<>'s own default Base directly.
+	using TrackballCameraManipulator = osgx::CameraManipulator<osgGA::TrackballManipulator>;
+
+	py::class_<
+		TrackballCameraManipulator,
+		osgGA::CameraManipulator,
+		osg::ref_ptr<TrackballCameraManipulator>
+	>(m, "CameraManipulator")
+		.def(py::init<>())
+		.def(
+			"addUpdateCameraCallback",
+			&TrackballCameraManipulator::addUpdateCameraCallback,
+			"callback"_a,
+			"runOnce"_a=false,
+			"Attaches an osg::Callback, run(this, camera) every updateCamera(); runOnce=True "
+			"auto-removes it once its run() returns False."
+		)
+		.def(
+			"removeUpdateCameraCallback",
+			&TrackballCameraManipulator::removeUpdateCameraCallback,
+			"callback"_a
+		)
+		.def_property_readonly(
+			"currentTime",
+			&TrackballCameraManipulator::currentTime,
+			"FRAME-event time, cached each frame -- what attached intents read for their own timing."
+		)
+		.def(
+			"flyTo",
+			[](
+				TrackballCameraManipulator& self,
+				osg::Vec3d eye,
+				osg::Vec3d center,
+				osg::Vec3d up,
+				double duration,
+				std::function<float(float)> ease
+			) {
+				self.addUpdateCameraCallback(
+					new osgx::FlyToCallback({eye, center, up}, duration, std::move(ease)),
+					true
+				);
+			},
+			"eye"_a,
+			"center"_a,
+			"up"_a=osg::Vec3d(0.0, 0.0, 1.0),
+			"duration"_a,
+			"ease"_a=std::function<float(float)>(osgx::defaultEase),
+			"Convenience wrapper: adds a one-shot FlyToCallback. `ease` is any (float) -> float "
+			"callable -- pass one of OpenSceneGraph's osgAnimation module's curves "
+			"(osgAnimation.inOutCubic, .outBounce, .outElastic, ...) or your own."
+		)
+		.def(
+			"shake",
+			[](TrackballCameraManipulator& self, double intensity, double duration) {
+				self.addUpdateCameraCallback(new osgx::ShakeCallback(intensity, duration), true);
+			},
+			"intensity"_a,
+			"duration"_a,
+			"Convenience wrapper: adds a one-shot ShakeCallback."
+		)
+	;
+
+	py::class_<osgx::Viewpoint>(m, "Viewpoint")
+		.def(py::init([](osg::Vec3d eye, osg::Vec3d center, osg::Vec3d up) {
+			return osgx::Viewpoint{eye, center, up};
+		}), "eye"_a, "center"_a, "up"_a=osg::Vec3d(0.0, 0.0, 1.0))
+		.def_readwrite("eye", &osgx::Viewpoint::eye)
+		.def_readwrite("center", &osgx::Viewpoint::center)
+		.def_readwrite("up", &osgx::Viewpoint::up)
+	;
+
+	// osg::Callback itself is registered by pyosg (OpenSceneGraph.py/pyosg/osg/NodeCallback.cpp),
+	// imported before this runs (see osgx.cpp) -- FlyToCallback/ShakeCallback derive from it
+	// directly (not osg::NodeCallback), matching the (manipulator, camera) object/data pair
+	// CameraManipulator<Base>::updateCamera() passes to run(), which osg::NodeCallback's
+	// operator()(Node*, NodeVisitor*) convenience doesn't fit.
+	py::class_<
+		osgx::FlyToCallback,
+		osg::Callback,
+		osg::ref_ptr<osgx::FlyToCallback>
+	>(m, "FlyToCallback")
+		.def(py::init<const osgx::Viewpoint&, double, std::function<float(float)>>(),
+			"target"_a, "duration"_a, "ease"_a=std::function<float(float)>(osgx::defaultEase)
+		)
+	;
+
+	py::class_<
+		osgx::ShakeCallback,
+		osg::Callback,
+		osg::ref_ptr<osgx::ShakeCallback>
+	>(m, "ShakeCallback")
+		.def(py::init<double, double>(), "intensity"_a, "duration"_a)
+	;
+
 	// osgx::pbr / osgx::ibl - ported from the STATIC path of pyosg-lighting/09-ibl.py and
 	// already proven in osgSlug's osgslug-pbr-ibl.cpp; the goal is for Python demos to reuse
 	// this toolkit (GLSL snippets + resolveShaderLibs() + the cubemap/BRDF-LUT/SH9 host-side

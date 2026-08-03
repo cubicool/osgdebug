@@ -4,6 +4,7 @@
 
 OSGX_DISABLE_WARNINGS
 
+#include <osg/Callback>
 #include <osg/Camera>
 #include <osg/CullSettings>
 #include <osg/Math>
@@ -13,10 +14,12 @@ OSGX_DISABLE_WARNINGS
 #include <osgGA/CameraManipulator>
 #include <osgGA/GUIActionAdapter>
 #include <osgGA/GUIEventAdapter>
+#include <osgGA/TrackballManipulator>
 
 OSGX_ENABLE_WARNINGS
 
 #include <cmath>
+#include <concepts>
 #include <utility>
 #include <vector>
 
@@ -458,6 +461,133 @@ private:
 	bool _initialized{false};
 	bool _liveOrbitEnabled{true};
 	osg::Vec2d _lastPointer{0.0, 0.0};
+};
+
+// ================================================================================================
+// CameraManipulator<Base>
+//
+// CRTP mixin (same idiom as osgx::Array<T>, see osgx/Array.hpp) that lets a manipulator merge
+// one-shot or persistent "camera intents" -- a fly-to animation, a shake, agent-driven nudges --
+// onto itself, without a caller needing a second manipulator object or to know/care which concrete
+// manipulator type is in play. osgx::CameraManipulator<osgGA::TrackballManipulator> genuinely IS a
+// TrackballManipulator: every interaction method (handle, home, getMatrix, setNode, ...) is
+// inherited directly, not forwarded through a held ref_ptr.
+//
+// Intents are plain osg::Callback subclasses (see osgx/CameraIntents.hpp for FlyToCallback/
+// ShakeCallback), added via addUpdateCameraCallback(). This deliberately reuses OSG's own callback
+// type rather than a bespoke hierarchy, so a caller can drop in either a purpose-built C++
+// subclass or (once pyx::CallableCallback grows a matching specialization) a plain Python callable.
+//
+// updateCamera() always runs Base::updateCamera(camera) first to establish this frame's normal
+// baseline pose, then runs each attached callback in attachment order, letting each one further
+// mutate camera.viewMatrix (a ShakeCallback composes on top of whatever's already there; a
+// FlyToCallback unconditionally overwrites it with an interpolated pose while active). This is
+// NOT SUPPORTED when Base is osgx::MultiCameraManipulator -- MultiCameraManipulator::updateCamera()
+// can route its real output to a DIFFERENT osg::Camera than the one passed in (see its own
+// per-target camera), which would silently desync from this mixin's callback loop.
+//
+// NOTE: no OSGX_META_Object / copy constructor (matches MultiCameraManipulator, not
+// Ortho2DManipulator/OrbitAxisManipulator) -- clone()/copy-construction will NOT propagate the
+// attached callback list. Manipulators are rarely cloned; not solved here.
+// ================================================================================================
+template<typename T>
+concept OSGCameraManipulator = std::derived_from<T, osgGA::CameraManipulator>;
+
+// Type-erases CameraManipulator<Base>'s extra surface so a generic osg::Callback -- which only
+// ever receives a plain osg::Object* -- can reach back into "whatever manipulator it's attached
+// to" without needing to know Base. dynamic_cast across this is safe regardless of Base: OSG never
+// disables RTTI, and osg::Object has a virtual destructor, so it stays live throughout.
+class CameraIntentHost {
+public:
+	virtual double currentTime() const = 0;
+	virtual void addUpdateCameraCallback(osg::Callback* cb, bool runOnce=false) = 0;
+	virtual void removeUpdateCameraCallback(osg::Callback* cb) = 0;
+
+protected:
+	virtual ~CameraIntentHost() {}
+};
+
+template<OSGCameraManipulator Base=osgGA::TrackballManipulator>
+class CameraManipulator: public Base, public CameraIntentHost {
+public:
+	using Base::Base;
+
+	double currentTime() const override { return _currentTime; }
+
+	void addUpdateCameraCallback(osg::Callback* cb, bool runOnce=false) override {
+		_pendingAdds.push_back({cb, runOnce});
+	}
+
+	void removeUpdateCameraCallback(osg::Callback* cb) override {
+		_pendingRemoves.push_back(cb);
+	}
+
+	// Peeks at FRAME events to cache the current time for intents to read via currentTime() --
+	// matches how OSG's own animated manipulators source time (from the FRAME event, not a polled
+	// osg::Timer), and keeps intent timing deterministically testable later by injecting FRAME
+	// events. Always forwards to Base -- this is a peek, never an interception.
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) override {
+		if(ea.getEventType() == osgGA::GUIEventAdapter::FRAME) _currentTime = ea.getTime();
+
+		return Base::handle(ea, aa);
+	}
+
+	void updateCamera(osg::Camera& camera) override {
+		Base::updateCamera(camera);
+
+		_applyPending();
+
+		// Iterate by index, not range-for/iterators: a callback's own run() may call
+		// addUpdateCameraCallback()/removeUpdateCameraCallback() on `this` (e.g. a finishing
+		// FlyToCallback chaining into a persistent effect), which must not mutate _callbacks while
+		// it's being iterated -- those calls only stage into _pendingAdds/_pendingRemoves, applied
+		// after this loop finishes.
+		for(size_t i = 0; i < _callbacks.size(); i++) {
+			auto& entry = _callbacks[i];
+
+			// Local convention for this call site only (not OSG's generic traverse-continuation
+			// meaning): true = still active, keep in the list; false = done. A false return only
+			// causes removal if runOnce is true -- a persistent entry (runOnce=false) stays
+			// regardless of what it returns. So runOnce means "auto-remove when I signal done," not
+			// literally "called exactly once" -- a FlyToCallback legitimately runs across many
+			// frames before finally returning false.
+			bool active = entry.callback->run(this, &camera);
+
+			if(!active && entry.runOnce) entry.callback = nullptr; // mark for sweep below
+		}
+
+		std::erase_if(_callbacks, [](const Entry& e) { return !e.callback.valid(); });
+
+		_applyPending();
+	}
+
+private:
+	struct Entry {
+		osg::ref_ptr<osg::Callback> callback;
+		bool runOnce;
+	};
+
+	void _applyPending() {
+		if(!_pendingRemoves.empty()) {
+			for(auto* cb : _pendingRemoves) {
+				std::erase_if(_callbacks, [&](const Entry& e) { return e.callback.get() == cb; });
+			}
+
+			_pendingRemoves.clear();
+		}
+
+		if(!_pendingAdds.empty()) {
+			for(auto& entry : _pendingAdds) _callbacks.push_back(std::move(entry));
+
+			_pendingAdds.clear();
+		}
+	}
+
+	std::vector<Entry> _callbacks;
+	std::vector<Entry> _pendingAdds;
+	std::vector<osg::Callback*> _pendingRemoves;
+
+	double _currentTime = 0.0;
 };
 
 }

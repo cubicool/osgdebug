@@ -6,6 +6,7 @@
 #include "Callbacks.hpp"
 #include "Picking.hpp"
 #include "Manipulators.hpp"
+#include "CameraIntents.hpp"
 #include "Grid.hpp"
 #include "Shader.hpp"
 #include "PBR.hpp"

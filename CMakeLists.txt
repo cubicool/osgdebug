@@ -14,6 +14,14 @@ endif()
 option(OSGX_BUILD_EXAMPLES "Build the osgx examples" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_UTILS "Build the osgx utilities" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_PYTHON "Build the osgx Python module" ${OSGX_IS_TOP_LEVEL})
+
+# osgx's Python bindings reuse OpenSceneGraph.py's vendored pybind11 (etc/pybind11) and its
+# pyosg/pybind11x headers rather than vendoring another copy -- default assumes sibling checkouts
+# under a common top-level dev directory (.../dev/osgx, .../dev/OpenSceneGraph.py); override with
+# -DOSGX_OPENSCENEGRAPH_PY_DIR=/path/to/OpenSceneGraph.py if that doesn't hold.
+set(OSGX_OPENSCENEGRAPH_PY_DIR "${CMAKE_SOURCE_DIR}/../OpenSceneGraph.py" CACHE PATH
+	"Path to an OpenSceneGraph.py checkout (used for its vendored ext/pybind11 and pyosg/pybind11x headers)"
+)
 option(OSGX_BUILD_KTX2 "Build the KTX2 osgDB plugin (osgdb_ktx2) and the osgx::ktx2 static library" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_BUILD_GLTF "Build the glTF osgDB plugin (osgdb_gltf) and the osgx::gltf/osgx::gltf_pbribl static libraries" ${OSGX_IS_TOP_LEVEL})
 option(OSGX_INSTALL "Generate osgx installation rules" ${OSGX_IS_TOP_LEVEL})
@@ -119,6 +127,7 @@ target_sources(osgx_core INTERFACE
 set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
 add_library(osgx SHARED
+	src/CameraIntents.cpp
 	src/CaptureCubeMap.cpp
 	src/Cursor.cpp
 	src/Debug.cpp
@@ -226,7 +235,6 @@ endif()
 if(OSGX_BUILD_PYTHON)
 	find_package(Python3 COMPONENTS Interpreter Development)
 endif()
-# add_subdirectory("/home/cubicool/dev/slughorn/ext/pybind11" "ext/pybind11")
 
 if(OSGX_IS_TOP_LEVEL AND isMultiConfig)
 	if(NOT "Asan" IN_LIST CMAKE_CONFIGURATION_TYPES)
@@ -339,8 +347,16 @@ if(OSGX_BUILD_UTILS)
 endif()
 
 if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
-	# TODO: Make this an option too!
-	add_subdirectory("/home/cubicool/dev/OpenSceneGraph.py/etc/pybind11" "ext/pybind11")
+	if(NOT EXISTS "${OSGX_OPENSCENEGRAPH_PY_DIR}/etc/pybind11/CMakeLists.txt")
+		message(FATAL_ERROR
+			"OSGX_BUILD_PYTHON is ON, but OSGX_OPENSCENEGRAPH_PY_DIR "
+			"(${OSGX_OPENSCENEGRAPH_PY_DIR}) doesn't contain etc/pybind11 -- checkout "
+			"OpenSceneGraph.py next to osgx, pass -DOSGX_OPENSCENEGRAPH_PY_DIR=/path/to/"
+			"OpenSceneGraph.py, or disable -DOSGX_BUILD_PYTHON=OFF."
+		)
+	endif()
+
+	add_subdirectory("${OSGX_OPENSCENEGRAPH_PY_DIR}/etc/pybind11" "ext/pybind11")
 
 	# The bindings are split across ext/python/osgx-*.cpp -- one translation unit per osgx::
 	# submodule (see ext/python/osgx-python.hpp for the bind_*() declarations) -- instead of one
@@ -364,8 +380,8 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	target_include_directories(osgx_python_bindings PUBLIC
 		"${CMAKE_CURRENT_SOURCE_DIR}"
 		${OPENSCENEGRAPH_INCLUDE_DIRS}
-		"/home/cubicool/dev/OpenSceneGraph.py"
-		"/home/cubicool/dev/OpenSceneGraph.py/etc"
+		"${OSGX_OPENSCENEGRAPH_PY_DIR}"
+		"${OSGX_OPENSCENEGRAPH_PY_DIR}/etc"
 	)
 	# PUBLIC, not PRIVATE: osgx::osgx's OSGX_IMGUI/OSGX_EGL/OSGX_GBM compile definitions need to
 	# keep propagating all the way to the osgx_python target below (specifically ext/python/

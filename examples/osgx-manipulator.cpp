@@ -1,10 +1,17 @@
 // vimrun! ./examples/osgx-manipulator
 //
-// Demonstrates osgx::Ortho2DManipulator (default) and osgx::OrbitAxisManipulator ("orbit").
+// Demonstrates osgx::Ortho2DManipulator (default), osgx::OrbitAxisManipulator ("orbit"), and
+// osgx::CameraManipulator<> ("intents").
 //
 // With no arguments, renders a grid of colored boxes in the XY plane.
 // Pass "orbit" to use OrbitAxisManipulator instead of Ortho2DManipulator.
-// Pass a model path (after "orbit", if present) to load and inspect it instead of the grid.
+// Pass "intents" to use osgx::CameraManipulator<> (defaults to TrackballManipulator) wrapped with
+// one-shot camera intents -- press '1' for a FlyToCallback to an alternate viewpoint, '2' for a
+// ShakeCallback. Normal trackball orbit/pan/zoom/Home all still work exactly as plain
+// TrackballManipulator would, proving Base inheritance is transparent -- this is the C++-only
+// verification step for osgx::CameraManipulator<Base>, no Python involved.
+// Pass a model path (after "orbit"/"intents", if present) to load and inspect it instead of the
+// grid.
 //
 // In "orbit" mode, press 'c' to toggle osgx::platform::PointerCapture: the cursor hides and
 // warps back to window-center every frame, feeding accumulated deltas into
@@ -15,6 +22,8 @@
 // delivers every event to both the manipulator and every other GUIEventHandler unconditionally
 // (see the comment on setLiveOrbitEnabled() in osgx/Manipulators.hpp for why that matters here).
 
+#include "../osgx/CameraIntents.hpp"
+#include "../osgx/Callbacks.hpp"
 #include "../osgx/Core.hpp"
 #include "../osgx/Cursor.hpp"
 #include "../osgx/Manipulators.hpp"
@@ -134,7 +143,8 @@ int main(int argc, char** argv) {
 	osgViewer::Viewer viewer;
 
 	bool orbitMode = argc >= 2 && std::string(argv[1]) == "orbit";
-	const char* modelPath = orbitMode
+	bool intentsMode = argc >= 2 && std::string(argv[1]) == "intents";
+	const char* modelPath = (orbitMode || intentsMode)
 		? (argc >= 3 ? argv[2] : nullptr)
 		: (argc >= 2 ? argv[1] : nullptr)
 	;
@@ -172,6 +182,45 @@ int main(int argc, char** argv) {
 			<< " Scroll dolly zoom (clamped to model coverage)" << std::endl
 			<< " Space/Home reset view" << std::endl
 			<< " 'c' toggle PointerCapture (hide+warp+accumulate; unbounded orbit/height)" << std::endl
+		;
+	}
+
+	else if(intentsMode) {
+		auto manip = osgx::make_ref<osgx::CameraManipulator<>>();
+
+		viewer.setCameraManipulator(manip);
+
+		osg::BoundingSphere bs = scene->getBound();
+		osgx::Viewpoint flyTarget{
+			osg::Vec3d(bs.center()) + osg::Vec3d(0.0, -bs.radius() * 2.5, bs.radius() * 1.5),
+			osg::Vec3d(bs.center()),
+			osg::Vec3d(0.0, 0.0, 1.0)
+		};
+
+		viewer.addEventHandler(new osgx::LambdaKeyHandler(
+			{'1', '2'},
+			[manip, flyTarget](
+				const osgGA::GUIEventAdapter&,
+				osgGA::GUIActionAdapter&,
+				osgx::LambdaKeyHandler::Key key
+			) {
+				if(key == '1') {
+					manip->addUpdateCameraCallback(new osgx::FlyToCallback(flyTarget, 1.5), true);
+				}
+
+				else if(key == '2') {
+					manip->addUpdateCameraCallback(new osgx::ShakeCallback(3.0, 0.4), true);
+				}
+
+				return true;
+			}
+		));
+
+		std::cout
+			<< "osgx::CameraManipulator<> (TrackballManipulator + camera intents)" << std::endl
+			<< " Normal trackball orbit/pan/zoom, Space/Home reset" << std::endl
+			<< " '1' FlyToCallback to an alternate viewpoint (1.5s)" << std::endl
+			<< " '2' ShakeCallback (0.4s)" << std::endl
 		;
 	}
 
