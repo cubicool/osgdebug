@@ -56,6 +56,18 @@ std::pair<bool, float> sliderFloatNudge(
 	return {changed, value};
 }
 
+std::tuple<bool, float, float, float> colorEdit3(
+	const std::string& label,
+	float r,
+	float g,
+	float b
+) {
+	float color[3] = {r, g, b};
+	const bool changed = ImGui::ColorEdit3(label.c_str(), color);
+
+	return {changed, color[0], color[1], color[2]};
+}
+
 std::pair<bool, std::string> inputText(
 	const std::string& label,
 	std::string value,

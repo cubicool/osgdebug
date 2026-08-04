@@ -15,6 +15,7 @@ OSGX_ENABLE_WARNINGS
 #include <imgui.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <cstring>
+#include <tuple>
 #endif
 
 namespace osgx {
@@ -90,6 +91,17 @@ inline void separator() {
 inline std::pair<bool, bool> checkbox(const std::string& label, bool value) {
 	return {ImGui::Checkbox(label.c_str(), &value), value};
 }
+
+inline bool button(const std::string& label) {
+	return ImGui::Button(label.c_str());
+}
+
+std::tuple<bool, float, float, float> colorEdit3(
+	const std::string& label,
+	float r,
+	float g,
+	float b
+);
 
 std::pair<bool, std::string> inputText(
 	const std::string& label,

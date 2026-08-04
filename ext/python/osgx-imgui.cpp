@@ -171,6 +171,15 @@ void bind_imgui(py::module_& m_imgui) {
 			"label"_a,
 			"value"_a
 		)
+		.def("button", &osgx::imgui::button, "label"_a)
+		.def(
+			"color_edit3",
+			&osgx::imgui::colorEdit3,
+			"label"_a,
+			"r"_a,
+			"g"_a,
+			"b"_a
+		)
 		.def(
 			"input_text",
 			&osgx::imgui::inputText,
