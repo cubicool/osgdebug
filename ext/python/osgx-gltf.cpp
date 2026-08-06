@@ -746,18 +746,6 @@ void bind_gltf(py::module_& m_gltf) {
 
 	m_gltf_pbribl.def(
 		"preparePBRIBLEnvironment",
-		py::overload_cast<const std::string&, const std::string&, int>(
-			&osgx::gltf::pbribl::preparePBRIBLEnvironment
-		),
-		"ktx2Path"_a,
-		"hdrPath"_a,
-		"lutSize"_a=1024,
-		"Load a pre-baked specular cubemap from ktx2Path; bake diffuse irradiance and the BRDF LUT "
-		"live from hdrPath. Add root to the rendered scene graph so its PRE_RENDER passes can "
-		"populate the generated textures."
-	);
-	m_gltf_pbribl.def(
-		"preparePBRIBLEnvironment",
 		py::overload_cast<const std::string&, int>(
 			&osgx::gltf::pbribl::preparePBRIBLEnvironment
 		),

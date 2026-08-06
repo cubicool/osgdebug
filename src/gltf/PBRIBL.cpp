@@ -445,41 +445,6 @@ bool PBRIBLScene::valid() const { return node.valid(); }
 // setting it true compiles the debug channels and creates their uniforms. The three diagnostic
 // uniform pointers are null in production.
 //
-PBRIBLEnvironment preparePBRIBLEnvironment(
-	const std::string& ktx2Path,
-	const std::string& hdrPath,
-	int lutSize
-) {
-	PBRIBLEnvironment environment;
-
-	environment.envMap = osgx::ibl::loadPrefilterCubemap(ktx2Path);
-
-	if(!environment.envMap) return environment;
-
-	environment.envMap->setUseHardwareMipMapGeneration(false);
-
-	auto lut = osgx::ibl::sharedBRDFLUT(lutSize);
-
-	environment.brdfLUT = lut.texture;
-	environment.lutCamera = lut.camera; // null once another environment already baked this size
-
-	auto hdrImage = osgDB::readRefImageFile(hdrPath);
-
-	if(!hdrImage) return environment;
-
-	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
-
-	environment.diffuseBakeRoot = diffuseBake.root;
-	environment.diffuseEnv = diffuseBake.diffuseTexture;
-	environment.root = osgx::make_ref<osg::Group>();
-
-	if(environment.lutCamera) environment.root->addChild(environment.lutCamera);
-
-	environment.root->addChild(environment.diffuseBakeRoot);
-
-	return environment;
-}
-
 // Fully dynamic overload: bakes the GGX-prefiltered specular cubemap live instead of loading one
 // from a KTX2 file, calling the exact same osgx::ibl::createGGXPrefilterScene() workflow
 // osggltf-iblbake-gpu already wraps to write that KTX2 to disk in the first place -- no readback,

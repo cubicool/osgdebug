@@ -1,4 +1,4 @@
-// vimrun! ./utils/osgx-gltf-viewer model.gltf --ktx2 papermill.ktx2 --hdr papermill.hdr
+// vimrun! ./utils/osgx-gltf-viewer model.gltf --env papermill.gltf
 //
 // osgx::gltf-owned viewer for its optional osgx-powered PBR/IBL renderer.
 //
@@ -301,22 +301,17 @@ int main(int argc, char** argv) {
 
 	args.getApplicationUsage()->setCommandLineUsage(
 		std::string(args.getApplicationName()) +
-		" <model.gltf> (--hdr <path> [--ktx2 <path>] | --env <manifest.gltf> | --official-ibl <dir>) [--camera <camera.gltf>] [--capture <path.png>] [--samples <count>] [--debug [mode]]"
+		" <model.gltf> (--hdr <path> | --env <manifest.gltf> | --official-ibl <dir>) [--camera <camera.gltf>] [--capture <path.png>] [--samples <count>] [--debug [mode]]"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--hdr <path>",
-		"Source HDR environment. Alone, bakes diffuse irradiance, BRDF LUT, and GGX-prefiltered "
-		"specular all live from this one file. Pair with --ktx2 to load a pre-baked specular "
-		"cubemap instead of baking it."
-	);
-	args.getApplicationUsage()->addCommandLineOption(
-		"--ktx2 <path>",
-		"Pre-filtered specular environment cubemap (requires --hdr; overrides live GGX baking)"
+		"Source HDR environment. Bakes diffuse irradiance, BRDF LUT, and GGX-prefiltered specular "
+		"all live from this one file."
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--env <manifest.gltf>",
 		"Static/shipping path: an osgx_pbribl manifest referencing pre-baked specular/diffuse KTX2 "
-		"cubemaps and a BRDF LUT image. No HDR decode or bake at runtime at all."
+		"cubemaps and a declared BRDF LUT. No HDR decode or cubemap bake at runtime."
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--official-ibl <directory>",
@@ -339,7 +334,7 @@ int main(int argc, char** argv) {
 		"combined, diffuse, specular, base-color, roughness, metallic, normal-texture, normal-texture-raw, geometry-normal, shading-normal, geometry-tangent, bitangent, linear-diffuse, linear-specular, or linear-combined"
 	);
 
-	std::string ktx2Path, hdrPath, envPath, officialIBLPath, cameraPath, capturePath, debugName = "combined";
+	std::string hdrPath, envPath, officialIBLPath, cameraPath, capturePath, debugName = "combined";
 	int samples = 4;
 	const std::map<std::string, int> debugModes = {
 		{"combined", 0}, {"diffuse", 1}, {"specular", 2},
@@ -349,7 +344,6 @@ int main(int argc, char** argv) {
 		{"linear-diffuse", 12}, {"linear-specular", 13}, {"linear-combined", 14}
 	};
 
-	const bool haveKtx2 = args.read("--ktx2", ktx2Path);
 	const bool haveHdr = args.read("--hdr", hdrPath);
 	const bool haveEnv = args.read("--env", envPath);
 	const bool haveOfficialIBL = args.read("--official-ibl", officialIBLPath);
@@ -430,10 +424,6 @@ int main(int argc, char** argv) {
 		}
 
 		environment = osgx::gltf::pbribl::loadPBRIBLEnvironment(manifest.string());
-	}
-
-	else if(haveKtx2) {
-		environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(ktx2Path, hdrEnvironment.string(), 1024);
 	}
 
 	else {

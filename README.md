@@ -438,11 +438,11 @@ renderer explicitly via `osgx::gltf_pbribl` (see CMake above):
 ```cpp
 #include <osgx/gltf/PBRIBL.hpp>
 
-auto environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(ktx2Path, hdrPath);
+auto environment = osgx::gltf::pbribl::loadPBRIBLEnvironment("papermill.gltf");
 auto scene = osgx::gltf::pbribl::createPBRIBLScene(model, environment);
 
 if(environment.valid() && scene.valid()) {
-	root->addChild(environment.root);
+	if(environment.root) root->addChild(environment.root);
 	root->addChild(scene.node);
 }
 ```

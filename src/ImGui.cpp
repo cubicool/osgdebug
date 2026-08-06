@@ -2,7 +2,31 @@
 
 #ifdef OSGX_IMGUI
 
+#include <type_traits>
+
 namespace osgx::imgui {
+
+namespace {
+
+// ImTextureID's underlying type isn't portable across Dear ImGui versions: older
+// (and the default backend-compat) builds define it as `void*`, needing the
+// pointer-sized-integer round trip below; newer builds (system imgui on Ubuntu 26
+// among them) define it as a plain `ImU64`, for which that same reinterpret_cast
+// is ill-formed (reinterpret_cast doesn't convert between two unrelated
+// non-pointer scalar types) -- GCC 15 rejects it outright where older GCC/imgui
+// combinations tolerated it. `if constexpr` picks the right conversion for
+// whichever ImTextureID this translation unit was compiled against, so this
+// builds clean either way with no version-detection macros.
+template<typename T>
+ImTextureID toTextureID(T id) {
+	if constexpr(std::is_pointer_v<ImTextureID>) {
+		return reinterpret_cast<ImTextureID>(static_cast<std::intptr_t>(id));
+	}
+
+	else return static_cast<ImTextureID>(id);
+}
+
+}
 
 std::pair<bool, float> sliderFloat(
 	const std::string& label,
@@ -156,7 +180,7 @@ void drawTexture2D(
 	;
 
 	ImGui::Image(
-		reinterpret_cast<ImTextureID>(static_cast<std::intptr_t>(textureObject->id())),
+		toTextureID(textureObject->id()),
 		ImVec2(static_cast<float>(w), static_cast<float>(h)),
 		ImVec2(0.0f, flip ? 0.0f : 1.0f),
 		ImVec2(1.0f, flip ? 1.0f : 0.0f),
