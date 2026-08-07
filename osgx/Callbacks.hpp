@@ -142,6 +142,30 @@ public:
 		std::erase_if(_callbacks, [&](auto& p){ return p.get() == cb; });
 	}
 
+	// Index-based accessors -- kept alongside add()/remove() (not a replacement) so callers
+	// with an identity-based mental model still have it, while anything wanting positional
+	// list semantics (e.g. a Python SequenceProxy binding) has a real primitive to build on
+	// instead of a linear identity-scan.
+	std::size_t size() const {
+		return _callbacks.size();
+	}
+
+	Callback* get(std::size_t i) const {
+		return _callbacks[i].get();
+	}
+
+	void set(std::size_t i, Callback* cb) {
+		_callbacks[i] = cb;
+	}
+
+	void removeAt(std::size_t i) {
+		_callbacks.erase(_callbacks.begin() + static_cast<std::ptrdiff_t>(i));
+	}
+
+	void insert(std::size_t i, Callback* cb) {
+		_callbacks.insert(_callbacks.begin() + static_cast<std::ptrdiff_t>(i), cb);
+	}
+
 protected:
 	Callbacks _callbacks;
 };

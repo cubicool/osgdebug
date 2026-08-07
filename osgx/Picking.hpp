@@ -108,8 +108,19 @@ uint32_t spiralPick(const uint8_t* px, int n);
 enum class ActionType { HOVER, CLICK };
 
 // Shared state for SYNC and ASYNC pick readback variants.
-// Plain struct - not osg::Referenced. Concrete classes inherit from this alongside
-// a callback base (NodeCallback or Camera::DrawCallback) that provides ref-counting.
+//
+// `virtual osg::Object` -- NOT `virtual osg::Referenced`: OSG's own diamond-merge point for
+// this exact multiple-inheritance shape is osg::Callback : public virtual Object (see
+// osg/Callback) -- osg::Object : public Referenced is a PLAIN, non-virtual edge one level
+// further down. PickReadbackSync/Async each inherit this ALONGSIDE a second callback base
+// (NodeCallback or Camera::DrawCallback) that reaches that SAME shared virtual Object through
+// its own Callback base. Virtually inheriting Referenced directly here would NOT merge with
+// that -- it'd add a third, unrelated path to Referenced, which is ambiguous rather than
+// shared (verified: it fails to compile with "virtual base osg::Referenced inaccessible ...
+// due to ambiguity"). Virtually inheriting Object at the SAME level Callback does is what
+// actually collapses the diamond into one shared subobject. Concrete classes still provide
+// their OWN callback behavior (operator()) -- this mixin only owns the shared onPick/onEnter/
+// onLeave/mouse-position/lastID state.
 //
 // onPick(id, ActionType) -- HOVER fires when hovered ID changes (including to 0=background);
 //                           CLICK fires when a click resolves.
@@ -119,7 +130,7 @@ enum class ActionType { HOVER, CLICK };
 // onLeave(id)               PickHoverCallback -- safe for scene graph modifications.
 // reportClick()          -- call from PickHandler in CONTINUOUS mode to fire CLICK with the
 //                           currently hovered ID.
-struct PickReadback {
+struct PickReadback: public virtual osg::Object {
 	std::function<void(uint32_t, ActionType)> onPick;
 	std::function<void(uint32_t)> onEnter;
 	std::function<void(uint32_t)> onLeave;

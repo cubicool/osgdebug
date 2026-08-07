@@ -445,14 +445,14 @@ void MaterialBuilder::applyMaterial(
 		}
 	}
 
-	// Export the material as a single osgGLTF_Material UBO for downstream PBR shaders
+	// Export the material as a single osgx_gltf_Material UBO for downstream PBR shaders
 	// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field - this is
 	// this plugin's own extension to the material interface, not part of OSG's osg_*
 	// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
 	// with an unrelated shader's own material uniforms.
 	//
 	// std140 layout (must match the GLSL `layout(std140, binding = N) uniform
-	// osgGLTF_Material { ... }` block exactly - see 09-ibl.py):
+	// osgx_gltf_Material { ... }` block exactly - see 09-ibl.py):
 	//
 	// vec4 baseColorFactor offset 0 (16 bytes)
 	// float roughnessFactor offset 16
@@ -495,7 +495,7 @@ void MaterialBuilder::applyMaterial(
 	);
 
 
-	// Alpha coverage is a core glTF material property, but osgGLTF deliberately
+	// Alpha coverage is a core glTF material property, but this loader deliberately
 	// does not impose a particular PBR shader. Export its values as namespaced
 	// uniforms so downstream shaders can apply the required fragment discard
 	// (MASK) or write the source alpha (BLEND). alphaMode is encoded as:
@@ -513,7 +513,6 @@ void MaterialBuilder::applyMaterial(
 		osgx::gltf::shader::ALPHA_CUTOFF_UNIFORM,
 		static_cast<float>(mat.alphaCutoff)
 	));
-
 	if(mat.alphaMode == "BLEND") {
 		// glTF BLEND uses conventional non-premultiplied source-over alpha.
 		// Render it after opaque geometry and leave depth testing enabled while
@@ -539,7 +538,7 @@ void MaterialBuilder::applyMaterial(
 	// StateSet inheritance already lets a more-specific child win). The
 	// matching back-face normal flip belongs in whatever fragment shader
 	// consumes this geometry (gl_FrontFacing-based) -- not this loader's
-	// concern, since osgGLTF doesn't ship its own PBR shader.
+	// concern, since the loader doesn't ship its own PBR shader.
 	if(mat.doubleSided) {
 		geom->getOrCreateStateSet()->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
 	}

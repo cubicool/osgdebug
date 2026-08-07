@@ -1,1 +1,6 @@
 BUILD*
+test/__pycache__
+CLAUDE.md
+CODEX.md
+AGENTS.md
+TODO.md

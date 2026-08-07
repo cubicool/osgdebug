@@ -34,10 +34,11 @@ extern const char SHADING_NORMAL[];
 extern const char EMISSIVE[];
 extern const char ALPHA_COVERAGE[];
 
-// Registers the osgGLTF shader catalog used by `#pragma osgGLTF ...`. Registration is idempotent.
+// Registers the osgx::gltf shader catalog used by `#pragma osgx::gltf ...`. Registration is
+// idempotent.
 void registerShaderLibs();
 
-// Registers the generic osgx PBR/IBL catalogs plus osgGLTF's catalog, then expands them together.
+// Registers the generic osgx PBR/IBL catalogs plus glTF's catalogs, then expands them together.
 // Keeping registration and resolution in this component avoids cross-shared-library registry
 // assumptions for Python and plugin consumers.
 std::string resolveShaderLibs(std::string_view source);
@@ -54,7 +55,7 @@ struct PBRIBLEnvironment {
 	osg::ref_ptr<osg::TextureCubeMap> envMap;
 	osg::ref_ptr<osg::Texture2D> brdfLUT;
 	osg::ref_ptr<osg::TextureCubeMap> diffuseEnv;
-	// KTX/OpenGL cubemap lookup basis, expressed relative to osgGLTF's Z-up world.
+	// KTX/OpenGL cubemap lookup basis, expressed relative to the loader's Z-up world.
 	osg::Vec3 iblAxisX{0.0f, 0.0f, 1.0f};
 	osg::Vec3 iblAxisY{0.0f, 1.0f, 0.0f};
 	osg::Vec3 iblAxisZ{-1.0f, 0.0f, 0.0f};
@@ -129,7 +130,7 @@ struct PBRIBLScene {
 	bool valid() const;
 };
 
-// Applies osgGLTF's renderer to a node using reusable prepared resources.
+// Applies the glTF PBR/IBL renderer to a node using reusable prepared resources.
 PBRIBLScene createPBRIBLScene(
 	osg::Node* node,
 	const PBRIBLEnvironment& environment,

@@ -34,4 +34,14 @@ std::vector<Monitor> listMonitors();
 // camera bookkeeping stays in sync. Pass width/height <= 0 to keep the window's current size.
 void moveWindow(osgViewer::Viewer& viewer, int x, int y, int width=-1, int height=-1);
 
+// Retitles the real X11 window (title bar + icon/taskbar name), via
+// GraphicsWindowX11::setWindowName() -- osg::GraphicsContext already exposes this as a
+// real cross-platform virtual (osgViewer::GraphicsWindow::setWindowName(), implemented
+// for X11 via XStoreName/XSetIconName), but GraphicsWindowX11 itself is not registered
+// in pyosg's Python bindings (only the methodless GraphicsWindow base is), so pybind11's
+// RTTI-based polymorphic dispatch can't reach it from `camera.graphicsContext` -- this
+// does the dynamic_cast in C++ instead, the same shape as alwaysOnTop()/moveWindow()
+// above, so nothing X11-specific needs to be exposed to Python at all.
+void setWindowTitle(osgViewer::Viewer& viewer, const std::string& title);
+
 }

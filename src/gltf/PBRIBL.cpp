@@ -29,7 +29,7 @@ OSGX_ENABLE_WARNINGS
 #include <filesystem>
 
 // ================================================================================================
-// osgx::gltf::pbribl - the glue between osgGLTF's loader material interface
+// osgx::gltf::pbribl - the glue between the glTF loader material interface
 // and osgx::pbr's material-agnostic BRDF math: reads the UBO/texture-unit interface the C++ loader
 // populates per primitive into an osgx_Material (see osgx::pbr::MATERIAL_STRUCT), plus a couple
 // of small glTF-specific fragment helpers (shading normal, emissive, alpha coverage) that need
@@ -39,7 +39,7 @@ OSGX_ENABLE_WARNINGS
 // reading fragment code (getMaterial()/getShadingNormal()/getEmissive()/getAlphaCoverage()) down
 // to OpenSceneGraph.py/examples/pyosg-voxelize.py's trimmed no-IBL-required PBR fallback shader --
 // the same UBO-reading code was about to get copy-pasted a third time, which is exactly what
-// osgGLTF exists to avoid. Shader.hpp's MATERIAL_INPUTS is the fixed external interface (field
+// this adapter exists to avoid. Shader.hpp's MATERIAL_INPUTS is the fixed external interface (field
 // order/types must match Material.cpp's std140 layout exactly); everything else is GLSL glue.
 // ================================================================================================
 
@@ -54,21 +54,21 @@ namespace osgx::gltf::pbribl {
 // roughnessFactor=0.58 with no texture at all) would otherwise read an unbound texture unit as
 // black/zero and silently discard the authored factor instead of falling back to it.
 const char GET_MATERIAL[] = R"GLSL(
-osgx_Material osgGLTF_GetMaterial(vec2 uv, vec3 N) {
+osgx_Material osgx_gltf_GetMaterial(vec2 uv, vec3 N) {
 	osgx_Material mat;
 
-	mat.albedo = bool(osgGLTF_material.hasBaseColorMap)
-		? texture(osgGLTF_textures.baseColor, uv).rgb
-		: osgGLTF_material.baseColorFactor.rgb
+	mat.albedo = bool(osgx_gltf_material.hasBaseColorMap)
+		? texture(osgx_gltf_textures.baseColor, uv).rgb
+		: osgx_gltf_material.baseColorFactor.rgb
 	;
-	mat.ao = bool(osgGLTF_material.hasOcclusion) ? texture(osgGLTF_textures.orm, uv).r : 1.0;
-	mat.roughness = bool(osgGLTF_material.hasMetallicRoughnessMap)
-		? texture(osgGLTF_textures.orm, uv).g * osgGLTF_material.roughnessFactor
-		: osgGLTF_material.roughnessFactor
+	mat.ao = bool(osgx_gltf_material.hasOcclusion) ? texture(osgx_gltf_textures.orm, uv).r : 1.0;
+	mat.roughness = bool(osgx_gltf_material.hasMetallicRoughnessMap)
+		? texture(osgx_gltf_textures.orm, uv).g * osgx_gltf_material.roughnessFactor
+		: osgx_gltf_material.roughnessFactor
 	;
-	mat.metallic = bool(osgGLTF_material.hasMetallicRoughnessMap)
-		? texture(osgGLTF_textures.orm, uv).b * osgGLTF_material.metallicFactor
-		: osgGLTF_material.metallicFactor
+	mat.metallic = bool(osgx_gltf_material.hasMetallicRoughnessMap)
+		? texture(osgx_gltf_textures.orm, uv).b * osgx_gltf_material.metallicFactor
+		: osgx_gltf_material.metallicFactor
 	;
 
 	mat.F0 = mix(vec3(0.04), mat.albedo, mat.metallic);
@@ -85,14 +85,14 @@ osgx_Material osgGLTF_GetMaterial(vec2 uv, vec3 N) {
 // default (0,0,0,1), and normalizing that zero vector produces NaN, so the degenerate check here
 // isn't optional. Requires MATERIAL_INPUTS already in scope.
 const char SHADING_NORMAL[] = R"GLSL(
-vec3 osgGLTF_ShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 uv) {
+vec3 osgx_gltf_ShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 uv) {
 	vec3 Nb = normalize(Ngeom);
 
-	if(!bool(osgGLTF_material.hasNormalMap)) return Nb;
+	if(!bool(osgx_gltf_material.hasNormalMap)) return Nb;
 
 	// The Khronos reference normalizes in tangent space before applying TBN. Keeping that
 	// normalization here matters when interpolation leaves TBN slightly non-orthonormal.
-	vec3 tangentNormal = normalize(texture(osgGLTF_textures.normal, uv).rgb * 2.0 - 1.0);
+	vec3 tangentNormal = normalize(texture(osgx_gltf_textures.normal, uv).rgb * 2.0 - 1.0);
 	vec3 T, B;
 
 	// TODO: How much is this conditional hurting us? It might be worth looking into having two
@@ -146,23 +146,23 @@ vec3 osgGLTF_ShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 uv) {
 
 // Requires MATERIAL_INPUTS already in scope.
 const char EMISSIVE[] = R"GLSL(
-vec3 osgGLTF_Emissive(vec2 uv, vec3 emissiveFactor) {
-	return texture(osgGLTF_textures.emissive, uv).rgb * emissiveFactor;
+vec3 osgx_gltf_Emissive(vec2 uv, vec3 emissiveFactor) {
+	return texture(osgx_gltf_textures.emissive, uv).rgb * emissiveFactor;
 }
 )GLSL";
 
-// MASK-mode coverage test input (caller still does `if(osgGLTF_alphaMode == 1.0 && alpha <
-// osgGLTF_alphaCutoff) discard;` itself - kept as a plain value here, not baked into a
+// MASK-mode coverage test input (caller still does `if(osgx_gltf_alphaMode == 1.0 && alpha <
+// osgx_gltf_alphaCutoff) discard;` itself - kept as a plain value here, not baked into a
 // discard, since some callers want the alpha for BLEND instead). Requires MATERIAL_INPUTS
 // already in scope.
 const char ALPHA_COVERAGE[] = R"GLSL(
-float osgGLTF_AlphaCoverage(vec2 uv) {
-	float alpha = bool(osgGLTF_material.hasBaseColorMap)
-		? texture(osgGLTF_textures.baseColor, uv).a
+float osgx_gltf_AlphaCoverage(vec2 uv) {
+	float alpha = bool(osgx_gltf_material.hasBaseColorMap)
+		? texture(osgx_gltf_textures.baseColor, uv).a
 		: 1.0
 	;
 
-	return alpha * osgGLTF_material.baseColorFactor.a;
+	return alpha * osgx_gltf_material.baseColorFactor.a;
 }
 )GLSL";
 
@@ -172,14 +172,13 @@ namespace osgx::gltf::pbribl {
 
 void registerShaderLibs() {
 	static const osgx::ShaderLib libs[] = {
-		{"MATERIAL_INPUTS", "osgGLTF_Material", shader::MATERIAL_INPUTS},
-		{"GET_MATERIAL", "osgGLTF_GetMaterial", GET_MATERIAL},
-		{"SHADING_NORMAL", "osgGLTF_ShadingNormal", SHADING_NORMAL},
-		{"EMISSIVE", "osgGLTF_Emissive", EMISSIVE},
-		{"ALPHA_COVERAGE", "osgGLTF_AlphaCoverage", ALPHA_COVERAGE}
+		{"MATERIAL_INPUTS", "osgx_gltf_Material", shader::MATERIAL_INPUTS},
+		{"GET_MATERIAL", "osgx_gltf_GetMaterial", GET_MATERIAL},
+		{"SHADING_NORMAL", "osgx_gltf_ShadingNormal", SHADING_NORMAL},
+		{"EMISSIVE", "osgx_gltf_Emissive", EMISSIVE},
+		{"ALPHA_COVERAGE", "osgx_gltf_AlphaCoverage", ALPHA_COVERAGE}
 	};
-
-	osgx::registerShaderLibs("osgGLTF", libs);
+	osgx::registerShaderLibs("osgx::gltf", libs);
 }
 
 std::string resolveShaderLibs(std::string_view source) {
@@ -197,11 +196,11 @@ namespace osgx::gltf::pbribl {
 
 // ================================================================================================
 // createPBRIBLScene - the one-call convenience helper requested after proving out, live, that
-// osgGLTF material glue + osgx::pbr's F_MULTISCATTER + osgx::ibl's LAMBERTIAN_IRRADIANCE
+// glTF material glue + osgx::pbr's F_MULTISCATTER + osgx::ibl's LAMBERTIAN_IRRADIANCE
 // compose correctly against a real osgDB::readNodeFile()'d glTF model (confirmed against Batman +
 // papermill.ktx2/papermill.hdr from OpenSceneGraph.py's pyosg-lighting/data, 2026-07-22). That
 // prototype was ~90 lines of Python + GLSL wiring; this collapses it to one C++ (and, via bindings,
-// one Python) call. A genuine C++ API first, with a separate binding in ext/osgGLTF-python.cpp.
+// one Python) call. A genuine C++ API first, with a separate binding in ext/python/osgx-gltf.cpp.
 //
 // Uses osgx::ibl's frame-driven GPU-baked Lambertian cubemap for diffuse IBL.
 // Pixel-parity with the Khronos glTF-Sample-Viewer reference is the explicit goal here, and SH9's
@@ -258,7 +257,7 @@ constexpr const char FULL_PBR_FRAGMENT_SHADER_SRC[] = R"GLSL(
 const float PI = 3.14159265359;
 
 #pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_PBR_NEUTRAL
-#pragma osgGLTF MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
+#pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
 
 in vec3 vNGeom;
 in vec3 vPosition;
@@ -340,21 +339,21 @@ Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
 }
 
 void main() {
-	float alpha = osgGLTF_AlphaCoverage(vUV);
+	float alpha = osgx_gltf_AlphaCoverage(vUV);
 
-	if(osgGLTF_alphaMode == 1.0 && alpha < osgGLTF_alphaCutoff) discard;
+	if(osgx_gltf_alphaMode == 1.0 && alpha < osgx_gltf_alphaCutoff) discard;
 
-	vec3 N = osgGLTF_ShadingNormal(vNGeom, vTangent, vPosition, vUV);
+	vec3 N = osgx_gltf_ShadingNormal(vNGeom, vTangent, vPosition, vUV);
 
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 	if(disableNormalMap != 0) N = normalize(vNGeom);
 #endif
 	vec3 V = normalize(-vPosition);
-	osgx_Material mat = osgGLTF_GetMaterial(vUV, N);
+	osgx_Material mat = osgx_gltf_GetMaterial(vUV, N);
 
 
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
-	if(disableRoughnessMap != 0) mat.roughness = osgGLTF_material.roughnessFactor;
+	if(disableRoughnessMap != 0) mat.roughness = osgx_gltf_material.roughnessFactor;
 
 	// Match pyosg-khronos-viewer.py's material/coordinate diagnostics. These deliberately return
 	// before lighting so a channel can be compared without IBL, Fresnel, or tonemapping involved.
@@ -366,12 +365,15 @@ void main() {
 	if(debugMode == 4) { fragColor = vec4(vec3(mat.roughness), alpha); return; }
 	if(debugMode == 5) { fragColor = vec4(vec3(mat.metallic), alpha); return; }
 	if(debugMode == 6) {
-		vec3 raw = texture(osgGLTF_textures.normal, vUV).rgb;
-		fragColor = vec4(bool(osgGLTF_material.hasNormalMap) ? normalize(raw * 2.0 - 1.0) * 0.5 + 0.5 : vec3(1.0), alpha);
+		vec3 raw = texture(osgx_gltf_textures.normal, vUV).rgb;
+		fragColor = vec4(bool(osgx_gltf_material.hasNormalMap) ? normalize(raw * 2.0 - 1.0) * 0.5 + 0.5 : vec3(1.0), alpha);
 		return;
 	}
 	if(debugMode == 7) {
-		fragColor = vec4(bool(osgGLTF_material.hasNormalMap) ? texture(osgGLTF_textures.normal, vUV).rgb : vec3(1.0), alpha);
+		fragColor = vec4(
+			bool(osgx_gltf_material.hasNormalMap) ? texture(osgx_gltf_textures.normal, vUV).rgb : vec3(1.0),
+			alpha
+		);
 		return;
 	}
 	if(debugMode == 8) { fragColor = vec4(osgx_ZUpToGltf(NgeomWorld) * 0.5 + 0.5, alpha); return; }
@@ -397,7 +399,7 @@ void main() {
 
 	Lighting ambient = evaluateIBL(mat, N, V);
 	vec3 surface = ambient.diffuse + ambient.specular;
-	vec3 emissive = osgGLTF_Emissive(vUV, emissiveFactor);
+	vec3 emissive = osgx_gltf_Emissive(vUV, emissiveFactor);
 
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 	surface = (debugMode == 1 || debugMode == 12)
@@ -435,7 +437,7 @@ bool PBRIBLEnvironment::valid() const {
 bool PBRIBLScene::valid() const { return node.valid(); }
 
 // One-call "get PBR/IBL going from scratch" against an already-loaded glTF node: applies the full
-// PBR/IBL shader above (osgGLTF material glue plus generic osgx::pbr/osgx::ibl, zero
+// PBR/IBL shader above (glTF material glue plus generic osgx::pbr/osgx::ibl, zero
 // hand-copied GLSL), loads the prefiltered cubemap + bakes a Lambertian diffuse irradiance cubemap
 // from the given paths, builds frame-driven GPU bakes for the Lambertian diffuse cubemap and BRDF
 // LUT, and wires every uniform/texture unit the shader needs. `node` is modified in place
@@ -684,12 +686,12 @@ PBRIBLScene createPBRIBLScene(
 	auto* ss = node->getOrCreateStateSet();
 	auto prog = osgx::make_ref<osg::Program>();
 
-	// osgGLTF stores glTF's optional TANGENT accessor in generic vertex attribute 7.
+	// The glTF loader stores glTF's optional TANGENT accessor in generic vertex attribute 7.
 	// Bind it before linking, exactly as pyosg-khronos-viewer.py does; otherwise GLSL may
 	// assign osg_Tangent to another generic attribute and normal mapping reads a default value.
 	shader::configureProgram(*prog);
 
-	prog->setName("osgGLTF_PBRIBLScene");
+	prog->setName("osgx_gltf_PBRIBLScene");
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
@@ -714,9 +716,9 @@ PBRIBLScene createPBRIBLScene(
 	ss->addUniform(new osg::Uniform("iblAxisY", environment.iblAxisY));
 	ss->addUniform(new osg::Uniform("iblAxisZ", environment.iblAxisZ));
 
-	// osgGLTF's Material helper binds the actual baseColor/normal/orm/emissive Texture2Ds to units
+	// The glTF Material helper binds the actual baseColor/normal/orm/emissive Texture2Ds to units
 	// 0-3 per geometry, but deliberately stays shader-agnostic
-	// and never sets the sampler *uniforms* that tell osgGLTF_textures which unit is which --
+	// and never sets the sampler *uniforms* that tell osgx_gltf_textures which unit is which --
 	// that's the shader glue's job (see MATERIAL_INPUTS's "unit N" comments above). Without this,
 	// every sampler in the GLTFTextures struct silently defaults to unit 0 per the GLSL spec, so
 	// normal/orm/emissive all end up reading the baseColor texture instead - corrupted shading

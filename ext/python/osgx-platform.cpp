@@ -63,6 +63,14 @@ void bind_platform(py::module_& m_platform) {
 		"viewport bookkeeping in sync. Pass width/height <= 0 to keep the current size."
 	);
 
+	m_platform.def(
+		"setWindowTitle",
+		&osgx::platform::setWindowTitle,
+		"viewer"_a,
+		"title"_a,
+		"Retitle the viewer's native X11 window (title bar + icon/taskbar name)."
+	);
+
 #ifdef OSGX_EGL
 	m_platform.def(
 		"createEGLWindow",

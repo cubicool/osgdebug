@@ -447,11 +447,10 @@ if(environment.valid() && scene.valid()) {
 }
 ```
 
-The material GLSL helpers are registered under `#pragma osgGLTF ...` — the GLSL-side registry key
-and uniform/attribute names (`osgGLTF_Material`, `osgGLTF_textures`, etc.) intentionally still use
-the pre-merge name; only the C++ namespace and CMake targets were renamed to `osgx::gltf`, since
-the shader ABI is a separate, wider-blast-radius decision left for later. Their canonical material
-declaration comes directly from `osgx/gltf/Shader.hpp`. Python exposes the same API under
+The material GLSL helpers are registered under `#pragma osgx::gltf ...`, and their canonical
+uniform/attribute names use the `osgx_gltf_*` prefix (for example, `osgx_gltf_Material` and
+`osgx_gltf_textures`). Their canonical material declaration comes directly from
+`osgx/gltf/Shader.hpp`. Python exposes the same API under
 `osgx.gltf.pbribl`. `utils/osgx-gltf-viewer` is the corresponding complete C++ consumer.
 
 ## PBR/IBL environment baking

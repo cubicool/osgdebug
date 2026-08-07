@@ -19,8 +19,8 @@ inline constexpr unsigned int JOINT_INDICES_ATTRIBUTE = 8;
 inline constexpr unsigned int JOINT_WEIGHTS_ATTRIBUTE = 9;
 
 inline constexpr char TANGENT_ATTRIBUTE_NAME[] = "osg_Tangent";
-inline constexpr char JOINT_INDICES_ATTRIBUTE_NAME[] = "osgGLTF_JointIndices";
-inline constexpr char JOINT_WEIGHTS_ATTRIBUTE_NAME[] = "osgGLTF_JointWeights";
+inline constexpr char JOINT_INDICES_ATTRIBUTE_NAME[] = "osgx_gltf_JointIndices";
+inline constexpr char JOINT_WEIGHTS_ATTRIBUTE_NAME[] = "osgx_gltf_JointWeights";
 
 // UBO and SSBO binding points occupy separate OpenGL namespaces.
 inline constexpr unsigned int MATERIAL_UBO_BINDING = 0;
@@ -32,22 +32,22 @@ inline constexpr int NORMAL_TEXTURE_UNIT = 1;
 inline constexpr int ORM_TEXTURE_UNIT = 2;
 inline constexpr int EMISSIVE_TEXTURE_UNIT = 3;
 
-inline constexpr char BASE_COLOR_SAMPLER[] = "osgGLTF_textures.baseColor";
-inline constexpr char NORMAL_SAMPLER[] = "osgGLTF_textures.normal";
-inline constexpr char ORM_SAMPLER[] = "osgGLTF_textures.orm";
-inline constexpr char EMISSIVE_SAMPLER[] = "osgGLTF_textures.emissive";
+inline constexpr char BASE_COLOR_SAMPLER[] = "osgx_gltf_textures.baseColor";
+inline constexpr char NORMAL_SAMPLER[] = "osgx_gltf_textures.normal";
+inline constexpr char ORM_SAMPLER[] = "osgx_gltf_textures.orm";
+inline constexpr char EMISSIVE_SAMPLER[] = "osgx_gltf_textures.emissive";
 
-inline constexpr char ALPHA_MODE_UNIFORM[] = "osgGLTF_alphaMode";
-inline constexpr char ALPHA_CUTOFF_UNIFORM[] = "osgGLTF_alphaCutoff";
+inline constexpr char ALPHA_MODE_UNIFORM[] = "osgx_gltf_alphaMode";
+inline constexpr char ALPHA_CUTOFF_UNIFORM[] = "osgx_gltf_alphaCutoff";
 
 inline constexpr float ALPHA_MODE_OPAQUE = 0.0f;
 inline constexpr float ALPHA_MODE_MASK = 1.0f;
 inline constexpr float ALPHA_MODE_BLEND = 2.0f;
 
-// Canonical GLSL declaration matching the std140 data uploaded by the loader. osgGLTF defines
+// Canonical GLSL declaration matching the std140 data uploaded by the loader. osgx::gltf defines
 // this interface but deliberately does not impose a particular material or lighting shader.
 inline constexpr char MATERIAL_INPUTS[] = R"GLSL(
-layout(std140, binding = 0) uniform osgGLTF_Material {
+layout(std140, binding = 0) uniform osgx_gltf_Material {
 	vec4 baseColorFactor;
 	float roughnessFactor;
 	float metallicFactor;
@@ -55,7 +55,7 @@ layout(std140, binding = 0) uniform osgGLTF_Material {
 	float hasMetallicRoughnessMap;
 	float hasOcclusion;
 	float hasNormalMap;
-} osgGLTF_material;
+} osgx_gltf_material;
 
 struct GLTFTextures {
 	sampler2D baseColor;
@@ -64,9 +64,9 @@ struct GLTFTextures {
 	sampler2D emissive;
 };
 
-uniform GLTFTextures osgGLTF_textures;
-uniform float osgGLTF_alphaMode;
-uniform float osgGLTF_alphaCutoff;
+uniform GLTFTextures osgx_gltf_textures;
+uniform float osgx_gltf_alphaMode;
+uniform float osgx_gltf_alphaCutoff;
 )GLSL";
 
 inline void configureProgram(osg::Program& program) {
@@ -77,7 +77,7 @@ inline void configureProgram(osg::Program& program) {
 	// honors directly -- this call doesn't change what binding is actually used, only silences
 	// OSG's own "uniform block ... has no binding" warning (Program.cpp checks its own separate
 	// C++-side registry, populated only via this call, regardless of what the shader source says).
-	program.addBindUniformBlock("osgGLTF_Material", MATERIAL_UBO_BINDING);
+	program.addBindUniformBlock("osgx_gltf_Material", MATERIAL_UBO_BINDING);
 }
 
 inline void configureStateSet(osg::StateSet& stateSet) {

@@ -27,10 +27,12 @@ namespace pyx = pybind11x;
 namespace osgx_python {
 
 void bind_core(py::module_& m);
+void bind_callbacks(py::module_& m);
 void bind_pbr(py::module_& m_pbr);
 void bind_ibl(py::module_& m_ibl);
 void bind_debug(py::module_& m_debug);
 void bind_platform(py::module_& m_platform);
+void bind_picking(py::module_& m_picking);
 
 #ifdef OSGX_IMGUI
 void bind_imgui(py::module_& m_imgui);

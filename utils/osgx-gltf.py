@@ -20,15 +20,16 @@ def flag(value):
 
 def load_summaries(args):
     try:
-        import osgGLTF
-    except ImportError as exc:
+        import osgx
+        gltf = osgx.gltf
+    except (ImportError, AttributeError) as exc:
         raise RuntimeError(
-            "could not import osgGLTF; build osgGLTF_python and set PYTHONPATH "
-            "to the build directory"
+            "could not import osgx.gltf; build osgx_python with OSGX_BUILD_GLTF "
+            "and set PYTHONPATH to the build directory"
         ) from exc
 
     return [
-        osgGLTF.inspect(model, load_images=args.load_images)
+        gltf.inspect(model, load_images=args.load_images or args.command == "overview")
         for model in args.model
     ]
 
@@ -72,6 +73,89 @@ def command_summary(args, summaries):
         print_counts(summary)
         print()
         print_intent_lines(summary)
+
+
+def material_textures(material):
+    pbr = material["pbrMetallicRoughness"]
+
+    return (
+        pbr["baseColorTexture"],
+        pbr["metallicRoughnessTexture"],
+        material["normalTexture"],
+        material["occlusionTexture"],
+        material["emissiveTexture"],
+    )
+
+
+def command_overview(args, summaries):
+    for summary_index, summary in enumerate(summaries):
+        if summary_index:
+            print()
+            print("=" * 72)
+            print()
+
+        primitives = [
+            primitive
+            for mesh in summary["meshes"]
+            for primitive in mesh["primitives"]
+        ]
+        positions = [
+            primitive["attributes"]["POSITION"]["count"]
+            for primitive in primitives
+            if primitive["hasPosition"]
+        ]
+        indices = [
+            primitive["indices"]["count"]
+            for primitive in primitives
+            if primitive["indices"].get("valid")
+        ]
+        texture_images = {}
+
+        for material in summary["materials"]:
+            for texture in material_textures(material):
+                if texture is None or not texture["valid"]:
+                    continue
+
+                source = texture["source"]
+                texture_images[source] = texture
+
+        decoded_texture_bytes = sum(
+            texture["imageWidth"] * texture["imageHeight"] * 4
+            for texture in texture_images.values()
+        )
+        max_texture_dimension = max(
+            (
+                max(texture["imageWidth"], texture["imageHeight"])
+                for texture in texture_images.values()
+            ),
+            default=0,
+        )
+        alpha_modes = {}
+
+        for material in summary["materials"]:
+            mode = material["alphaMode"]
+            alpha_modes[mode] = alpha_modes.get(mode, 0) + 1
+
+        print(summary["path"])
+        print()
+        print("rendering complexity")
+        print(f"  primitives                 {len(primitives)}")
+        print(f"  mesh nodes                 {sum(node['mesh'] >= 0 for node in summary['nodes'])}")
+        print(f"  maximum node children      {max((len(node['children']) for node in summary['nodes']), default=0)}")
+        print(f"  position vertices          {sum(positions):,}")
+        print(f"  indices                    {sum(indices):,}")
+        print(f"  primitives with tangents   {sum(primitive['hasTangent'] for primitive in primitives)}")
+        print(
+            "  primitives with UV1       "
+            f"{sum('TEXCOORD_1' in primitive['attributes'] for primitive in primitives)}"
+        )
+        print(f"  material alpha modes       {', '.join(f'{mode}={count}' for mode, count in alpha_modes.items()) or '-'}")
+        print()
+        print("texture pressure")
+        print(f"  referenced images          {len(texture_images)}")
+        print(f"  largest decoded dimension  {max_texture_dimension}px")
+        print(f"  decoded RGBA upper bound   {decoded_texture_bytes / 1024 / 1024:.0f} MiB")
+        print("  note                       decoded estimate excludes mipmaps, driver copies, and render targets")
 
 
 def print_intent_lines(summary):
@@ -756,7 +840,7 @@ def build_parser():
 
     subparsers = parser.add_subparsers(dest="command")
 
-    for command in ["summary", "intent", "skins", "animations", "materials"]:
+    for command in ["summary", "overview", "intent", "skins", "animations", "materials"]:
         sub = subparsers.add_parser(command)
         sub.add_argument("model", nargs="+")
         sub.set_defaults(func=globals()[f"command_{command}"])
@@ -776,6 +860,7 @@ def build_parser():
 def main(argv=None):
     commands = {
         "summary",
+        "overview",
         "intent",
         "skins",
         "animations",

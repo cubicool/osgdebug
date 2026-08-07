@@ -366,10 +366,12 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# only ever has to compile the thin ext/python/osgx.cpp PYBIND11_MODULE entry point.
 	add_library(osgx_python_bindings STATIC
 		"ext/python/osgx-core.cpp"
+		"ext/python/osgx-callbacks.cpp"
 		"ext/python/osgx-pbr.cpp"
 		"ext/python/osgx-ibl.cpp"
 		"ext/python/osgx-debug.cpp"
 		"ext/python/osgx-platform.cpp"
+		"ext/python/osgx-picking.cpp"
 	)
 
 	# PUBLIC, not PRIVATE: ext/python/osgx.cpp (compiled into the separate osgx_python target

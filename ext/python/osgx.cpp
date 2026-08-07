@@ -13,6 +13,7 @@ PYBIND11_MODULE(osgx, m) {
 	py::module_::import("OpenSceneGraph");
 
 	osgx_python::bind_core(m);
+	osgx_python::bind_callbacks(m);
 
 	auto m_pbr = m.def_submodule("pbr", "osgx::pbr - BRDF math GLSL snippets + direct-light rig");
 
@@ -38,6 +39,10 @@ PYBIND11_MODULE(osgx, m) {
 	auto m_platform = m.def_submodule("platform", "osgx::platform - X11/EGL/GBM window helpers");
 
 	osgx_python::bind_platform(m_platform);
+
+	auto m_picking = m.def_submodule("picking", "osgx::picking - texture-based object-ID picking");
+
+	osgx_python::bind_picking(m_picking);
 
 #ifdef OSGX_GLTF
 	auto m_gltf = m.def_submodule("gltf", "osgx::gltf - glTF 2.0 loader + optional PBR/IBL adapter");

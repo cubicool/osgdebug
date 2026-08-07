@@ -118,4 +118,16 @@ void moveWindow(osgViewer::Viewer& viewer, int x, int y, int width, int height) 
 	gw->resized(x, y, w, h);
 }
 
+void setWindowTitle(osgViewer::Viewer& viewer, const std::string& title) {
+	auto* camera = viewer.getCamera();
+
+	if(!camera) return;
+
+	auto* gw = dynamic_cast<osgViewer::GraphicsWindowX11*>(camera->getGraphicsContext());
+
+	if(!gw) return;
+
+	gw->setWindowName(title);
+}
+
 }

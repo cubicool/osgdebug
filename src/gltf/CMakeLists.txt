@@ -42,7 +42,7 @@ set_target_properties(osgx_gltf_pbribl PROPERTIES
 )
 
 # tinygltf's bundled JSON header (json.hpp) uses the deprecated std::is_pod trait; isolate that
-# third-party warning to just these translation units, same treatment osgGLTF gave it.
+# third-party warning to just these translation units, same treatment used before the merge.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 	set_source_files_properties(
 		Accessor.cpp Animation.cpp Material.cpp Mesh.cpp PBRIBL.cpp Reader.cpp ReaderImpl.cpp Scene.cpp Skin.cpp Texture.cpp TinyGLTF.cpp

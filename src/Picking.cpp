@@ -47,8 +47,16 @@ void main() {
 )GLSL";
 
 // Default hooks: no vertex forwarding; fragment reads uniform uint pickID.
-constexpr const char* PICK_VERT_HOOK_NOOP = "void pickVertexHook() {}";
-constexpr const char* PICK_FRAG_HOOK_UNIFORM = "uniform uint pickID; uint getPickID() { return pickID; }";
+//
+// Each osg::Shader source is compiled as its OWN translation unit (glCompileShader runs on
+// every shader object individually, before linking) -- GLSL requires #version to be the first
+// token if present at all, and defaults to 1.10 when absent. PICK_VERT_CORE/PICK_FRAG_CORE
+// above declare #version 330 core, but these hook strings didn't, so `uint` (GLSL 1.30+) failed
+// to compile despite the core shaders being fine -- driver-dependent whether that's enforced
+// per-object or only at link time, which is why this didn't necessarily fail everywhere.
+constexpr const char* PICK_VERT_HOOK_NOOP = "#version 330 core\nvoid pickVertexHook() {}";
+constexpr const char* PICK_FRAG_HOOK_UNIFORM =
+	"#version 330 core\nuniform uint pickID; uint getPickID() { return pickID; }";
 
 }
 
