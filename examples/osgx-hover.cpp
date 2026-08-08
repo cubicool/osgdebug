@@ -34,7 +34,6 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-#include <cstring>
 #include <unordered_map>
 
 // ------------------------------------------------------------------------------------------------
@@ -172,8 +171,8 @@ int main(int argc, char** argv) {
 		auto pickImage = osgx::make_ref<osg::Image>();
 
 		pickImage->allocateImage(1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE);
-		std::memset(pickImage->data(), 0, static_cast<std::size_t>(pickImage->getTotalSizeInBytesIncludingMipmaps()));
 
+		// makePickCamera() zeroes the image itself once attached -- see its comment for why.
 		pickCam = osgx::makePickCamera(1, 1, pickImage.get());
 		pickCam->addChild(scene);
 

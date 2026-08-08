@@ -1,5 +1,7 @@
 #include "osgx/Picking.hpp"
 
+#include <cstring>
+
 namespace osgx {
 
 namespace {
@@ -79,7 +81,21 @@ osg::ref_ptr<osg::Camera> makePickCamera(
 	cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
 	cam->setSmallFeatureCullingPixelSize(-1.0f);
 
-	if(image) cam->attach(osg::Camera::COLOR_BUFFER, image);
+	if(image) {
+		cam->attach(osg::Camera::COLOR_BUFFER, image);
+
+		// CONTINUOUS/hover-mode readbacks (PickReadbackSync) poll this image every update
+		// traversal, including before the pick camera has ever actually rendered -- an
+		// already-allocated image's memory is whatever allocateImage() left it as (garbage,
+		// not zero), which decodes as a bogus nonzero pick ID and fires a spurious onEnter.
+		// Zero it here, once, so ID 0 (background) holds until the first real render --
+		// matching the camera's own all-zero clear color -- instead of relying on every
+		// caller to memset() it themselves (found independently in both the C++ and Python
+		// hover examples).
+		if(image->valid() && image->data()) {
+			std::memset(image->data(), 0, image->getTotalSizeInBytesIncludingMipmaps());
+		}
+	}
 	else cam->attach(osg::Camera::COLOR_BUFFER, GL_RGBA);
 
 	auto prog = make_ref<osg::Program>();
