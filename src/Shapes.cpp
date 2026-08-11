@@ -10,6 +10,8 @@ namespace osgx {
 
 namespace {
 
+using Face = Polyhedron::Face;
+
 void copyElement(osg::Array* destination, std::size_t destinationIndex, const osg::Array* source, std::size_t sourceIndex) {
 	if(destination->getElementSize() != source->getElementSize()) {
 		throw std::logic_error("cannot copy between osg::Array types with different element sizes");
@@ -46,6 +48,12 @@ std::vector<osg::Vec3> cubeVertices(const osg::Vec3& center, const osg::Vec3& si
 		center + osg::Vec3( half.x(), half.y(), half.z()),
 		center + osg::Vec3(-half.x(), half.y(), half.z())
 	};
+}
+
+osg::Vec3 cubeSizeForRadius(float radius) {
+	const auto side = radius * 2.0f / std::sqrt(3.0f);
+
+	return osg::Vec3(side, side, side);
 }
 
 std::vector<Face> cubeFaces() {
@@ -291,6 +299,18 @@ float Polyhedron::restingOffset(const osg::Quat& orientation) const {
 	return -lowest;
 }
 
+float Polyhedron::faceRestingOffset(std::size_t faceIndex, const osg::Quat& orientation) const {
+	const auto& face = _faces.at(faceIndex);
+
+	if(face.vertices.empty()) throw std::invalid_argument("Polyhedron support face has no vertices");
+
+	float z = 0.0f;
+
+	for(const auto index: face.vertices) z += (orientation * _vertices.at(index)).z();
+
+	return -z / static_cast<float>(face.vertices.size());
+}
+
 void Polyhedron::setFaceVertexAttribute(unsigned int location, osg::Array* values) {
 	setAttribute(location, AttributeDomain::FaceVertex, values);
 }
@@ -494,6 +514,9 @@ void Polyhedron::setAttribute(unsigned int location, AttributeDomain domain, osg
 
 Cube::Cube(const osg::Vec3& center, const osg::Vec3& size, VertexLayout layout):
 Polyhedron(cubeVertices(center, size), cubeFaces(), layout) {}
+
+Cube::Cube(const osg::Vec3& center, float radius, VertexLayout layout):
+Cube(center, cubeSizeForRadius(radius), layout) {}
 
 Tetrahedron::Tetrahedron(const osg::Vec3& center, float radius, VertexLayout layout):
 Polyhedron(tetrahedronVertices(center, radius), tetrahedronFaces(), layout) {}

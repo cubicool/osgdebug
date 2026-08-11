@@ -24,14 +24,6 @@ struct VertexLayout {
 	unsigned int uv = 3;
 };
 
-// A face refers to vertices in Polyhedron's base-vertex list.  Its winding must be outward:
-// (v[1] - v[0]) x (v[2] - v[0]) points away from the solid.  Each face is fan-triangulated,
-// and receives its own output vertices so its normal is truly flat.
-struct Face {
-	std::vector<std::uint32_t> vertices;
-	std::vector<osg::Vec2> uv;
-};
-
 // A polygonal, flat-shaded mesh with explicit GPU vertex attribute locations.  Custom streams
 // are supplied in the original face-corner order, rather than expanded triangle order: rebuild()
 // duplicates them exactly as it duplicates positions for fan triangulation.  This makes a
@@ -39,6 +31,14 @@ struct Face {
 class Polyhedron: public osg::Geometry {
 public:
 	OSGX_META_Object(osgx_shapes, Polyhedron)
+
+	// A face refers to vertices in this Polyhedron's base-vertex list. Its winding must be outward:
+	// (v[1] - v[0]) x (v[2] - v[0]) points away from the solid. Each face is fan-triangulated,
+	// and receives its own output vertices so its normal is truly flat.
+	struct Face {
+		std::vector<std::uint32_t> vertices;
+		std::vector<osg::Vec2> uv;
+	};
 
 	Polyhedron() = default;
 	Polyhedron(std::vector<osg::Vec3> vertices, std::vector<Face> faces, VertexLayout layout={});
@@ -56,6 +56,10 @@ public:
 	// Translation along world +Z needed to place the lowest oriented vertex at z=0.  Keeping this
 	// generic geometry calculation here lets an animation/dice layer choose its own support policy.
 	float restingOffset(const osg::Quat& orientation=osg::Quat()) const;
+	// Translation along world +Z needed to place this oriented face's plane at z=0.  Unlike
+	// restingOffset(), this preserves a caller-selected support face even while a roll is still
+	// settling; it is useful for any flat-based token or polyhedral game piece.
+	float faceRestingOffset(std::size_t faceIndex, const osg::Quat& orientation=osg::Quat()) const;
 
 	void setVertices(std::vector<osg::Vec3> vertices);
 	void setFaces(std::vector<Face> faces);
@@ -107,6 +111,9 @@ public:
 	OSGX_META_Object(osgx_shapes, Cube)
 
 	Cube(const osg::Vec3& center=osg::Vec3(), const osg::Vec3& size=osg::Vec3(1.0f, 1.0f, 1.0f), VertexLayout layout={});
+	// This overload matches the other named polyhedra: `radius` is the distance from `center` to
+	// every corner. The size-based constructor remains available for box-style uses.
+	Cube(const osg::Vec3& center, float radius, VertexLayout layout={});
 	Cube(const Cube& cube, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
 	Polyhedron(cube, co) {}
 };

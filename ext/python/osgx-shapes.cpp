@@ -10,29 +10,29 @@ void bind_shapes(py::module_& m) {
 		.def_readwrite("uv", &osgx::VertexLayout::uv)
 	;
 
-	py::class_<osgx::Face>(m, "Face")
-		.def(py::init<>())
-		.def(
-			py::init<std::vector<std::uint32_t>, std::vector<osg::Vec2>>(),
-			"vertices"_a,
-			"uv"_a=std::vector<osg::Vec2>{}
-		)
-		.def_readwrite("vertices", &osgx::Face::vertices)
-		.def_readwrite("uv", &osgx::Face::uv)
-	;
-
 	py::class_<
 		osgx::Polyhedron,
 		osg::Geometry,
 		osg::ref_ptr<osgx::Polyhedron>
 	> polyhedron(m, "Polyhedron");
 
+	py::class_<osgx::Polyhedron::Face>(polyhedron, "Face")
+		.def(py::init<>())
+		.def(
+			py::init<std::vector<std::uint32_t>, std::vector<osg::Vec2>>(),
+			"vertices"_a,
+			"uv"_a=std::vector<osg::Vec2>{}
+		)
+		.def_readwrite("vertices", &osgx::Polyhedron::Face::vertices)
+		.def_readwrite("uv", &osgx::Polyhedron::Face::uv)
+	;
+
 	polyhedron
 		.def(py::init<>())
 		.def(
 			py::init<
 				std::vector<osg::Vec3>,
-				std::vector<osgx::Face>,
+				std::vector<osgx::Polyhedron::Face>,
 				osgx::VertexLayout
 			>(),
 			"vertices"_a,
@@ -57,6 +57,12 @@ void bind_shapes(py::module_& m) {
 		.def("faceNormal", py::overload_cast<std::size_t>(&osgx::Polyhedron::faceNormal, py::const_))
 		.def("faceUp", &osgx::Polyhedron::faceUp)
 		.def("restingOffset", &osgx::Polyhedron::restingOffset, "orientation"_a=osg::Quat())
+		.def(
+			"faceRestingOffset",
+			&osgx::Polyhedron::faceRestingOffset,
+			"faceIndex"_a,
+			"orientation"_a=osg::Quat()
+		)
 		.def_static("isometricFaceUV", &osgx::Polyhedron::isometricFaceUV)
 	;
 
@@ -69,6 +75,12 @@ void bind_shapes(py::module_& m) {
 			py::init<const osg::Vec3&, const osg::Vec3&, osgx::VertexLayout>(),
 			"center"_a=osg::Vec3(),
 			"size"_a=osg::Vec3(1.0f, 1.0f, 1.0f),
+			"layout"_a=osgx::VertexLayout{}
+		)
+		.def(
+			py::init<const osg::Vec3&, float, osgx::VertexLayout>(),
+			"center"_a=osg::Vec3(),
+			"radius"_a=1.0f,
 			"layout"_a=osgx::VertexLayout{}
 		)
 	;
