@@ -3,11 +3,11 @@
 // A deliberately small staging ground for the turntable viewer. The procedural infinite grid is
 // always present; without a model path, colored cubes provide a quick scene-setup diagnostic.
 
-#include "../osgx/Core.hpp"
-#include "../osgx/Cursor.hpp"
-#include "../osgx/IBL.hpp"
-#include "../osgx/Manipulators.hpp"
-#include "../osgx/gltf/PBRIBL.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Cursor.hpp"
+#include "osgx/IBL.hpp"
+#include "osgx/Manipulators.hpp"
+#include "osgx/gltf/PBRIBL.hpp"
 
 OSGX_DISABLE_WARNINGS
 

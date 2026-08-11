@@ -1,7 +1,7 @@
 // vimrun! ./examples/osgx-notifyfilter
 
-#include "../osgx/Core.hpp"
-#include "../osgx/Visitors.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Visitors.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -22,11 +22,11 @@
 // delivers every event to both the manipulator and every other GUIEventHandler unconditionally
 // (see the comment on setLiveOrbitEnabled() in osgx/Manipulators.hpp for why that matters here).
 
-#include "../osgx/CameraIntents.hpp"
-#include "../osgx/Callbacks.hpp"
-#include "../osgx/Core.hpp"
-#include "../osgx/Cursor.hpp"
-#include "../osgx/Manipulators.hpp"
+#include "osgx/CameraIntents.hpp"
+#include "osgx/Callbacks.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Cursor.hpp"
+#include "osgx/Manipulators.hpp"
 
 OSGX_DISABLE_WARNINGS
 

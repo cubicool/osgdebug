@@ -18,15 +18,15 @@
 //
 // A model path may be passed like other examples; defaults to a built-in sphere.
 
-#include "../osgx/Core.hpp"
-#include "../osgx/Linux.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Linux.hpp"
 
 #ifdef OSGX_EGL
-#include "../osgx/GraphicsWindowEGL.hpp"
+#include "osgx/GraphicsWindowEGL.hpp"
 #endif
 
 #ifdef OSGX_GBM
-#include "../osgx/GraphicsWindowGBM.hpp"
+#include "osgx/GraphicsWindowGBM.hpp"
 #endif
 
 OSGX_DISABLE_WARNINGS

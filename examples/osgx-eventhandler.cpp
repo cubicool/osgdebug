@@ -1,7 +1,7 @@
 //vimrun! ./examples/osgx-eventhandler
 
-#include "../osgx/Callbacks.hpp"
-#include "../osgx/Core.hpp"
+#include "osgx/Callbacks.hpp"
+#include "osgx/Core.hpp"
 
 OSGX_DISABLE_WARNINGS
 

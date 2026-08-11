@@ -1,4 +1,4 @@
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -11,9 +11,9 @@ OSGX_ENABLE_WARNINGS
 #include "osgx/gltf/PBRIBL.hpp"
 #include "osgx/gltf/Shader.hpp"
 
-#include <osgx/GGXPrefilter.hpp>
-#include <osgx/IBL.hpp>
-#include <osgx/PBR.hpp>
+#include "osgx/GGXPrefilter.hpp"
+#include "osgx/IBL.hpp"
+#include "osgx/PBR.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -1,7 +1,7 @@
 //vimrun! OSG_NOTIFY_LEVEL=NOTICE osgviewerd ~/OpenSceneGraph-Data/cow.osgt.debug
 
-#include "../osgx/Debug.hpp"
-#include "../osgx/Visitors.hpp"
+#include "osgx/Debug.hpp"
+#include "osgx/Visitors.hpp"
 
 OSGX_DISABLE_WARNINGS
 

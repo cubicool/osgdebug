@@ -1,5 +1,5 @@
 // Instantiate the single-header third-party implementations exactly once in osgx::gltf.
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -9,7 +9,7 @@ target_link_libraries(osgx_ktx2
 	PRIVATE ktx
 )
 target_sources(osgx_ktx2 PUBLIC
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../osgx/ktx2/KTX2.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../src/osgx/ktx2/KTX2.hpp>"
 )
 set_target_properties(osgx_ktx2 PROPERTIES
 	EXPORT_NAME ktx2

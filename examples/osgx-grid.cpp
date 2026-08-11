@@ -1,7 +1,7 @@
 // vimrun! ./examples/osgx-grid
 
-#include "../osgx/Core.hpp"
-#include "../osgx/Grid.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Grid.hpp"
 
 OSGX_DISABLE_WARNINGS
 

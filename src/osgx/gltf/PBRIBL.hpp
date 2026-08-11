@@ -1,6 +1,6 @@
 #pragma once
 
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -19,7 +19,7 @@ OSGX_ENABLE_WARNINGS
 #include <string_view>
 #include <vector>
 
-#include <osgx/LambertianBake.hpp>
+#include "osgx/LambertianBake.hpp"
 
 // Forward declaration only -- keeps tinygltf's header out of this public header's include list.
 // Only PBRIBL.cpp, which implements decodeIBLEnvironments(), needs the real definition.

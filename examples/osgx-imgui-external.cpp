@@ -1,7 +1,7 @@
 // Application-owned Dear ImGui lifecycle + reusable osgx::imgui::Panel.
 
-#include "../osgx/Core.hpp"
-#include "../osgx/ImGui.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/ImGui.hpp"
 
 OSGX_DISABLE_WARNINGS
 

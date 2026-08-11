@@ -1,4 +1,4 @@
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -148,16 +148,23 @@ osg::Texture2D* TextureLoader::getOrCreateTexture(int textureIndex, bool sRGB) c
 	if(texture.source < 0 || texture.source >= static_cast<int>(_model.images.size())) return nullptr;
 
 	const tinygltf::Image& image = _model.images[static_cast<std::size_t>(texture.source)];
-	const bool embedded = !image.image.empty() ||
-		(!image.uri.empty() && tinygltf::IsDataURI(image.uri));
+	const bool dataURI = !image.uri.empty() && tinygltf::IsDataURI(image.uri);
+	const bool externalImage = !image.uri.empty() && !dataURI;
+	// tinygltf decodes every image, including an ordinary external PNG, into
+	// image.image. That describes temporary decoded data, not the glTF asset's
+	// identity: using it to identify embedded images made every external texture
+	// miss the cache and copy itself once per primitive during scene construction.
+	const bool unrefImageDataAfterApply = !image.image.empty() || dataURI;
 	std::string cacheKey;
 
-	if(!embedded && !image.uri.empty()) {
+	if(externalImage) {
 		cacheKey = osgDB::getRealPath(osgDB::concatPaths(
 			osgDB::getFilePath(_referrer),
 			image.uri
 		)) + (sRGB ? "|sRGB" : "|linear");
 	}
+	else cacheKey = _referrer + "|image:" + std::to_string(texture.source) +
+		(sRGB ? "|sRGB" : "|linear");
 
 	if(osg::Texture2D* cached = findCached(cacheKey)) return cached;
 
@@ -168,7 +175,7 @@ osg::Texture2D* TextureLoader::getOrCreateTexture(int textureIndex, bool sRGB) c
 	osg::ref_ptr<osg::Texture2D> osgTexture = new osg::Texture2D(loadedImage);
 
 	applyFormatAndSampler(osgTexture, loadedImage, sRGB, texture.sampler);
-	osgTexture->setUnRefImageDataAfterApply(embedded);
+	osgTexture->setUnRefImageDataAfterApply(unrefImageDataAfterApply);
 	cache(cacheKey, osgTexture);
 
 	return osgTexture.release();

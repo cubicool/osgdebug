@@ -1,4 +1,4 @@
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -24,7 +24,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-#include <osgx/gltf/Shader.hpp>
+#include "osgx/gltf/Shader.hpp"
 
 #include <algorithm>
 #include <cmath>

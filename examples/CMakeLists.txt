@@ -36,7 +36,7 @@ endif()
 if(OSGX_WITH_IMGUI)
 	add_executable(osgx-imgui
 		"osgx-imgui.cpp"
-		"../osgx/osgx.hpp"
+		"../src/osgx/osgx.hpp"
 	)
 
 	osgx_compile_options(osgx-imgui)
@@ -44,7 +44,7 @@ if(OSGX_WITH_IMGUI)
 
 	add_executable(osgx-imgui-external
 		"osgx-imgui-external.cpp"
-		"../osgx/osgx.hpp"
+		"../src/osgx/osgx.hpp"
 	)
 
 	osgx_compile_options(osgx-imgui-external)

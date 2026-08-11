@@ -1,7 +1,7 @@
 // vimrun! ./examples/osgx-imgui
 
-#include "../osgx/Core.hpp"
-#include "../osgx/ImGui.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/ImGui.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -5,7 +5,7 @@
 // scroll wheel : also adjusts mip level
 // c : toggle flat-cross display
 
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 

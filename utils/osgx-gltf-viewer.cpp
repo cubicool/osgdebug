@@ -6,12 +6,12 @@
 // diffuse-irradiance passes never bake; both are ABSOLUTE_RF, so placement within that graph does
 // not matter.
 
-#include <osgx/gltf/PBRIBL.hpp>
+#include "osgx/gltf/PBRIBL.hpp"
 
-#include <osgx/Callbacks.hpp>
-#include <osgx/Core.hpp>
-#include <osgx/IBL.hpp>
-#include <osgx/Warnings.hpp>
+#include "osgx/Callbacks.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/IBL.hpp"
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 

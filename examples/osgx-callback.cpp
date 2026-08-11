@@ -1,7 +1,7 @@
 // vimrun! ./examples/osgx-callback
 
-#include "../osgx/Core.hpp"
-#include "../osgx/Debug.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Debug.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -100,7 +100,7 @@ if(OSGX_WITH_GBM AND NOT GBM_FOUND)
 endif()
 
 configure_file(
-	"${CMAKE_CURRENT_SOURCE_DIR}/osgx/Version.hpp.in"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Version.hpp.in"
 	"${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp"
 	@ONLY
 )
@@ -110,19 +110,19 @@ add_library(osgx::core ALIAS osgx_core)
 
 target_compile_features(osgx_core INTERFACE cxx_std_20)
 target_include_directories(osgx_core INTERFACE
-	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
 	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_INCLUDE_DIRS}>"
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(osgx_core INTERFACE ${OPENSCENEGRAPH_LIBRARIES})
 target_sources(osgx_core INTERFACE
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Warnings.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Warnings.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Core.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Array.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Callbacks.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Visitors.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Core.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Array.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Callbacks.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Visitors.hpp>"
 )
 set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
@@ -150,23 +150,23 @@ target_link_libraries(osgx
 	PRIVATE OpenGL::GL PkgConfig::X11
 )
 target_sources(osgx PUBLIC
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/osgx.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Grid.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/IBL.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/CaptureCubeMap.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GGXPrefilter.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/LambertianBake.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Manipulators.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/PBR.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Picking.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Shapes.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Shader.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Debug.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/ImGui.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Linux.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GraphicsWindowEGL.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/GraphicsWindowGBM.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Cursor.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/osgx.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Grid.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/IBL.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/CaptureCubeMap.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/GGXPrefilter.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/LambertianBake.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Manipulators.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/PBR.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Picking.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shapes.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shader.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Debug.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/ImGui.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Linux.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/GraphicsWindowEGL.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/GraphicsWindowGBM.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Cursor.hpp>"
 )
 set_target_properties(osgx PROPERTIES
 	EXPORT_NAME osgx
@@ -202,7 +202,7 @@ if(OSGX_INSTALL)
 		LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 	)
-	install(DIRECTORY osgx/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
+	install(DIRECTORY src/osgx/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
 		FILES_MATCHING PATTERN "*.hpp"
 	)
 	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp"
@@ -300,7 +300,7 @@ function(OSGX_COMPILE_OPTIONS _target)
 	# external consumer installing to a different prefix (confirmed by hitting exactly that "which
 	# is prefixed in the source directory" configure error on the first attempt at this fix).
 	target_include_directories("${_target}" BEFORE PRIVATE
-		"${PROJECT_SOURCE_DIR}"
+		"${PROJECT_SOURCE_DIR}/src"
 		"${PROJECT_BINARY_DIR}"
 	)
 	target_include_directories("${_target}" PUBLIC ${OPENSCENEGRAPH_INCLUDE_DIRS})
@@ -312,7 +312,7 @@ function(OSGX_ADD_EXECUTABLE _prefix _topic)
 
 	add_executable("${_target}"
 		"${_target}.cpp"
-		"../osgx/osgx.hpp"
+		"../src/osgx/osgx.hpp"
 	)
 
 	target_link_libraries("${_target}" PRIVATE osgx::osgx)
@@ -383,7 +383,7 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# leave osgx.cpp's #include "osgx/osgx.hpp"/"pyosg/pyosg.hpp"/"pybind11x.hpp" unable to find
 	# anything.
 	target_include_directories(osgx_python_bindings PUBLIC
-		"${CMAKE_CURRENT_SOURCE_DIR}"
+		"${CMAKE_CURRENT_SOURCE_DIR}/src"
 		${OPENSCENEGRAPH_INCLUDE_DIRS}
 		"${OSGX_OPENSCENEGRAPH_PY_DIR}"
 		"${OSGX_OPENSCENEGRAPH_PY_DIR}/etc"

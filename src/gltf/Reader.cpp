@@ -1,7 +1,7 @@
 #include "ReaderImpl.hpp"
 #include "Texture.hpp"
 
-#include <osgx/gltf/Reader.hpp>
+#include "osgx/gltf/Reader.hpp"
 
 #include <utility>
 

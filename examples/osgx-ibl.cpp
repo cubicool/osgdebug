@@ -3,9 +3,9 @@
 // Generic IBL inspection tool. It intentionally knows about HDR input and osgx bake products,
 // but not glTF, KTX2, or any application-specific material setup.
 
-#include <osgx/GGXPrefilter.hpp>
-#include <osgx/LambertianBake.hpp>
-#include <osgx/Warnings.hpp>
+#include "osgx/GGXPrefilter.hpp"
+#include "osgx/LambertianBake.hpp"
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 

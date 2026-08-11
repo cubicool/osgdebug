@@ -1,6 +1,6 @@
 #pragma once
 
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -16,7 +16,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-#include <osgx/gltf/SimplePlayer.hpp>
+#include "osgx/gltf/SimplePlayer.hpp"
 
 #include <cstddef>
 #include <map>

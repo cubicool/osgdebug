@@ -1,4 +1,4 @@
-#include <osgx/gltf/Reader.hpp>
+#include "osgx/gltf/Reader.hpp"
 
 OSGX_DISABLE_WARNINGS
 

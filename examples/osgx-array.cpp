@@ -1,7 +1,7 @@
 //vimrun! ./examples/osgx-array
 
-#include "../osgx/Array.hpp"
-#include "../osgx/Core.hpp"
+#include "osgx/Array.hpp"
+#include "osgx/Core.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -1,4 +1,4 @@
-#include "../../osgx/ktx2/KTX2.hpp"
+#include "osgx/ktx2/KTX2.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -16,9 +16,9 @@ osgx_compile_options(osgx_gltf)
 target_include_directories(osgx_gltf PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
 target_link_libraries(osgx_gltf PUBLIC osgx::core)
 target_sources(osgx_gltf PUBLIC
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../osgx/gltf/Reader.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../osgx/gltf/Shader.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../osgx/gltf/SimplePlayer.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../osgx/gltf/Reader.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../osgx/gltf/Shader.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../osgx/gltf/SimplePlayer.hpp>"
 )
 set_target_properties(osgx_gltf PROPERTIES
 	EXPORT_NAME gltf
@@ -34,7 +34,7 @@ osgx_compile_options(osgx_gltf_pbribl)
 target_include_directories(osgx_gltf_pbribl PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
 target_link_libraries(osgx_gltf_pbribl PUBLIC osgx::gltf osgx::osgx)
 target_sources(osgx_gltf_pbribl PUBLIC
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../osgx/gltf/PBRIBL.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../osgx/gltf/PBRIBL.hpp>"
 )
 set_target_properties(osgx_gltf_pbribl PROPERTIES
 	EXPORT_NAME gltf_pbribl

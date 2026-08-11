@@ -1,8 +1,8 @@
 // vimrun! ./examples/osgx-viewer
 
-#include "../osgx/Core.hpp"
-#include "../osgx/Debug.hpp"
-#include "../osgx/Visitors.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Debug.hpp"
+#include "osgx/Visitors.hpp"
 
 OSGX_DISABLE_WARNINGS
 

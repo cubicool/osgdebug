@@ -10,9 +10,9 @@
 // which the renderer caches and bakes once per process rather than serializing
 // an HDR-independent artifact beside every environment.
 
-#include <osgx/GGXPrefilter.hpp>
-#include <osgx/LambertianBake.hpp>
-#include <osgx/Warnings.hpp>
+#include "osgx/GGXPrefilter.hpp"
+#include "osgx/LambertianBake.hpp"
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 

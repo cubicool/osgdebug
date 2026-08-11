@@ -7,8 +7,8 @@
 // firefly clamping. It is for visible skyboxes, not IBL. The output contains one 32-bit float RGB
 // mip level, with conventional OpenGL/KTX cubemap face orientation.
 
-#include <osgx/Core.hpp>
-#include <osgx/Warnings.hpp>
+#include "osgx/Core.hpp"
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -4,8 +4,8 @@
 // in the library: it is both a visual smoke test for their topology/attribute layout and a small,
 // readable starting point for applications that want the generated Geometry directly.
 
-#include <osgx/Shapes.hpp>
-#include <osgx/Warnings.hpp>
+#include "osgx/Shapes.hpp"
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 

@@ -22,8 +22,8 @@
 // PickReadbackSync, PickReadbackAsync, PickCameraSync, and all pick helpers live in
 // osgx/Picking.hpp.
 
-#include "../osgx/Core.hpp"
-#include "../osgx/Picking.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Picking.hpp"
 
 OSGX_DISABLE_WARNINGS
 

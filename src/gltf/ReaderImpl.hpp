@@ -1,6 +1,6 @@
 #pragma once
 
-#include <osgx/Warnings.hpp>
+#include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -8,7 +8,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-#include <osgx/gltf/Reader.hpp>
+#include "osgx/gltf/Reader.hpp"
 
 #include <string>
 
