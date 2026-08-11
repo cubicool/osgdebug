@@ -397,14 +397,23 @@ void PickReadbackAsync::operator()(osg::RenderInfo& ri) const {
 void PickCameraSync::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 	if(auto* vc = _viewerCam.get()) {
 		auto* cam = static_cast<osg::Camera*>(node);
+		int width = _W;
+		int height = _H;
+
+		if(const auto* viewport = vc->getViewport()) {
+			width = static_cast<int>(viewport->width());
+			height = static_cast<int>(viewport->height());
+		}
 
 		cam->setViewMatrix(vc->getViewMatrix());
 
-		if(_pick1x1 && _rb) {
+		if(_rb && width > 0 && height > 0) _rb->setWindowSize(width, height);
+
+		if(_pick1x1 && _rb && width > 0 && height > 0) {
 			double cx = _rb->mouseX() + 0.5;
 			double cy = _rb->mouseY() + 0.5;
-			double W  = static_cast<double>(_W);
-			double H  = static_cast<double>(_H);
+			double W = static_cast<double>(width);
+			double H = static_cast<double>(height);
 
 			osg::Matrix sub(W, 0, 0, 0, 0, H, 0, 0, 0, 0, 1, 0, W - 2.0*cx, H - 2.0*cy, 0, 1);
 

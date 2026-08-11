@@ -178,8 +178,8 @@ void bind_picking(py::module_& m_picking) {
 		"mode"_a = osgx::PickReadbackSync::Mode::CLICK,
 		py::keep_alive<1, 3>(),
 		"SYNC readback: reads from an osg::Image attached to the pick camera one frame after OSG's "
-		"own internal glReadPixels. winW/winH are the actual window dimensions, used to scale mouse "
-		"coordinates when the pick image is smaller than the window (small-pick mode)."
+		"own internal glReadPixels. winW/winH are initial window dimensions; PickCameraSync refreshes "
+		"them from its viewer camera's viewport to scale reduced-image mouse coordinates after resize."
 	);
 
 	py::class_<

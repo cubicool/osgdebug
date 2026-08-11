@@ -141,6 +141,11 @@ struct PickReadback: public virtual osg::Object {
 
 	int mouseX() const { return _x.load(std::memory_order_relaxed); }
 	int mouseY() const { return _y.load(std::memory_order_relaxed); }
+
+	// PickCameraSync refreshes this from the live viewer-camera viewport every
+	// update traversal. Readbacks that convert window coordinates to a reduced
+	// RTT target override it; 1x1 continuous pickers need no extra state.
+	virtual void setWindowSize(int, int) {}
 	uint32_t lastID() const { return _lastID.load(std::memory_order_acquire); }
 
 protected:
@@ -162,8 +167,9 @@ class PickReadbackSync: public PickReadback, public osg::NodeCallback {
 public:
 	enum class Mode { CLICK, CONTINUOUS };
 
-	// winW / winH -- actual window dimensions; used to scale mouse coords when the pick
-	// image is smaller than the window (small-pick mode).
+	// winW / winH -- initial window dimensions. PickCameraSync refreshes them
+	// from its viewer camera's live viewport, so reduced image targets keep
+	// mapping mouse coordinates correctly after a resize.
 	PickReadbackSync(
 		int pickSize,
 		PickRule rule,
@@ -178,6 +184,11 @@ public:
 	_winH(winH),
 	_mode(mode),
 	_image(image) {}
+
+	void setWindowSize(int width, int height) override {
+		_winW = width;
+		_winH = height;
+	}
 
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 
@@ -226,7 +237,9 @@ private:
 // other pick callbacks (e.g. PickReadbackSync) via setNestedCallback().
 //
 // pick1x1=true: also builds a sub-frustum projection centered on the cursor each frame
-// (gluPickMatrix equivalent). Requires rb for the current mouse position.
+// (gluPickMatrix equivalent). The live viewer-camera viewport supplies its
+// dimensions, so the cursor projection stays correct after window resize.
+// Requires rb for the current mouse position.
 class PickCameraSync: public osg::NodeCallback {
 public:
 	PickCameraSync(

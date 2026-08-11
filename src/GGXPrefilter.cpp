@@ -219,7 +219,8 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 	for(int mip = 0; mip < numMips; mip++) {
 		const float roughness = (numMips > 1) ?
 			static_cast<float>(mip) / static_cast<float>(numMips - 1) :
-			0.0f;
+			0.0f
+		;
 		const int mipSize = std::max(1, prefilterSize >> mip);
 
 		for(int face = 0; face < 6; face++) {
@@ -289,6 +290,7 @@ void GGXPrefilterReadback::reset() {
 
 void GGXPrefilterReadback::operator()(osg::RenderInfo& ri) const {
 	if(done) return;
+
 	frameCount++;
 
 	if(frameCount < triggerFrame) return;
