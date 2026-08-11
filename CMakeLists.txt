@@ -139,6 +139,7 @@ add_library(osgx SHARED
 	src/Manipulators.cpp
 	src/PBR.cpp
 	src/Picking.cpp
+	src/Shapes.cpp
 	src/Shader.cpp
 )
 add_library(osgx::osgx ALIAS osgx)
@@ -158,6 +159,7 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Manipulators.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/PBR.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Picking.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Shapes.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Shader.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/Debug.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgx/ImGui.hpp>"
@@ -372,6 +374,7 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 		"ext/python/osgx-debug.cpp"
 		"ext/python/osgx-platform.cpp"
 		"ext/python/osgx-picking.cpp"
+		"ext/python/osgx-shapes.cpp"
 	)
 
 	# PUBLIC, not PRIVATE: ext/python/osgx.cpp (compiled into the separate osgx_python target

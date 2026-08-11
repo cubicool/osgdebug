@@ -11,6 +11,7 @@ set(OSGX_EXAMPLES
 	"notifyfilter"
 	"picking"
 	"platform"
+	"shapes"
 	"viewer"
 	"visitor"
 )

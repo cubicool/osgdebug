@@ -281,7 +281,7 @@ public:
 
 private:
 	PickReadback* _rb;
-	uint32_t      _prevID{0};
+	uint32_t _prevID{0};
 };
 
 // GUIEventHandler that forwards click/move events to any PickReadback variant.

@@ -44,6 +44,8 @@ PYBIND11_MODULE(osgx, m) {
 
 	osgx_python::bind_picking(m_picking);
 
+	osgx_python::bind_shapes(m);
+
 #ifdef OSGX_GLTF
 	auto m_gltf = m.def_submodule("gltf", "osgx::gltf - glTF 2.0 loader + optional PBR/IBL adapter");
 
