@@ -79,12 +79,16 @@ def material_textures(material):
     pbr = material["pbrMetallicRoughness"]
 
     return (
-        pbr["baseColorTexture"],
-        pbr["metallicRoughnessTexture"],
-        material["normalTexture"],
-        material["occlusionTexture"],
-        material["emissiveTexture"],
+        (pbr["baseColorTexture"], True),
+        (pbr["metallicRoughnessTexture"], False),
+        (material["normalTexture"], False),
+        (material["occlusionTexture"], False),
+        (material["emissiveTexture"], True),
     )
+
+
+def texture_bytes(texture):
+    return texture["imageWidth"] * texture["imageHeight"] * 4
 
 
 def command_overview(args, summaries):
@@ -110,18 +114,37 @@ def command_overview(args, summaries):
             if primitive["indices"].get("valid")
         ]
         texture_images = {}
+        texture_variants = {}
+        material_uses = {}
+
+        for primitive in primitives:
+            material_index = primitive["material"]
+
+            if 0 <= material_index < len(summary["materials"]):
+                material_uses[material_index] = material_uses.get(material_index, 0) + 1
 
         for material in summary["materials"]:
-            for texture in material_textures(material):
+            for texture, srgb in material_textures(material):
                 if texture is None or not texture["valid"]:
                     continue
 
                 source = texture["source"]
                 texture_images[source] = texture
+                texture_variants[(source, srgb)] = texture
 
         decoded_texture_bytes = sum(
-            texture["imageWidth"] * texture["imageHeight"] * 4
+            texture_bytes(texture)
             for texture in texture_images.values()
+        )
+        deduplicated_texture_bytes = sum(
+            texture_bytes(texture)
+            for texture in texture_variants.values()
+        )
+        undeduplicated_texture_bytes = sum(
+            texture_bytes(texture) * material_uses.get(material_index, 0)
+            for material_index, material in enumerate(summary["materials"])
+            for texture, _ in material_textures(material)
+            if texture is not None and texture["valid"]
         )
         max_texture_dimension = max(
             (
@@ -153,9 +176,14 @@ def command_overview(args, summaries):
         print()
         print("texture pressure")
         print(f"  referenced images          {len(texture_images)}")
+        print(f"  texture color variants     {len(texture_variants)}")
         print(f"  largest decoded dimension  {max_texture_dimension}px")
-        print(f"  decoded RGBA upper bound   {decoded_texture_bytes / 1024 / 1024:.0f} MiB")
-        print("  note                       decoded estimate excludes mipmaps, driver copies, and render targets")
+        print(f"  tinygltf decoded sources   {decoded_texture_bytes / 1024 / 1024:.0f} MiB")
+        print(f"  deduplicated OSG copies    {deduplicated_texture_bytes / 1024 / 1024:.0f} MiB")
+        print(f"  estimated CPU peak         {(decoded_texture_bytes + deduplicated_texture_bytes) / 1024 / 1024:.0f} MiB")
+        print(f"  GPU textures + mipmaps     {deduplicated_texture_bytes * 4 / 3 / 1024 / 1024:.0f} MiB")
+        print(f"  no-dedup OSG copy risk     {undeduplicated_texture_bytes / 1024 / 1024:.0f} MiB")
+        print("  note                       RGBA upper bounds; excludes geometry, render targets, driver copies, and allocator overhead")
 
 
 def print_intent_lines(summary):
