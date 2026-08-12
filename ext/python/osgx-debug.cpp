@@ -1,4 +1,5 @@
 #include "osgx-python.hpp"
+#include "osgx/Debug.hpp"
 
 namespace osgx_python {
 

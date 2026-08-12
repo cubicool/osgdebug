@@ -5,6 +5,7 @@
 // the cost of touching it) trivial, and means a change to one binding group no longer forces a
 // full serial recompile of everything else.
 #include "osgx-python.hpp"
+#include "osgx/Version.hpp"
 
 PYBIND11_MODULE(osgx, m) {
 	// Side effect, not the value: forces the OpenSceneGraph module's pybind11 types (osg::Geometry,

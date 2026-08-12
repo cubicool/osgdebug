@@ -1,4 +1,9 @@
 #include "osgx-python.hpp"
+#include "osgx/CameraIntents.hpp"
+#include "osgx/Core.hpp"
+#include "osgx/Grid.hpp"
+#include "osgx/Manipulators.hpp"
+#include "osgx/Shader.hpp"
 
 namespace osgx_python {
 

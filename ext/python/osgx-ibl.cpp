@@ -1,4 +1,7 @@
 #include "osgx-python.hpp"
+#include "osgx/GGXPrefilter.hpp"
+#include "osgx/IBL.hpp"
+#include "osgx/LambertianBake.hpp"
 
 namespace osgx_python {
 

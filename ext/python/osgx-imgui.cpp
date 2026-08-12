@@ -1,4 +1,5 @@
 #include "osgx-python.hpp"
+#include "osgx/ImGui.hpp"
 
 // osgx::imgui -- deliberately NOT a general ImGui wrapper (that's pyimgui's job elsewhere). Just
 // enough to build quick debugging knobs inside a Widget::addSection() callback: a handful of

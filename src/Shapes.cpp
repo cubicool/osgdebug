@@ -271,22 +271,11 @@ void Polyhedron::setLayout(VertexLayout layout) {
 }
 
 osg::Vec3 Polyhedron::faceNormal(std::size_t faceIndex) const {
-	return faceNormal(_vertices, _faces.at(faceIndex));
+	return _faces.at(faceIndex).normal(_vertices);
 }
 
 osg::Vec3 Polyhedron::faceUp(std::size_t faceIndex) const {
-	const auto& face = _faces.at(faceIndex);
-	auto edge = _vertices.at(face.vertices.at(1)) - _vertices.at(face.vertices.at(0));
-
-	if(edge.length2() == 0.0f) throw std::invalid_argument("Polyhedron face's first edge has no length");
-
-	edge.normalize();
-
-	auto up = faceNormal(faceIndex) ^ edge;
-
-	up.normalize();
-
-	return up;
+	return _faces.at(faceIndex).up(_vertices);
 }
 
 float Polyhedron::restingOffset(const osg::Quat& orientation) const {
@@ -395,7 +384,7 @@ void Polyhedron::rebuild() {
 
 	for(std::size_t faceIndex = 0; faceIndex < _faces.size(); faceIndex++) {
 		const auto& face = _faces[faceIndex];
-		const auto normal = faceNormal(_vertices, face);
+		const auto normal = face.normal(_vertices);
 
 		for(std::size_t triangle = 1; triangle + 1 < face.vertices.size(); triangle++) {
 			for(const auto corner: {0_sz, triangle, triangle + 1}) {
@@ -450,12 +439,42 @@ void Polyhedron::rebuild() {
 	dirtyBound();
 }
 
-osg::Vec3 Polyhedron::faceNormal(const std::vector<osg::Vec3>& vertices, const Face& face) {
-	if(face.vertices.size() < 3) throw std::invalid_argument("Polyhedron faces need at least three vertices");
+osg::Vec3 Polyhedron::Face::origin(const std::vector<osg::Vec3>& positions) const {
+	return positions.at(vertices.at(0));
+}
 
-	const auto& v0 = vertices.at(face.vertices[0]);
-	const auto& v1 = vertices.at(face.vertices[1]);
-	const auto& v2 = vertices.at(face.vertices[2]);
+osg::Vec3 Polyhedron::Face::center(const std::vector<osg::Vec3>& positions) const {
+	if(vertices.size() < 3) throw std::invalid_argument("Polyhedron faces need at least three vertices");
+
+	const auto faceOrigin = origin(positions);
+	const auto faceRight = right(positions);
+	const auto faceUp = up(positions);
+	const auto coordinates = planeCoordinates(positions);
+	float twiceArea = 0.0f;
+	float x = 0.0f;
+	float y = 0.0f;
+
+	for(std::size_t i = 0; i < coordinates.size(); i++) {
+		const auto& a = coordinates[i];
+		const auto& b = coordinates[(i + 1) % coordinates.size()];
+		const auto cross = a.x() * b.y() - b.x() * a.y();
+
+		twiceArea += cross;
+		x += (a.x() + b.x()) * cross;
+		y += (a.y() + b.y()) * cross;
+	}
+
+	if(twiceArea == 0.0f) throw std::invalid_argument("Polyhedron face has no area");
+
+	return faceOrigin + faceRight * (x / (3.0f * twiceArea)) + faceUp * (y / (3.0f * twiceArea));
+}
+
+osg::Vec3 Polyhedron::Face::normal(const std::vector<osg::Vec3>& positions) const {
+	if(vertices.size() < 3) throw std::invalid_argument("Polyhedron faces need at least three vertices");
+
+	const auto& v0 = positions.at(vertices[0]);
+	const auto& v1 = positions.at(vertices[1]);
+	const auto& v2 = positions.at(vertices[2]);
 	auto normal = (v1 - v0) ^ (v2 - v0);
 
 	if(normal.length2() == 0.0f) throw std::invalid_argument("Polyhedron face has no normal");
@@ -465,31 +484,49 @@ osg::Vec3 Polyhedron::faceNormal(const std::vector<osg::Vec3>& vertices, const F
 	return normal;
 }
 
-std::vector<osg::Vec2> Polyhedron::isometricFaceUV(const std::vector<osg::Vec3>& vertices, const Face& face) {
-	if(face.vertices.size() < 3) throw std::invalid_argument("Polyhedron faces need at least three vertices");
+osg::Vec3 Polyhedron::Face::right(const std::vector<osg::Vec3>& positions) const {
+	if(vertices.size() < 2) throw std::invalid_argument("Polyhedron faces need at least two vertices");
 
-	const auto& origin = vertices.at(face.vertices[0]);
-	auto right = vertices.at(face.vertices[1]) - origin;
+	auto right = positions.at(vertices[1]) - origin(positions);
 
 	if(right.length2() == 0.0f) throw std::invalid_argument("Polyhedron face's first edge has no length");
 
 	right.normalize();
 
-	auto up = faceNormal(vertices, face) ^ right;
+	return right;
+}
+
+osg::Vec3 Polyhedron::Face::up(const std::vector<osg::Vec3>& positions) const {
+	auto up = normal(positions) ^ right(positions);
 
 	up.normalize();
 
-	std::vector<osg::Vec2> uv;
+	return up;
+}
 
-	uv.reserve(face.vertices.size());
+std::vector<osg::Vec2> Polyhedron::Face::planeCoordinates(const std::vector<osg::Vec3>& positions) const {
+	const auto faceOrigin = origin(positions);
+	const auto faceRight = right(positions);
+	const auto faceUp = up(positions);
+	std::vector<osg::Vec2> coordinates;
 
-	for(const auto index: face.vertices) {
-		const auto offset = vertices.at(index) - origin;
+	coordinates.reserve(vertices.size());
 
-		uv.emplace_back(offset * right, offset * up);
+	for(const auto index: vertices) {
+		const auto offset = positions.at(index) - faceOrigin;
+
+		coordinates.emplace_back(offset * faceRight, offset * faceUp);
 	}
 
-	return uv;
+	return coordinates;
+}
+
+osg::Vec3 Polyhedron::faceNormal(const std::vector<osg::Vec3>& vertices, const Face& face) {
+	return face.normal(vertices);
+}
+
+std::vector<osg::Vec2> Polyhedron::isometricFaceUV(const std::vector<osg::Vec3>& vertices, const Face& face) {
+	return face.planeCoordinates(vertices);
 }
 
 std::size_t Polyhedron::faceVertexCount() const {

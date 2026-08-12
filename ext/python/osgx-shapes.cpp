@@ -1,4 +1,5 @@
 #include "osgx-python.hpp"
+#include "osgx/Shapes.hpp"
 
 namespace osgx_python {
 
@@ -25,6 +26,12 @@ void bind_shapes(py::module_& m) {
 		)
 		.def_readwrite("vertices", &osgx::Polyhedron::Face::vertices)
 		.def_readwrite("uv", &osgx::Polyhedron::Face::uv)
+		.def("origin", &osgx::Polyhedron::Face::origin, "positions"_a)
+		.def("center", &osgx::Polyhedron::Face::center, "positions"_a)
+		.def("normal", &osgx::Polyhedron::Face::normal, "positions"_a)
+		.def("right", &osgx::Polyhedron::Face::right, "positions"_a)
+		.def("up", &osgx::Polyhedron::Face::up, "positions"_a)
+		.def("planeCoordinates", &osgx::Polyhedron::Face::planeCoordinates, "positions"_a)
 	;
 
 	polyhedron

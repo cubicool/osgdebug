@@ -1,19 +1,23 @@
 #pragma once
 
-// Shared umbrella header for the split osgx Python bindings (see osgx.cpp for the
-// PYBIND11_MODULE entry point). Deliberately does NOT include tinygltf/osgx::gltf headers
-// (osgx-gltf.cpp owns those locally -- they're heavy and only that one file needs them) or the
-// EGL/GBM window headers (osgx-platform.cpp owns those locally, same reasoning). Splitting was a
+// Shared framework header for the split osgx Python bindings (see osgx.cpp for the
+// PYBIND11_MODULE entry point). It deliberately includes no osgx API headers: each osgx-*.cpp
+// owns precisely the headers for the API it binds, so a public-header edit recompiles only its
+// corresponding binding translation unit rather than every Python submodule. Splitting was a
 // straight build-time win: previously any change anywhere in the single ~1700-line
 // ext/osgx-python.cpp forced a full serial recompile; now each bind_*() lives in its own
 // translation unit, so touching one doesn't force the others to recompile, and a from-scratch
 // build parallelizes across `make -j#`.
 
-#include "osgx/osgx.hpp"
-#include "osgx/Cursor.hpp"
-#include "osgx/Debug.hpp"
-#include "osgx/ImGui.hpp"
-#include "osgx/Linux.hpp"
+#include "osgx/Warnings.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/CopyOp>
+#include <osg/Object>
+
+OSGX_ENABLE_WARNINGS
+
 #include "pyosg/pyosg.hpp"
 
 #include "pybind11x.hpp"

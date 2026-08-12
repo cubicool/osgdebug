@@ -380,8 +380,8 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	# PUBLIC, not PRIVATE: ext/python/osgx.cpp (compiled into the separate osgx_python target
 	# below, which links this one) also includes osgx-python.hpp and therefore needs every one of
 	# these same include dirs -- PRIVATE here would resolve fine for this target's own sources but
-	# leave osgx.cpp's #include "osgx/osgx.hpp"/"pyosg/pyosg.hpp"/"pybind11x.hpp" unable to find
-	# anything.
+	# leave osgx.cpp's #include "osgx/Version.hpp" and osgx-python.hpp's
+	# #include "pyosg/pyosg.hpp"/"pybind11x.hpp" unable to find anything.
 	target_include_directories(osgx_python_bindings PUBLIC
 		"${CMAKE_CURRENT_SOURCE_DIR}/src"
 		${OPENSCENEGRAPH_INCLUDE_DIRS}

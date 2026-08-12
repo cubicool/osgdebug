@@ -1,4 +1,12 @@
 #include "osgx-python.hpp"
+#include "osgx/Cursor.hpp"
+#include "osgx/Linux.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osgViewer/Viewer>
+
+OSGX_ENABLE_WARNINGS
 
 #ifdef OSGX_EGL
 #include "osgx/GraphicsWindowEGL.hpp"

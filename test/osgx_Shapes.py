@@ -61,6 +61,46 @@ def test_face_resting_offset_places_the_selected_face_on_the_floor():
 			assert abs((orientation * cube.vertices[vertex_index]).z + offset) < 1e-5
 
 
+def test_face_derives_a_stable_local_plane_from_polyhedron_positions():
+	cube = osgx.Cube(size=osg.Vec3(2.0, 2.0, 2.0))
+	face = cube.faces[0] # -Z: 0, 3, 2, 1
+
+	assert face.origin(cube.vertices) == osg.Vec3(-1.0, -1.0, -1.0)
+	assert face.center(cube.vertices) == osg.Vec3(0.0, 0.0, -1.0)
+	assert face.normal(cube.vertices) == osg.Vec3(0.0, 0.0, -1.0)
+	assert face.right(cube.vertices) == osg.Vec3(0.0, 1.0, 0.0)
+	assert face.up(cube.vertices) == osg.Vec3(1.0, 0.0, 0.0)
+	assert face.planeCoordinates(cube.vertices) == [
+		osg.Vec2(0.0, 0.0), osg.Vec2(2.0, 0.0),
+		osg.Vec2(2.0, 2.0), osg.Vec2(0.0, 2.0)
+	]
+
+
+def test_named_shape_faces_reconstruct_from_their_local_planes():
+	for kind in (
+		osgx.Cube,
+		osgx.Tetrahedron,
+		osgx.Octahedron,
+		osgx.Icosahedron,
+		osgx.Dodecahedron,
+		osgx.PentagonalTrapezohedron,
+	):
+		shape = kind()
+
+		for face in shape.faces:
+			origin = face.origin(shape.vertices)
+			right = face.right(shape.vertices)
+			up = face.up(shape.vertices)
+			normal = face.normal(shape.vertices)
+
+			for vertex_index, coordinate in zip(face.vertices, face.planeCoordinates(shape.vertices)):
+				reconstructed = origin + right * coordinate.x + up * coordinate.y
+
+				assert (reconstructed - shape.vertices[vertex_index]).length() < 1e-5
+
+			assert abs((face.center(shape.vertices) - origin).dot(normal)) < 1e-5
+
+
 def test_polyhedron_expands_face_attributes_and_removes_them():
 	face = osgx.Polyhedron.Face(
 		[0, 1, 2],

@@ -38,6 +38,18 @@ public:
 	struct Face {
 		std::vector<std::uint32_t> vertices;
 		std::vector<osg::Vec2> uv;
+
+		// These are derived from the Polyhedron's base-vertex positions rather than cached here, so
+		// changing those positions cannot leave a face with stale geometry. `origin` is the first
+		// face vertex; planeCoordinates() expresses every boundary vertex relative to it in the
+		// right/up basis. `center` is the planar polygon centroid, suitable for centering an inset
+		// decal on any valid face.
+		osg::Vec3 origin(const std::vector<osg::Vec3>& positions) const;
+		osg::Vec3 center(const std::vector<osg::Vec3>& positions) const;
+		osg::Vec3 normal(const std::vector<osg::Vec3>& positions) const;
+		osg::Vec3 right(const std::vector<osg::Vec3>& positions) const;
+		osg::Vec3 up(const std::vector<osg::Vec3>& positions) const;
+		std::vector<osg::Vec2> planeCoordinates(const std::vector<osg::Vec3>& positions) const;
 	};
 
 	Polyhedron() = default;
