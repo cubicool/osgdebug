@@ -105,37 +105,37 @@ int main() {
 		Shape{
 			"Tetrahedron",
 			osg::Vec3(-2.5f, 0.0f, 1.7f),
-			osg::Vec3(0.20f, 0.66f, 0.33f),
+			osg::Vec3(0.12f, 0.78f, 0.34f),
 			new osgx::Tetrahedron(osg::Vec3(), 1.2f)
 		},
 		Shape{
 			"Cube",
 			osg::Vec3(0.0f, 0.0f, 1.7f),
-			osg::Vec3(0.12f, 0.72f, 0.86f),
+			osg::Vec3(0.52f, 0.55f, 0.61f),
 			new osgx::Cube(osg::Vec3(), osg::Vec3(1.3856406f, 1.3856406f, 1.3856406f))
 		},
 		Shape{
 			"Octahedron",
 			osg::Vec3(2.5f, 0.0f, 1.7f),
-			osg::Vec3(0.40f, 0.23f, 0.72f),
+			osg::Vec3(0.04f, 0.72f, 0.90f),
 			new osgx::Octahedron(osg::Vec3(), 1.2f)
 		},
 		Shape{
 			"Icosahedron",
 			osg::Vec3(-1.6f, 0.0f, -1.7f),
-			osg::Vec3(0.95f, 0.42f, 0.08f),
+			osg::Vec3(0.90f, 0.10f, 0.10f),
 			new osgx::Icosahedron(osg::Vec3(), 1.2f)
 		},
 		Shape{
 			"Dodecahedron",
 			osg::Vec3(1.6f, 0.0f, -1.7f),
-			osg::Vec3(0.85f, 0.16f, 0.14f),
+			osg::Vec3(0.96f, 0.78f, 0.08f),
 			new osgx::Dodecahedron(osg::Vec3(), 1.2f)
 		},
 		Shape{
 			"Pentagonal trapezohedron",
 			osg::Vec3(4.4f, 0.0f, -1.7f),
-			osg::Vec3(0.91f, 0.55f, 0.10f),
+			osg::Vec3(0.88f, 0.16f, 0.72f),
 			new osgx::PentagonalTrapezohedron(osg::Vec3(), 1.2f)
 		}
 	};

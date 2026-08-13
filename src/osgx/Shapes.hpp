@@ -11,6 +11,7 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <cstdint>
+#include <tuple>
 #include <vector>
 
 namespace osgx {
@@ -50,6 +51,21 @@ public:
 		osg::Vec3 right(const std::vector<osg::Vec3>& positions) const;
 		osg::Vec3 up(const std::vector<osg::Vec3>& positions) const;
 		std::vector<osg::Vec2> planeCoordinates(const std::vector<osg::Vec3>& positions) const;
+
+		// Computes origin/normal/right/up together, each intermediate reused rather than
+		// rederived, for callers that would otherwise chain 4 separate calls that redundantly
+		// redo each other's work (up() alone recomputes both normal() and right()).
+		// Order: origin, normal, right, up -- a tuple has no field names, so callers should
+		// unpack it with a structured binding at the call site (or std::tie into existing
+		// variables, which a structured binding cannot do).
+		std::tuple<osg::Vec3, osg::Vec3, osg::Vec3, osg::Vec3> basis(
+			const std::vector<osg::Vec3>& positions
+		) const;
+
+		// Reduces planeCoordinates()'s output to its (u,v) bounding box, since anchoring a decal
+		// to a face is the only thing planeCoordinates() is ever used for next.
+		// Order: minU, maxU, minV, maxV.
+		std::tuple<float, float, float, float> extent(const std::vector<osg::Vec3>& positions) const;
 	};
 
 	Polyhedron() = default;

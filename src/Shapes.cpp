@@ -521,6 +521,55 @@ std::vector<osg::Vec2> Polyhedron::Face::planeCoordinates(const std::vector<osg:
 	return coordinates;
 }
 
+std::tuple<osg::Vec3, osg::Vec3, osg::Vec3, osg::Vec3> Polyhedron::Face::basis(
+	const std::vector<osg::Vec3>& positions
+) const {
+	if(vertices.size() < 3) throw std::invalid_argument("Polyhedron faces need at least three vertices");
+
+	const auto& faceOrigin = positions.at(vertices[0]);
+	auto faceNormal = (positions.at(vertices[1]) - faceOrigin) ^ (positions.at(vertices[2]) - faceOrigin);
+
+	if(faceNormal.length2() == 0.0f) throw std::invalid_argument("Polyhedron face has no normal");
+
+	faceNormal.normalize();
+
+	auto faceRight = positions.at(vertices[1]) - faceOrigin;
+
+	if(faceRight.length2() == 0.0f) throw std::invalid_argument("Polyhedron face's first edge has no length");
+
+	faceRight.normalize();
+
+	auto faceUp = faceNormal ^ faceRight;
+
+	faceUp.normalize();
+
+	return {faceOrigin, faceNormal, faceRight, faceUp};
+}
+
+std::tuple<float, float, float, float> Polyhedron::Face::extent(const std::vector<osg::Vec3>& positions) const {
+	osg::Vec3 faceOrigin, faceRight, faceUp;
+
+	std::tie(faceOrigin, std::ignore, faceRight, faceUp) = basis(positions);
+
+	float minU = 0.0f, maxU = 0.0f, minV = 0.0f, maxV = 0.0f;
+
+	for(std::size_t i = 0; i < vertices.size(); i++) {
+		const auto offset = positions.at(vertices[i]) - faceOrigin;
+		const float u = offset * faceRight;
+		const float v = offset * faceUp;
+
+		if(i == 0) {
+			minU = maxU = u;
+			minV = maxV = v;
+		} else {
+			minU = std::min(minU, u); maxU = std::max(maxU, u);
+			minV = std::min(minV, v); maxV = std::max(maxV, v);
+		}
+	}
+
+	return {minU, maxU, minV, maxV};
+}
+
 osg::Vec3 Polyhedron::faceNormal(const std::vector<osg::Vec3>& vertices, const Face& face) {
 	return face.normal(vertices);
 }
