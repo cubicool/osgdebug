@@ -47,6 +47,10 @@ PYBIND11_MODULE(osgx, m) {
 
 	osgx_python::bind_shapes(m);
 
+	auto m_gizmo = m.def_submodule("gizmo", "osgx::gizmo - debug visualization for osgx::pbr::LightSet lights");
+
+	osgx_python::bind_gizmos(m_gizmo);
+
 #ifdef OSGX_GLTF
 	auto m_gltf = m.def_submodule("gltf", "osgx::gltf - glTF 2.0 loader + optional PBR/IBL adapter");
 

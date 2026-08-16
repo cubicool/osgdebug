@@ -132,6 +132,7 @@ add_library(osgx SHARED
 	src/Cursor.cpp
 	src/Debug.cpp
 	src/GGXPrefilter.cpp
+	src/Gizmos.cpp
 	src/Grid.cpp
 	src/IBL.cpp
 	src/LambertianBake.cpp
@@ -151,6 +152,7 @@ target_link_libraries(osgx
 )
 target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/osgx.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Gizmos.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Grid.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/IBL.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/CaptureCubeMap.hpp>"
@@ -375,6 +377,7 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 		"ext/python/osgx-platform.cpp"
 		"ext/python/osgx-picking.cpp"
 		"ext/python/osgx-shapes.cpp"
+		"ext/python/osgx-gizmos.cpp"
 	)
 
 	# PUBLIC, not PRIVATE: ext/python/osgx.cpp (compiled into the separate osgx_python target

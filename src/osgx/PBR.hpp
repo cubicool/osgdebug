@@ -139,6 +139,178 @@ vec3 osgx_DirectSpecular(vec3 N, vec3 V, vec3 L, float NdotV, float roughness, v
 }
 )GLSL";
 
+// Lambertian direct-light diffuse term, kept a companion to DIRECT_SPECULAR above rather than
+// folded into it -- callers that only need specular can still pull just that one, matching the
+// "atomic snippet" contract everywhere else in this file. Shares DIRECT_SPECULAR's own
+// F_SCHLICK-based kD split so the two stay energy-consistent when combined (see DIRECT_LIGHT
+// below). Requires F_SCHLICK already in scope, and `const float PI` in the consuming shader (see
+// the file-level contract note above).
+inline constexpr const char* DIRECT_DIFFUSE = R"GLSL(
+vec3 osgx_DirectDiffuse(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, vec3 F0) {
+	float NdotL = max(dot(N, L), 0.0);
+
+	if(NdotL <= 0.0) return vec3(0.0);
+
+	vec3 H = normalize(L + V);
+	float HdotV = max(dot(H, V), 0.0);
+	vec3 F = osgx_F_Schlick(HdotV, F0);
+	vec3 kD = (1.0 - F) * (1.0 - metallic);
+
+	return kD * albedo / PI * NdotL;
+}
+)GLSL";
+
+// Compile-time bound for LIGHT_UNIFORMS' GLSL array declarations below -- kept as a real C++
+// constant (not just a literal baked into the GLSL string) so a Python caller sizing its own
+// osg.Uniform(..., count) can read osgx.pbr.MAX_LIGHTS instead of hardcoding a number that has
+// to stay in sync by hand. If this changes, OSGX_MAX_LIGHTS inside LIGHT_UNIFORMS must change
+// with it. 6 covers a small handful of torchlights in one room without over-provisioning the
+// per-fragment loop.
+inline constexpr int MAX_LIGHTS = 6;
+
+// Punctual point-light radiance (glTF punctual-light convention: inverse-square falloff, no
+// artificial radius cutoff) plus the resulting light direction `L`, both needed by DIRECT_LIGHT
+// below. `posIntensity` is world-space position in .xyz and intensity in .w -- the exact packing
+// osgx::pbr::OrbitLightRig already animates into its own "lightPosIntensity" uniform array, so a
+// caller wiring a static (e.g. torch-style) light just writes that same vec4 once instead of
+// installing a NodeCallback. `color` is a sibling per-light tint kept as a separate array uniform
+// so OrbitLightRig's existing vec4 contract doesn't change.
+inline constexpr const char* POINT_LIGHT_RADIANCE = R"GLSL(
+vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out vec3 L) {
+	vec3 toLight = posIntensity.xyz - worldPos;
+	float dist2 = max(dot(toLight, toLight), 1e-4);
+
+	L = toLight * inversesqrt(dist2);
+
+	return color * posIntensity.w / dist2;
+}
+)GLSL";
+
+// Uniform declarations shared by every consumer of DIRECT_LIGHT/POINT_LIGHT_RADIANCE below -- one
+// contract, so a caller can set "lightCount"/"lightPosIntensity"/"lightColor" once on an ancestor
+// StateSet and have it inherited by every lit subgraph (dice, backdrop, whatever else) instead of
+// wiring the same three uniforms into each shader by hand. OSGX_MAX_LIGHTS is a compile-time array
+// bound, not a runtime one -- lightCount (set at runtime, <= OSGX_MAX_LIGHTS) is what actually
+// gates the loop a caller writes over these arrays.
+//
+// lightType/lightDir/lightSpotAngles/lightSourceRadius are additive -- every existing consumer
+// (the point-light-only dice torch rig, osgx-gltf-viewer) never sets them, so they zero-init to
+// OSGX_LIGHT_TYPE_POINT / 0 / 0 / 0.0, which is exactly today's point-light behavior. A per-light
+// `type` (LightType in C++ below) picks the radiance function (POINT_LIGHT_RADIANCE/
+// DIRECTIONAL_LIGHT_RADIANCE/SPOT_LIGHT_RADIANCE); lightSourceRadius is deliberately NOT a fourth
+// "sphere" type -- it is a physical-size knob on a point or spot light (0 = the ideal Dirac-delta
+// case), matching how a sphere light actually differs from a point light: same inverse-square
+// falloff, only the specular highlight's shape changes (see DIRECT_LIGHT_SPHERE below). This is
+// unrelated to the "no artificial radius cutoff" decision noted on POINT_LIGHT_RADIANCE above --
+// that was about attenuation distance (deliberately not reintroduced here); this is about
+// physical light size.
+inline constexpr const char* LIGHT_UNIFORMS = R"GLSL(
+#define OSGX_MAX_LIGHTS 6
+#define OSGX_LIGHT_TYPE_POINT 0
+#define OSGX_LIGHT_TYPE_DIRECTIONAL 1
+#define OSGX_LIGHT_TYPE_SPOT 2
+
+uniform int lightCount;
+uniform vec4 lightPosIntensity[OSGX_MAX_LIGHTS];
+uniform vec3 lightColor[OSGX_MAX_LIGHTS];
+uniform int lightType[OSGX_MAX_LIGHTS];
+uniform vec3 lightDir[OSGX_MAX_LIGHTS];
+uniform vec2 lightSpotAngles[OSGX_MAX_LIGHTS];
+uniform float lightSourceRadius[OSGX_MAX_LIGHTS];
+)GLSL";
+
+// Combines osgx_DirectDiffuse + osgx_DirectSpecular into one per-light contribution against an
+// osgx_Material (MATERIAL_STRUCT) -- the "modular hook" createPBRIBLScene's own comment has been
+// waiting on: a caller loops `lightCount` times, calling osgx_PointLightRadiance for L/radiance
+// then this for the shaded result, and accumulates. Requires D_GGX/G_SCHLICK/G_SMITH/F_SCHLICK/
+// DIRECT_SPECULAR/DIRECT_DIFFUSE/MATERIAL_STRUCT already in scope.
+inline constexpr const char* DIRECT_LIGHT = R"GLSL(
+vec3 osgx_DirectLight(vec3 N, vec3 V, vec3 L, vec3 radiance, osgx_Material mat) {
+	float NdotV = max(dot(N, V), 0.0);
+	vec3 diffuse = osgx_DirectDiffuse(N, V, L, mat.albedo, mat.metallic, mat.F0);
+	vec3 specular = osgx_DirectSpecular(N, V, L, NdotV, mat.roughness, mat.F0);
+
+	return (diffuse + specular) * radiance * mat.ao;
+}
+)GLSL";
+
+// Directional-light radiance: no position, no falloff -- a directional light is already parallel
+// rays of constant irradiance (the sun, at scene scale). `direction` is the ray travel direction
+// (matching the glTF/KHR_lights_punctual convention a caller would eventually import), so the
+// direction TO the light is its negation. Ported from
+// OpenSceneGraph.py/examples/pyosg-lighting/99-repl.py's `L = normalize(mat3(osg_ViewMatrix) *
+// -directionalDir)` (that file's own validated REPL prototype of this exact term).
+inline constexpr const char* DIRECTIONAL_LIGHT_RADIANCE = R"GLSL(
+vec3 osgx_DirectionalLightRadiance(vec3 direction, vec3 color, float intensity, out vec3 L) {
+	L = -normalize(direction);
+
+	return color * intensity;
+}
+)GLSL";
+
+// Spot-light radiance: point-light falloff (POINT_LIGHT_RADIANCE) times a cone attenuation term.
+// `coneAngles` is (cos(innerConeAngle), cos(outerConeAngle)) -- pre-cosined so this stays a single
+// dot/smoothstep per fragment instead of an acos. Ported from 99-repl.py's spot block
+// (`smoothstep(spotOuterCos, spotInnerCos, cone)`). Requires POINT_LIGHT_RADIANCE already in scope.
+inline constexpr const char* SPOT_LIGHT_RADIANCE = R"GLSL(
+vec3 osgx_SpotLightRadiance(
+	vec4 posIntensity, vec3 color, vec3 direction, vec2 coneAngles, vec3 worldPos, out vec3 L
+) {
+	vec3 radiance = osgx_PointLightRadiance(posIntensity, color, worldPos, L);
+	float cone = dot(-L, normalize(direction));
+	float atten = smoothstep(coneAngles.y, coneAngles.x, cone);
+
+	return radiance * atten;
+}
+)GLSL";
+
+// Sphere-light "representative point" trick (Karis, "Real Shading in Unreal Engine 4", 2013):
+// bends the direction used for the SPECULAR term toward the closest point on the light's physical
+// sphere to the ideal mirror-reflection ray, instead of always pointing at its center -- this is
+// what actually makes a highlight bigger/softer as the light's physical size grows (diffuse has
+// no equivalent "highlight shape" to distort, so it keeps using the true light direction; see
+// DIRECT_LIGHT_SPHERE below). `toLightCenter` is UNNORMALIZED (light center minus shading point);
+// `R` is the normalized reflection vector. Ported verbatim from 99-repl.py's `sphereLightDir()`,
+// independently corroborated by the committed
+// OpenSceneGraph.py/examples/pyosg-polyhaven.py:116-123's identical formula.
+inline constexpr const char* SPHERE_LIGHT_SPECULAR = R"GLSL(
+vec3 osgx_SphereLightDir(vec3 toLightCenter, vec3 R, float sourceRadius) {
+	vec3 centerToRay = dot(toLightCenter, R) * R - toLightCenter;
+	vec3 closestPoint = toLightCenter + centerToRay * clamp(
+		sourceRadius / max(length(centerToRay), 0.0001), 0.0, 1.0
+	);
+
+	return normalize(closestPoint);
+}
+)GLSL";
+
+// Sphere-aware counterpart to DIRECT_LIGHT above, for a point or spot light with a non-zero
+// physical `sourceRadius`. Diffuse is unchanged (osgx_DirectDiffuse against the true `L`);
+// specular is re-evaluated against the representative-point direction (osgx_SphereLightDir) with
+// roughness widened by the light's angular size (`alphaPrime`, ported from 99-repl.py's
+// `evalSpherePoint()`) so a large/close source reads as a genuinely bigger, softer highlight
+// rather than the same small one just brighter. Reuses DIRECT_DIFFUSE/DIRECT_SPECULAR unchanged --
+// no new BRDF math, just a second osgx_DirectSpecular call site with a different L/roughness.
+// Requires DIRECT_DIFFUSE, DIRECT_SPECULAR, and SPHERE_LIGHT_SPECULAR already in scope.
+inline constexpr const char* DIRECT_LIGHT_SPHERE = R"GLSL(
+vec3 osgx_DirectLightSphere(
+	vec3 N, vec3 V, vec3 L, vec3 toLightCenter, vec3 radiance, osgx_Material mat, float sourceRadius
+) {
+	float NdotV = max(dot(N, V), 0.0);
+	vec3 diffuse = osgx_DirectDiffuse(N, V, L, mat.albedo, mat.metallic, mat.F0);
+
+	vec3 R = reflect(-V, N);
+	vec3 Lspec = osgx_SphereLightDir(toLightCenter, R, sourceRadius);
+	float dist = length(toLightCenter);
+	float alpha = mat.roughness * mat.roughness;
+	float alphaPrime = clamp(alpha + sourceRadius / (2.0 * max(dist, 0.0001)), 0.0, 1.0);
+	float roughnessPrime = sqrt(alphaPrime);
+	vec3 specular = osgx_DirectSpecular(N, V, Lspec, NdotV, roughnessPrime, mat.F0);
+
+	return (diffuse + specular) * radiance * mat.ao;
+}
+)GLSL";
+
 // Multi-scattering energy-compensated Fresnel (Fdez-Aguera 2019, "A Multiple-Scattering
 // Microfacet Model for Real-Time Image-based Lighting"), the same formula the official Khronos
 // glTF-Sample-Viewer uses (ported from OpenSceneGraph.py/examples/pyosg-khronos-viewer.py's
@@ -269,6 +441,73 @@ struct OrbitLightRig: public osg::NodeCallback {
 	};
 
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
+};
+
+// Selects the radiance function LIGHT_UNIFORMS' `lightType[i]` picks in the fragment shader loop
+// (OSGX_LIGHT_TYPE_* above) -- kept as a real C++ enum, not just the raw int a caller would
+// otherwise have to remember, same reasoning as MAX_LIGHTS. Deliberately no `Sphere` member: a
+// sphere light is a Point or Spot light with a non-zero LightSet::setPoint/setSpot `sourceRadius`,
+// not a fourth branch (see LIGHT_UNIFORMS' own comment for why).
+enum class LightType: int {
+	Point = 0,
+	Directional = 1,
+	Spot = 2
+};
+
+// The static-position counterpart to OrbitLightRig above: owns/creates every LIGHT_UNIFORMS array
+// on a StateSet once and exposes typed setters, instead of a caller hand-writing five parallel
+// osg::Uniform arrays (lightType/lightPosIntensity/lightColor/lightDir/lightSpotAngles/
+// lightSourceRadius) themselves. A caller wiring a fixed rig (wall torches, sconces, a sun, a
+// flashlight) uses this directly; OrbitLightRig can still animate on top of the SAME StateSet/
+// uniform names for the subset of lights that should orbit -- the two are complementary, not
+// alternatives.
+struct LightSet {
+	osg::ref_ptr<osg::StateSet> ss;
+
+	// Allocates and installs all six LIGHT_UNIFORMS arrays (size MAX_LIGHTS) on `ss`, each
+	// zero-initialized -- lightCount starts at 0, so a freshly created LightSet lights nothing
+	// until setCount() and at least one setPoint/setDirectional/setSpot are called.
+	static LightSet create(osg::StateSet* ss);
+
+	// `const` -- these mutate the StateSet `ss` points at, not any member of LightSet itself
+	// (`ss` is a handle, same reasoning as a `shared_ptr`'s pointee-mutating operations being
+	// const). Lets a LightSet captured by value into a `const`-qualified lambda (e.g. an ordinary,
+	// non-`mutable` event-handler callback) still call these directly.
+	//
+	// `sourceRadius` > 0 switches this light's specular term to the representative-point path
+	// (DIRECT_LIGHT_SPHERE) -- this is what makes it read as a "sphere" light instead of an ideal
+	// point light; everything else about it (falloff, diffuse) is unchanged.
+	void setPoint(
+		std::size_t index,
+		const osg::Vec3& position,
+		const osg::Vec3& color,
+		float intensity,
+		float sourceRadius=0.0f
+	) const;
+
+	// `direction` is the ray travel direction (matching KHR_lights_punctual, for eventual loader
+	// compatibility) -- e.g. (0, 0, -1) for a light shining straight down in a Z-up world.
+	void setDirectional(
+		std::size_t index,
+		const osg::Vec3& direction,
+		const osg::Vec3& color,
+		float intensity
+	) const;
+
+	// `innerConeAngle`/`outerConeAngle` are in radians, matching KHR_lights_punctual; converted to
+	// the shader's pre-cosined lightSpotAngles here so the fragment shader never calls acos/cos.
+	void setSpot(
+		std::size_t index,
+		const osg::Vec3& position,
+		const osg::Vec3& direction,
+		const osg::Vec3& color,
+		float intensity,
+		float innerConeAngle,
+		float outerConeAngle,
+		float sourceRadius=0.0f
+	) const;
+
+	void setCount(int count) const;
 };
 
 }

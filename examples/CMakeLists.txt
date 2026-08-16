@@ -7,6 +7,7 @@ set(OSGX_EXAMPLES
 	"hover"
 	"ibl"
 	"ktx2-skybox"
+	"lights"
 	"manipulator"
 	"notifyfilter"
 	"picking"

@@ -208,12 +208,20 @@ namespace osgx::gltf::pbribl {
 // SH9 remains available as an independent osgx::ibl utility for callers that prefer its compact,
 // low-cost representation; it is deliberately not part of this reference-quality convenience path.
 //
-// IBL only, deliberately - no direct/punctual lights. A prior revision carried one ad hoc direct
-// light (lightPos/lightColor/lightRadius uniforms); removed until osgx::pbr's *LightRig system
-// (see OrbitLightRig in PBR.hpp) is finished and can plug in here as a proper, modular hook instead
-// of a second hardcoded light source living next to it. Reach for the pattern this was built from
-// (see OpenSceneGraph.py/examples/pyosg-voxelize.py's PBR_FALLBACK_FRAGMENT_SHADER_SRC, or the
-// Python prototype this function replaces) if a scene needs direct lighting in the meantime.
+// IBL plus an optional handful of direct/punctual lights (LIGHT_UNIFORMS' lightCount/
+// lightPosIntensity/lightColor/lightType/lightDir/lightSpotAngles/lightSourceRadius, up to
+// osgx::pbr::MAX_LIGHTS). A prior revision carried one ad hoc direct light (lightPos/lightColor/
+// lightRadius uniforms); that was removed until osgx::pbr's *LightRig system (see OrbitLightRig
+// in PBR.hpp) was finished and could plug in here as a proper, modular hook instead of a second
+// hardcoded light source living next to it -- this is that hook. lightCount defaults to 0
+// (uniforms are zero-initialized by the driver when never set), so a caller that only wants IBL
+// sees no change; one that wants direct lights just sets osgx::pbr::LightSet's uniforms, here or
+// on an ancestor StateSet shared with whatever else should light identically (e.g. dice sharing a
+// scene's --scene backdrop, see OpenSceneGraph.py/examples/pyosg_dice.py's FRAGMENT_SHADER_IBL).
+// lightType picks the radiance function per light (point/directional/spot); a non-zero
+// lightSourceRadius on a point or spot switches its specular term to the representative-point
+// "sphere light" path (DIRECT_LIGHT_SPHERE) instead of adding a fourth light type -- see
+// LIGHT_UNIFORMS' own comment in PBR.hpp.
 // ================================================================================================
 
 namespace detail {
@@ -256,7 +264,7 @@ constexpr const char FULL_PBR_FRAGMENT_SHADER_SRC[] = R"GLSL(
 
 const float PI = 3.14159265359;
 
-#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_PBR_NEUTRAL
+#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_PBR_NEUTRAL, D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, DIRECT_SPECULAR, DIRECT_DIFFUSE, POINT_LIGHT_RADIANCE, LIGHT_UNIFORMS, DIRECT_LIGHT, DIRECTIONAL_LIGHT_RADIANCE, SPOT_LIGHT_RADIANCE, SPHERE_LIGHT_SPECULAR, DIRECT_LIGHT_SPHERE
 #pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
 
 in vec3 vNGeom;
@@ -266,16 +274,23 @@ in vec2 vUV;
 
 uniform vec3 emissiveFactor;
 uniform mat4 osg_ViewMatrix;
+uniform mat4 osg_ViewMatrixInverse;
 
 uniform samplerCube envMap; // unit 5
 uniform sampler2D brdfLUT; // unit 6
 uniform samplerCube diffuseEnv; // unit 7
-uniform float iblIntensity;
+// Independent diffuse-irradiance/specular-reflection intensity, not one shared iblIntensity --
+// ported from OpenSceneGraph.py/examples/pyosg-lighting/11-sketchfab-lambertian.py's own knobs:
+// turning up diffuse SH enough to read as ambient fill also blows out reflections if the two
+// share one scalar, and turning reflections down to a sane brightness crushes ambient back to
+// near-black. Also the pair a caller dials toward zero to make punctual lights (LIGHT_UNIFORMS)
+// read more clearly against IBL -- see createPBRIBLScene()'s PBRIBLScene::iblDiffuseIntensity/
+// iblSpecularIntensity for the live-tunable Uniform refs.
+uniform float iblDiffuseIntensity;
+uniform float iblSpecularIntensity;
 // KTX/OpenGL cubemap lookup basis. A prepared environment may override this for a legacy or
 // application-specific cube convention.
-uniform vec3 iblAxisX;
-uniform vec3 iblAxisY;
-uniform vec3 iblAxisZ;
+uniform vec3 iblAxis[3];
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 // Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
 // handler - lets a caller (see osggltf-viewer.cpp) key-toggle which term is actually
@@ -296,7 +311,7 @@ struct Lighting {
 
 vec3 osgx_ZUpToGltf(vec3 d) { return vec3(d.x, d.z, -d.y); }
 vec3 osgx_OrientIBL(vec3 d) {
-	return vec3(dot(d, iblAxisX), dot(d, iblAxisY), dot(d, iblAxisZ));
+	return vec3(dot(d, iblAxis[0]), dot(d, iblAxis[1]), dot(d, iblAxis[2]));
 }
 vec3 osgx_LinearToSRGB(vec3 c) {
 	return mix(12.92 * c, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
@@ -332,8 +347,8 @@ Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
 	vec3 Fm = osgx_F_MultiScatter(N_world, V_world, mat.roughness, mat.albedo, brdfLUT);
 	vec3 kD_ibl = (1.0 - Fd) * (1.0 - mat.metallic);
 
-	result.diffuse = diffuseIrradiance * mat.albedo * kD_ibl * mat.ao * iblIntensity;
-	result.specular = prefiltered * mix(Fd, Fm, mat.metallic) * mat.ao * iblIntensity;
+	result.diffuse = diffuseIrradiance * mat.albedo * kD_ibl * mat.ao * iblDiffuseIntensity;
+	result.specular = prefiltered * mix(Fd, Fm, mat.metallic) * mat.ao * iblSpecularIntensity;
 
 	return result;
 }
@@ -409,7 +424,42 @@ void main() {
 	emissive = (debugMode == 0 || debugMode == 14) ? emissive : vec3(0.0);
 #endif
 
-	vec3 color = surface + emissive;
+	// Direct/punctual lights (LIGHT_UNIFORMS): point, directional, and spot, e.g. a torch or a sun
+	// -- see the comment above this shader for the modular-hook history. Named distinctly from the
+	// diagnostics block's own invView/Nworld above so both compile together regardless of
+	// OSGX_PBRIBL_DIAGNOSTICS.
+	mat3 invViewRot = transpose(mat3(osg_ViewMatrix));
+	vec3 lightN = invViewRot * N;
+	vec3 lightV = invViewRot * V;
+	vec3 worldPos = (osg_ViewMatrixInverse * vec4(vPosition, 1.0)).xyz;
+	vec3 direct = vec3(0.0);
+
+	for(int i = 0; i < lightCount; i++) {
+		vec3 L;
+		vec3 radiance;
+
+		if(lightType[i] == OSGX_LIGHT_TYPE_DIRECTIONAL) {
+			radiance = osgx_DirectionalLightRadiance(lightDir[i], lightColor[i], lightPosIntensity[i].w, L);
+		} else if(lightType[i] == OSGX_LIGHT_TYPE_SPOT) {
+			radiance = osgx_SpotLightRadiance(
+				lightPosIntensity[i], lightColor[i], lightDir[i], lightSpotAngles[i], worldPos, L
+			);
+		} else {
+			radiance = osgx_PointLightRadiance(lightPosIntensity[i], lightColor[i], worldPos, L);
+		}
+
+		// A directional light has no position, so the representative-point "sphere" path (which
+		// needs a light-to-shading-point vector) does not apply to it.
+		if(lightSourceRadius[i] > 0.0 && lightType[i] != OSGX_LIGHT_TYPE_DIRECTIONAL) {
+			direct += osgx_DirectLightSphere(
+				lightN, lightV, L, lightPosIntensity[i].xyz - worldPos, radiance, mat, lightSourceRadius[i]
+			);
+		} else {
+			direct += osgx_DirectLight(lightN, lightV, L, radiance, mat);
+		}
+	}
+
+	vec3 color = surface + direct + emissive;
 
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 	// These three modes intentionally bypass PBR Neutral and gamma. They expose the linear
@@ -671,7 +721,8 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const std::string& manifestPath) {
 PBRIBLScene createPBRIBLScene(
 	osg::Node* node,
 	const PBRIBLEnvironment& environment,
-	float iblIntensity,
+	float iblDiffuseIntensity,
+	float iblSpecularIntensity,
 	bool diagnostics
 ) {
 	// osgx::gltf::pbribl::resolveShaderLibs() below idempotently registers the generic osgx catalogs and
@@ -710,11 +761,19 @@ PBRIBLScene createPBRIBLScene(
 	ss->addUniform(new osg::Uniform("envMap", 5));
 	ss->addUniform(new osg::Uniform("brdfLUT", 6));
 	ss->addUniform(new osg::Uniform("diffuseEnv", 7));
-	ss->addUniform(new osg::Uniform("iblIntensity", iblIntensity));
+	pis.iblDiffuseIntensity = new osg::Uniform("iblDiffuseIntensity", iblDiffuseIntensity);
+	pis.iblSpecularIntensity = new osg::Uniform("iblSpecularIntensity", iblSpecularIntensity);
+	ss->addUniform(pis.iblDiffuseIntensity);
+	ss->addUniform(pis.iblSpecularIntensity);
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
-	ss->addUniform(new osg::Uniform("iblAxisX", environment.iblAxisX));
-	ss->addUniform(new osg::Uniform("iblAxisY", environment.iblAxisY));
-	ss->addUniform(new osg::Uniform("iblAxisZ", environment.iblAxisZ));
+
+	auto* iblAxis = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblAxis", 3);
+
+	for(size_t i = 0; i < environment.iblAxis.size(); i++) {
+		iblAxis->setElement(static_cast<unsigned int>(i), environment.iblAxis[i]);
+	}
+
+	ss->addUniform(iblAxis);
 
 	// The glTF Material helper binds the actual baseColor/normal/orm/emissive Texture2Ds to units
 	// 0-3 per geometry, but deliberately stays shader-agnostic

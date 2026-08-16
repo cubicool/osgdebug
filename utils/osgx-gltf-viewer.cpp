@@ -209,6 +209,8 @@ bool readRawRGBA32F(const std::filesystem::path& filename, int width, int height
 	return true;
 }
 
+// These are functions for using the "official" Khronos assets (the same that are used in the
+// web-based viewer).
 struct OfficialIBL {
 	osg::ref_ptr<osg::TextureCubeMap> diffuse;
 	osg::ref_ptr<osg::Texture2D> lut;
@@ -409,9 +411,9 @@ int main(int argc, char** argv) {
 		environment.envMap = osgx::ibl::loadPrefilterCubemap((directory / "khronos-ggx.ktx2").string());
 		environment.brdfLUT = officialIBL.lut;
 		environment.diffuseEnv = officialIBL.diffuse;
-		environment.iblAxisX.set(0.0f, 0.0f, 1.0f);
-		environment.iblAxisY.set(0.0f, 1.0f, 0.0f);
-		environment.iblAxisZ.set(-1.0f, 0.0f, 0.0f);
+		// iblAxis already defaults to this same basis; PBRIBLEnvironment's aggregate init
+		// above doesn't run here since envMap/brdfLUT/diffuseEnv are set field-by-field, but
+		// `environment` was default-constructed, so iblAxis already holds it.
 	}
 
 	else if(haveEnv) {
@@ -436,7 +438,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	auto pis = osgx::gltf::pbribl::createPBRIBLScene(model, environment, 1.0f, diagnostics);
+	auto pis = osgx::gltf::pbribl::createPBRIBLScene(model, environment, 1.0f, 1.0f, diagnostics);
 
 	if(!pis.valid()) return 1;
 

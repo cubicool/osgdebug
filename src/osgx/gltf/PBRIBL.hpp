@@ -15,6 +15,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -55,10 +56,14 @@ struct PBRIBLEnvironment {
 	osg::ref_ptr<osg::TextureCubeMap> envMap;
 	osg::ref_ptr<osg::Texture2D> brdfLUT;
 	osg::ref_ptr<osg::TextureCubeMap> diffuseEnv;
-	// KTX/OpenGL cubemap lookup basis, expressed relative to the loader's Z-up world.
-	osg::Vec3 iblAxisX{0.0f, 0.0f, 1.0f};
-	osg::Vec3 iblAxisY{0.0f, 1.0f, 0.0f};
-	osg::Vec3 iblAxisZ{-1.0f, 0.0f, 0.0f};
+	// KTX/OpenGL cubemap lookup basis, expressed relative to the loader's Z-up world --
+	// always exactly 3 (X/Y/Z row) vectors, one orthonormal basis. Bound to the shader as
+	// a single `uniform vec3 iblAxis[3];` array; see osgx_OrientIBL() below.
+	std::array<osg::Vec3, 3> iblAxis{
+		osg::Vec3(0.0f, 0.0f, 1.0f),
+		osg::Vec3(0.0f, 1.0f, 0.0f),
+		osg::Vec3(-1.0f, 0.0f, 0.0f)
+	};
 
 	bool valid() const;
 };
@@ -126,6 +131,13 @@ struct PBRIBLScene {
 	osg::ref_ptr<osg::Uniform> disableNormalMap;
 	osg::ref_ptr<osg::Uniform> disableRoughnessMap;
 	osg::ref_ptr<osg::Uniform> disableSpecularAA;
+	// Independent diffuse-irradiance/specular-reflection intensity knobs (not one shared
+	// iblIntensity -- see evaluateIBL()'s own comment in PBRIBL.cpp for why they need to move
+	// independently). Exposed as live osg::Uniform refs, same pattern as debugMode etc. above, so
+	// a caller can tune -- or dial toward zero, e.g. to make punctual lights read more clearly --
+	// after scene creation instead of only at construction time.
+	osg::ref_ptr<osg::Uniform> iblDiffuseIntensity;
+	osg::ref_ptr<osg::Uniform> iblSpecularIntensity;
 
 	bool valid() const;
 };
@@ -134,7 +146,8 @@ struct PBRIBLScene {
 PBRIBLScene createPBRIBLScene(
 	osg::Node* node,
 	const PBRIBLEnvironment& environment,
-	float iblIntensity=1.0f,
+	float iblDiffuseIntensity=1.0f,
+	float iblSpecularIntensity=1.0f,
 	bool diagnostics=false
 );
 

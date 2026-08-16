@@ -725,6 +725,7 @@ void bind_gltf(py::module_& m_gltf) {
 		.def_readwrite("envMap", &osgx::gltf::pbribl::PBRIBLEnvironment::envMap)
 		.def_readwrite("brdfLUT", &osgx::gltf::pbribl::PBRIBLEnvironment::brdfLUT)
 		.def_readwrite("diffuseEnv", &osgx::gltf::pbribl::PBRIBLEnvironment::diffuseEnv)
+		.def_readwrite("iblAxis", &osgx::gltf::pbribl::PBRIBLEnvironment::iblAxis)
 		.def("valid", &osgx::gltf::pbribl::PBRIBLEnvironment::valid)
 	;
 
@@ -740,6 +741,14 @@ void bind_gltf(py::module_& m_gltf) {
 		.def_readwrite(
 			"disableSpecularAA",
 			&osgx::gltf::pbribl::PBRIBLScene::disableSpecularAA
+		)
+		.def_readwrite(
+			"iblDiffuseIntensity",
+			&osgx::gltf::pbribl::PBRIBLScene::iblDiffuseIntensity
+		)
+		.def_readwrite(
+			"iblSpecularIntensity",
+			&osgx::gltf::pbribl::PBRIBLScene::iblSpecularIntensity
 		)
 		.def("valid", &osgx::gltf::pbribl::PBRIBLScene::valid)
 	;
@@ -766,7 +775,8 @@ void bind_gltf(py::module_& m_gltf) {
 		&osgx::gltf::pbribl::createPBRIBLScene,
 		"node"_a,
 		"environment"_a,
-		"iblIntensity"_a=1.0f,
+		"iblDiffuseIntensity"_a=1.0f,
+		"iblSpecularIntensity"_a=1.0f,
 		"diagnostics"_a=false,
 		"Apply osgx::gltf's optional osgx-powered PBR/IBL renderer using prepared resources."
 	);
