@@ -85,7 +85,13 @@ constexpr std::string_view FRAGMENT_SHADER = R"GLSL(
 // ordering right; this shader originally didn't.
 const float PI = 3.14159265359;
 
-#pragma osgx::pbr MATERIAL_STRUCT, D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, DIRECT_SPECULAR, DIRECT_DIFFUSE, POINT_LIGHT_RADIANCE, LIGHT_UNIFORMS, DIRECT_LIGHT, DIRECTIONAL_LIGHT_RADIANCE, SPOT_LIGHT_RADIANCE, SPHERE_LIGHT_SPECULAR, DIRECT_LIGHT_SPHERE
+// This shader no longer touches lightCount/lightType/DIRECT_LIGHT/etc. directly -- it only needs
+// the osgx_ShadeDirect() CONTRACT declaration (LIGHT_SHADE_DECL) plus a call site. The actual
+// per-light dispatch loop lives in a SEPARATE compiled shader object (see makeProgram() below,
+// DIRECT_LIGHT_HOOK_DEFAULT), linked in at Program-link time -- see PBR.hpp's own comment on
+// LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT for the full rationale (mirrors osgSlug's hook
+// pattern). This is the validation vehicle for that new contract, live-tested 2026-08-16.
+#pragma osgx::pbr MATERIAL_STRUCT, LIGHT_SHADE_DECL
 
 in vec3 vNormal;
 in vec3 vPosition;
@@ -117,28 +123,7 @@ void main() {
 
 	vec3 color = ambientColor * ambientIntensity * mat.albedo * mat.ao;
 
-	for(int i = 0; i < lightCount; i++) {
-		vec3 L;
-		vec3 radiance;
-
-		if(lightType[i] == OSGX_LIGHT_TYPE_DIRECTIONAL) {
-			radiance = osgx_DirectionalLightRadiance(lightDir[i], lightColor[i], lightPosIntensity[i].w, L);
-		} else if(lightType[i] == OSGX_LIGHT_TYPE_SPOT) {
-			radiance = osgx_SpotLightRadiance(
-				lightPosIntensity[i], lightColor[i], lightDir[i], lightSpotAngles[i], worldPos, L
-			);
-		} else {
-			radiance = osgx_PointLightRadiance(lightPosIntensity[i], lightColor[i], worldPos, L);
-		}
-
-		if(lightSourceRadius[i] > 0.0 && lightType[i] != OSGX_LIGHT_TYPE_DIRECTIONAL) {
-			color += osgx_DirectLightSphere(
-				N, V, L, lightPosIntensity[i].xyz - worldPos, radiance, mat, lightSourceRadius[i]
-			);
-		} else {
-			color += osgx_DirectLight(N, V, L, radiance, mat);
-		}
-	}
+	color += osgx_ShadeDirect(N, V, worldPos, mat);
 
 	color = pow(clamp(color, vec3(0.0), vec3(1.0)), vec3(1.0 / 2.2));
 
@@ -154,10 +139,19 @@ osg::ref_ptr<osg::Program> makeProgram() {
 	// osgx::gltf::pbribl::createPBRIBLScene()'s own split (PBRIBL.cpp), which resolves its
 	// fragment shader but adds its vertex shader unchanged.
 	auto fragmentSrc = osgx::resolveShaderLibs(std::string(FRAGMENT_SHADER));
+	// The osgx_ShadeDirect() CONTRACT's default definition -- a second, separately compiled
+	// FRAGMENT shader object with no main() of its own, added alongside fragmentSrc above. GLSL
+	// cross-shader-object linking resolves fragmentSrc's forward-declared osgx_ShadeDirect() call
+	// against this at Program-link time. Self-contained (carries its own #pragma), so it needs no
+	// further resolveShaderLibs() dependency wiring beyond this one call. Swap this shader object
+	// out for a different one (defining osgx_ShadeDirect() differently) to override direct-light
+	// shading without touching fragmentSrc at all -- see PBR.hpp's LIGHT_SHADE_DECL comment.
+	auto hookSrc = osgx::resolveShaderLibs(std::string(osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT));
 
 	program->setName("osgx_lights_demo");
 	program->addShader(new osg::Shader(osg::Shader::VERTEX, std::string(VERTEX_SHADER)));
 	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, fragmentSrc));
+	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, hookSrc));
 	program->addBindAttribLocation("position", 0);
 	program->addBindAttribLocation("normal", 1);
 
@@ -202,22 +196,26 @@ struct LightsState {
 	// Axis-aligned on purpose, for unambiguous verification: travel direction (0,0,-1) means the
 	// light source is directly above (+Z), so exactly one cube face -- the top (+Z-normal) face --
 	// should receive direct light; every other face should show only the flat ambient fill.
+	// Each type gets its own strongly saturated, mutually distinct color (red/green/blue/yellow)
+	// against the now-neutral-gray shape (see the `albedo` uniform below) -- makes it immediately
+	// obvious BY EYE which light is contributing, and separates Sphere's color from Point's own
+	// (they used to share one color, making the two easy to visually conflate while comparing).
 	osg::Vec3 directionalDirection{0.0f, 0.0f, -1.0f};
-	osg::Vec3 directionalColor{0.75f, 0.70f, 0.60f};
+	osg::Vec3 directionalColor{0.90f, 0.15f, 0.15f}; // red
 	float directionalIntensity = 3.0f;
 
 	osg::Vec3 pointPosition{1.5f, -1.1f, 1.2f};
-	osg::Vec3 pointColor{0.85f, 0.55f, 0.30f};
+	osg::Vec3 pointColor{0.15f, 0.85f, 0.25f}; // green
 	float pointIntensity = 12.0f;
 
 	osg::Vec3 spherePosition{1.5f, -1.1f, 1.2f};
-	osg::Vec3 sphereColor{0.85f, 0.55f, 0.30f};
+	osg::Vec3 sphereColor{0.20f, 0.45f, 0.95f}; // blue
 	float sphereIntensity = 12.0f;
 	float sphereRadius = 0.7f;
 
 	osg::Vec3 spotPosition{1.8f, -1.8f, 1.8f};
 	osg::Vec3 spotDirection{-1.0f, 1.0f, -1.0f}; // aimed at the origin
-	osg::Vec3 spotColor{0.95f, 0.85f, 0.65f};
+	osg::Vec3 spotColor{0.95f, 0.85f, 0.10f}; // yellow
 	float spotIntensity = 30.0f;
 	float spotInnerDegrees = 15.0f;
 	float spotOuterDegrees = 32.0f;
@@ -274,7 +272,9 @@ int main() {
 	geode->addDrawable(shape.get());
 	ss->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
 	ss->setAttributeAndModes(makeProgram().get(), osg::StateAttribute::ON);
-	ss->addUniform(new osg::Uniform("albedo", osg::Vec3(0.75f, 0.15f, 0.12f)));
+	// Neutral gray (R=G=B) -- any color tint the shape shows is entirely the active light's own
+	// color, not mixed with a pre-tinted albedo.
+	ss->addUniform(new osg::Uniform("albedo", osg::Vec3(0.5f, 0.5f, 0.5f)));
 	ss->addUniform(new osg::Uniform("roughness", 0.35f));
 	ss->addUniform(new osg::Uniform("metallic", 0.1f));
 	ss->addUniform(new osg::Uniform("ambientColor", osg::Vec3(1.0f, 1.0f, 1.0f)));

@@ -42,6 +42,7 @@ void registerShaderLibs() {
 		{"SPOT_LIGHT_RADIANCE", "osgx_SpotLightRadiance", pbr::SPOT_LIGHT_RADIANCE},
 		{"SPHERE_LIGHT_SPECULAR", "osgx_SphereLightDir", pbr::SPHERE_LIGHT_SPECULAR},
 		{"DIRECT_LIGHT_SPHERE", "osgx_DirectLightSphere", pbr::DIRECT_LIGHT_SPHERE},
+		{"LIGHT_SHADE_DECL", "osgx_ShadeDirect", pbr::LIGHT_SHADE_DECL},
 		{"F_MULTISCATTER", "osgx_F_MultiScatter", pbr::F_MULTISCATTER},
 		{"IBL_SPECULAR", "osgx_IBLSpecular", pbr::IBL_SPECULAR},
 		{"SPECULAR_AA", "osgx_SpecularAA", pbr::SPECULAR_AA},

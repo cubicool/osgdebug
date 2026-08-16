@@ -293,6 +293,23 @@ vec3 osgx_SphereLightDir(vec3 toLightCenter, vec3 R, float sourceRadius) {
 // no new BRDF math, just a second osgx_DirectSpecular call site with a different L/roughness.
 // Requires DIRECT_DIFFUSE, DIRECT_SPECULAR, and SPHERE_LIGHT_SPECULAR already in scope.
 inline constexpr const char* DIRECT_LIGHT_SPHERE = R"GLSL(
+// A plain clamp(x, 0.0, 1.0) here has a hard derivative jump exactly at x==1.0 -- invisible for a
+// single shaded point, but on a surface close enough to a large-sourceRadius light for x to exceed
+// 1.0 on PART of the surface and not another, that jump shows up as a real, visible ring (confirmed
+// live 2026-08-16: a cube face close to a sourceRadius=2 light showed a sharp arc separating a
+// alphaPrime==1.0-saturated region from an unsaturated one). x is never negative here (alpha and
+// sourceRadius/(2*dist) are both >= 0), so only the upper ceiling needs softening. Identity below
+// (1.0 - softness), so every already-verified non-saturating case (small/no sourceRadius, or a
+// light far enough that alphaPrime never approaches 1.0) is completely unaffected -- only the
+// approach to the ceiling itself eases smoothly instead of cutting off sharply.
+float osgx_SoftCeiling(float x, float softness) {
+	float edge = 1.0 - softness;
+
+	if(x <= edge) return x;
+
+	return mix(x, 1.0, smoothstep(edge, 1.0 + softness, x));
+}
+
 vec3 osgx_DirectLightSphere(
 	vec3 N, vec3 V, vec3 L, vec3 toLightCenter, vec3 radiance, osgx_Material mat, float sourceRadius
 ) {
@@ -303,11 +320,81 @@ vec3 osgx_DirectLightSphere(
 	vec3 Lspec = osgx_SphereLightDir(toLightCenter, R, sourceRadius);
 	float dist = length(toLightCenter);
 	float alpha = mat.roughness * mat.roughness;
-	float alphaPrime = clamp(alpha + sourceRadius / (2.0 * max(dist, 0.0001)), 0.0, 1.0);
+	float alphaPrime = osgx_SoftCeiling(alpha + sourceRadius / (2.0 * max(dist, 0.0001)), 0.2);
 	float roughnessPrime = sqrt(alphaPrime);
 	vec3 specular = osgx_DirectSpecular(N, V, Lspec, NdotV, roughnessPrime, mat.F0);
 
 	return (diffuse + specular) * radiance * mat.ao;
+}
+)GLSL";
+
+// osgx_ShadeDirect() CONTRACT -- the per-light dispatch loop above (LIGHT_UNIFORMS' lightCount/
+// lightType/... arrays) factored out behind a single function boundary, instead of every consumer
+// hand-copying it into its own main() (PBRIBL.cpp's FULL_PBR_FRAGMENT_SHADER_SRC and
+// OpenSceneGraph.py's pyosg_dice.py both did exactly that, and the latter has already drifted out
+// of sync -- see osgx TODO.md). Follows the separate-compiled-shader-object "hook" pattern osgSlug
+// already uses to good effect (~/dev/osgSlug/src/Atlas.shaders.cpp's SHADER_NOOP_*_HOOK/HookList,
+// Atlas.cpp's createDefaultStateSet()): a consumer's OWN fragment shader only needs
+// LIGHT_SHADE_DECL spliced in (list MATERIAL_STRUCT earlier in the SAME pragma line -- this is a
+// bare forward declaration, osgx_Material must already be a known type) plus a call site
+// (`color += osgx_ShadeDirect(N, V, worldPos, mat);`); it never touches lightType/lightCount/
+// DIRECT_LIGHT/DIRECT_LIGHT_SPHERE/etc. directly, and so can never drift out of sync with them the
+// way pyosg_dice.py's hand-copied loop did. The DEFINITION lives in DIRECT_LIGHT_HOOK_DEFAULT
+// below, a fully self-contained, SEPARATELY compiled osg::Shader object added alongside the
+// consumer's own -- GLSL's ordinary cross-shader-object linking resolves the call at Program-link
+// time, exactly like osgSlug's SHADER_VERT calling osgSlug_Vertex(data) defined in a separate hook
+// shader object. A caller that genuinely needs different direct-light shading (not just different
+// material response, which osgx_Material/MATERIAL_STRUCT already covers) supplies its own shader
+// object defining osgx_ShadeDirect() instead of adding DIRECT_LIGHT_HOOK_DEFAULT -- same override
+// mechanism as osgSlug's HookList, minus the C++-side bookkeeping (a HookList-style helper plus the
+// Python binding are a deliberate follow-up, not done in this pass -- see TODO.md).
+inline constexpr const char* LIGHT_SHADE_DECL = R"GLSL(
+vec3 osgx_ShadeDirect(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat);
+)GLSL";
+
+// Self-contained -- carries its own #version/PI/#pragma line so it compiles as a standalone
+// osg::Shader object regardless of what the consumer's own fragment shader happens to have in
+// scope. Add via:
+//   program->addShader(new osg::Shader(
+//     osg::Shader::FRAGMENT, osgx::resolveShaderLibs(osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT)
+//   ));
+// as an EXTRA shader object on the same Program that already has the consumer's own fragment
+// shader (which only needs LIGHT_SHADE_DECL + a call site, see above) -- not spliced by name via
+// #pragma osgx::pbr, so it is deliberately NOT in registerShaderLibs()'s catalog.
+inline constexpr const char* DIRECT_LIGHT_HOOK_DEFAULT = R"GLSL(
+#version 460 core
+
+const float PI = 3.14159265359;
+
+#pragma osgx::pbr MATERIAL_STRUCT, D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, DIRECT_SPECULAR, DIRECT_DIFFUSE, POINT_LIGHT_RADIANCE, LIGHT_UNIFORMS, DIRECT_LIGHT, DIRECTIONAL_LIGHT_RADIANCE, SPOT_LIGHT_RADIANCE, SPHERE_LIGHT_SPECULAR, DIRECT_LIGHT_SPHERE
+
+vec3 osgx_ShadeDirect(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
+	vec3 color = vec3(0.0);
+
+	for(int i = 0; i < lightCount; i++) {
+		vec3 L;
+		vec3 radiance;
+
+		if(lightType[i] == OSGX_LIGHT_TYPE_DIRECTIONAL) {
+			radiance = osgx_DirectionalLightRadiance(lightDir[i], lightColor[i], lightPosIntensity[i].w, L);
+		} else if(lightType[i] == OSGX_LIGHT_TYPE_SPOT) {
+			radiance = osgx_SpotLightRadiance(
+				lightPosIntensity[i], lightColor[i], lightDir[i], lightSpotAngles[i], worldPos, L
+			);
+		} else {
+			radiance = osgx_PointLightRadiance(lightPosIntensity[i], lightColor[i], worldPos, L);
+		}
+
+		if(lightSourceRadius[i] > 0.0 && lightType[i] != OSGX_LIGHT_TYPE_DIRECTIONAL) {
+			color += osgx_DirectLightSphere(
+				N, V, L, lightPosIntensity[i].xyz - worldPos, radiance, mat, lightSourceRadius[i]
+			);
+		} else {
+			color += osgx_DirectLight(N, V, L, radiance, mat);
+		}
+	}
+
+	return color;
 }
 )GLSL";
 
