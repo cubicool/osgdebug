@@ -57,8 +57,9 @@ struct PBRIBLEnvironment {
 	osg::ref_ptr<osg::Texture2D> brdfLUT;
 	osg::ref_ptr<osg::TextureCubeMap> diffuseEnv;
 	// KTX/OpenGL cubemap lookup basis, expressed relative to the loader's Z-up world --
-	// always exactly 3 (X/Y/Z row) vectors, one orthonormal basis. Bound to the shader as
-	// a single `uniform vec3 iblAxis[3];` array; see osgx_OrientIBL() below.
+	// always exactly 3 (X/Y/Z row) vectors, one orthonormal basis, in the SAME Z-up space a
+	// caller already reasons about (world-space N/V/R, no glTF/Y-up swizzle applied). Never
+	// uploaded to the shader as-is -- see foldZUpToGLTFAxis() below.
 	std::array<osg::Vec3, 3> iblAxis{
 		osg::Vec3(0.0f, 0.0f, 1.0f),
 		osg::Vec3(0.0f, 1.0f, 0.0f),
@@ -67,6 +68,24 @@ struct PBRIBLEnvironment {
 
 	bool valid() const;
 };
+
+// Folds the fixed Z-up -> glTF/Y-up cubemap permutation (osgx_ZUpToGLTF() in the shader:
+// vec3(d.x, d.z, -d.y)) into ONE `iblAxis` row, algebraically: composing OrientIBL's dot-product
+// matrix (rows = iblAxis) with ZUpToGltf's fixed permutation matrix once here, on the CPU, instead
+// of applying both transforms to every N/R per fragment on the GPU. Derivation: for row r,
+// (ZUpToGltf then dot-with-r) == dot-with-(r.x, -r.z, r.y) for every input vector -- verified
+// against the original two-step formula on both axis-aligned and general test vectors.
+//
+// createPBRIBLScene() calls this once per row when building the `iblAxis` uniform, so the shader's
+// own osgx_OrientIBL(d) can be called directly on a raw Z-up N_world/R (no separate
+// osgx_ZUpToGLTF() call at that site) and still land in the identical cubemap-lookup space.
+// `environment.iblAxis` itself keeps its original Z-up meaning -- a caller overriding it for a
+// custom convention still reasons in that space; only the uploaded uniform is pre-folded.
+// osgx_ZUpToGLTF() remains a standalone shader function for its OTHER call sites (createPBRIBLScene()'s
+// OSGX_PBRIBL_DIAGNOSTICS debug-normal visualizations), which have no iblAxis involved at all.
+inline osg::Vec3 foldZUpToGLTFAxis(const osg::Vec3& row) {
+	return osg::Vec3(row.x(), -row.z(), row.y());
+}
 
 // Fully dynamic path: bakes the GGX-prefiltered specular cubemap live, in memory, from `hdrPath`
 // alone -- the same osgx::ibl::createGGXPrefilterScene() workflow osggltf-iblbake-gpu already

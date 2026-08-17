@@ -208,13 +208,13 @@ namespace osgx::gltf::pbribl {
 // SH9 remains available as an independent osgx::ibl utility for callers that prefer its compact,
 // low-cost representation; it is deliberately not part of this reference-quality convenience path.
 //
-// IBL plus an optional handful of direct/punctual lights, via the osgx_ShadeDirect() CONTRACT
-// (LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT in PBR.hpp) -- one call
-// (`osgx_ShadeDirect(N, V, worldPos, mat)`) against osgx::pbr::LightSet's buffer-backed light array
+// IBL plus an optional handful of direct/punctual lights, via the osgx_DirectLighting() CONTRACT
+// (DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT in PBR.hpp) -- one call
+// (`osgx_DirectLighting(N, V, worldPos, mat)`) against osgx::pbr::LightSet's buffer-backed light array
 // (up to osgx::pbr::MAX_LIGHTS), instead of this shader hand-copying the per-light dispatch loop
 // itself (a prior revision did exactly that, and drifted out of sync with OpenSceneGraph.py's
 // pyosg_dice.py copy -- see TODO.md; both now share the one hook definition,
-// DIRECT_LIGHT_HOOK_DEFAULT, added as a second FRAGMENT osg::Shader object in
+// DIRECT_LIGHTING_HOOK_DEFAULT, added as a second FRAGMENT osg::Shader object in
 // createPBRIBLScene() below). A LightSet's osgx_lightCount defaults to 0 (LightSet::create()
 // zero-initializes it), so a caller that only wants IBL sees no change; one that wants direct
 // lights just populates osgx::pbr::LightSet, here or on an ancestor StateSet shared with whatever
@@ -262,7 +262,7 @@ constexpr const char FULL_PBR_FRAGMENT_SHADER_SRC[] = R"GLSL(
 
 const float PI = 3.14159265359;
 
-#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_PBR_NEUTRAL, LIGHT_SHADE_DECL
+#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_DECL, DIRECT_LIGHTING_DECL
 #pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
 
 in vec3 vNGeom;
@@ -307,7 +307,12 @@ struct Lighting {
 	vec3 specular;
 };
 
-vec3 osgx_ZUpToGltf(vec3 d) { return vec3(d.x, d.z, -d.y); }
+vec3 osgx_ZUpToGLTF(vec3 d) { return vec3(d.x, d.z, -d.y); }
+// `iblAxis` is uploaded PRE-FOLDED with osgx_ZUpToGLTF's Z-up -> glTF/Y-up permutation (see
+// osgx::gltf::pbribl::foldZUpToGLTFAxis(), PBRIBL.hpp) -- callers below pass a raw Z-up world
+// vector directly, no separate osgx_ZUpToGLTF() call needed at these two call sites.
+// osgx_ZUpToGLTF() itself stays standalone for the OSGX_PBRIBL_DIAGNOSTICS debug-normal
+// visualizations further down, which have no iblAxis involved at all.
 vec3 osgx_OrientIBL(vec3 d) {
 	return vec3(dot(d, iblAxis[0]), dot(d, iblAxis[1]), dot(d, iblAxis[2]));
 }
@@ -322,14 +327,14 @@ Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
 	vec3 N_world = invView * N;
 	vec3 V_world = invView * V;
 
-	vec3 diffuseIrradiance = texture(diffuseEnv, osgx_OrientIBL(osgx_ZUpToGltf(N_world))).rgb;
+	vec3 diffuseIrradiance = texture(diffuseEnv, osgx_OrientIBL(N_world)).rgb;
 
 	// The KTX2 prefilter has a terminal level that is not part of the Khronos GGX chain.
 	// Match the reference viewer: roughness 1 selects the last filtered level, not that
 	// terminal level.
 	float maxMip = float(max(textureQueryLevels(envMap) - 2, 0));
 	vec3 R = reflect(-V_world, N_world);
-	vec3 R_gl = osgx_OrientIBL(vec3(R.x, R.z, -R.y));
+	vec3 R_gl = osgx_OrientIBL(R);
 	vec3 prefiltered = textureLod(envMap, R_gl, mat.roughness * maxMip).rgb;
 
 	// Matches pyosg-khronos-viewer.py's fresnel()/fd/fm/mix(...) exactly: two independent
@@ -389,12 +394,12 @@ void main() {
 		);
 		return;
 	}
-	if(debugMode == 8) { fragColor = vec4(osgx_ZUpToGltf(NgeomWorld) * 0.5 + 0.5, alpha); return; }
-	if(debugMode == 9) { fragColor = vec4(osgx_ZUpToGltf(Nworld) * 0.5 + 0.5, alpha); return; }
+	if(debugMode == 8) { fragColor = vec4(osgx_ZUpToGLTF(NgeomWorld) * 0.5 + 0.5, alpha); return; }
+	if(debugMode == 9) { fragColor = vec4(osgx_ZUpToGLTF(Nworld) * 0.5 + 0.5, alpha); return; }
 	vec3 tangentWorld = normalize(invView * vTangent.xyz);
 	vec3 bitangentWorld = normalize(cross(NgeomWorld, tangentWorld)) * vTangent.w;
-	if(debugMode == 10) { fragColor = vec4(osgx_ZUpToGltf(tangentWorld) * 0.5 + 0.5, alpha); return; }
-	if(debugMode == 11) { fragColor = vec4(osgx_ZUpToGltf(bitangentWorld) * 0.5 + 0.5, alpha); return; }
+	if(debugMode == 10) { fragColor = vec4(osgx_ZUpToGLTF(tangentWorld) * 0.5 + 0.5, alpha); return; }
+	if(debugMode == 11) { fragColor = vec4(osgx_ZUpToGLTF(bitangentWorld) * 0.5 + 0.5, alpha); return; }
 #endif
 
 	// Widens roughness under high-curvature/low-roughness shading normals so the mirror-like
@@ -423,14 +428,14 @@ void main() {
 #endif
 
 	// Direct/punctual lights: point, directional, and spot, e.g. a torch or a sun -- the
-	// osgx_ShadeDirect() CONTRACT (see the comment above this shader) does the per-light dispatch;
+	// osgx_DirectLighting() CONTRACT (see the comment above this shader) does the per-light dispatch;
 	// this shader only supplies N/V/worldPos/mat. Named distinctly from the diagnostics block's own
 	// invView/Nworld above so both compile together regardless of OSGX_PBRIBL_DIAGNOSTICS.
 	mat3 invViewRot = transpose(mat3(osg_ViewMatrix));
 	vec3 lightN = invViewRot * N;
 	vec3 lightV = invViewRot * V;
 	vec3 worldPos = (osg_ViewMatrixInverse * vec4(vPosition, 1.0)).xyz;
-	vec3 direct = osgx_ShadeDirect(lightN, lightV, worldPos, mat);
+	vec3 direct = osgx_DirectLighting(lightN, lightV, worldPos, mat);
 
 	vec3 color = surface + direct + emissive;
 
@@ -444,7 +449,7 @@ void main() {
 	}
 #endif
 
-	color = osgx_TonemapPBRNeutral(color);
+	color = osgx_Tonemap(color);
 	color = pow(color, vec3(1.0 / 2.2));
 
 	fragColor = vec4(color, alpha);
@@ -721,13 +726,23 @@ PBRIBLScene createPBRIBLScene(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::FULL_PBR_FRAGMENT_SHADER_SRC)
 	));
-	// osgx_ShadeDirect() CONTRACT's default definition -- a second, separately compiled FRAGMENT
+	// osgx_DirectLighting() CONTRACT's default definition -- a second, separately compiled FRAGMENT
 	// shader object with no main() of its own; GLSL cross-shader-object linking resolves the
-	// FULL_PBR_FRAGMENT_SHADER_SRC's forward-declared osgx_ShadeDirect() call against this at
-	// Program-link time. See PBR.hpp's LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT comment.
+	// FULL_PBR_FRAGMENT_SHADER_SRC's forward-declared osgx_DirectLighting() call against this at
+	// Program-link time. See PBR.hpp's DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT comment.
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
-		resolveShaderLibs(osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT)
+		resolveShaderLibs(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT)
+	));
+	// osgx_Tonemap() CONTRACT's default definition -- same pattern as DIRECT_LIGHTING_HOOK_DEFAULT
+	// above, a third, separately compiled FRAGMENT shader object with no main() of its own. See
+	// PBR.hpp's TONEMAP_DECL/TONEMAP_HOOK_DEFAULT comment. evaluateIBL()'s own diffuse/specular
+	// blend above is NOT routed through osgx_AmbientLighting() -- that hook's default is
+	// specular-only (no SH-9 diffuse yet), while this scene already has a real baked Lambertian
+	// diffuseEnv cubemap; adding that shader object here would just be dead code.
+	prog->addShader(new osg::Shader(
+		osg::Shader::FRAGMENT,
+		resolveShaderLibs(osgx::pbr::TONEMAP_HOOK_DEFAULT)
 	));
 
 	// resolveShaderLibs() expands the osgx snippet pragmas but preserves OSG's
@@ -748,10 +763,15 @@ PBRIBLScene createPBRIBLScene(
 	ss->addUniform(pis.iblSpecularIntensity);
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 
+	// foldZUpToGLTFAxis() (PBRIBL.hpp) -- pre-folds osgx_ZUpToGLTF's fixed permutation into each
+	// row here, once, so the shader's osgx_OrientIBL() can be called directly on a raw Z-up
+	// N_world/R at its real lighting call sites instead of composing two transforms per fragment.
 	auto* iblAxis = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblAxis", 3);
 
 	for(size_t i = 0; i < environment.iblAxis.size(); i++) {
-		iblAxis->setElement(static_cast<unsigned int>(i), environment.iblAxis[i]);
+		iblAxis->setElement(
+			static_cast<unsigned int>(i), foldZUpToGLTFAxis(environment.iblAxis[i])
+		);
 	}
 
 	ss->addUniform(iblAxis);

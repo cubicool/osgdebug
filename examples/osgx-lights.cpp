@@ -86,12 +86,12 @@ constexpr std::string_view FRAGMENT_SHADER = R"GLSL(
 const float PI = 3.14159265359;
 
 // This shader no longer touches lightCount/lightType/DIRECT_LIGHT/etc. directly -- it only needs
-// the osgx_ShadeDirect() CONTRACT declaration (LIGHT_SHADE_DECL) plus a call site. The actual
+// the osgx_DirectLighting() CONTRACT declaration (DIRECT_LIGHTING_DECL) plus a call site. The actual
 // per-light dispatch loop lives in a SEPARATE compiled shader object (see makeProgram() below,
-// DIRECT_LIGHT_HOOK_DEFAULT), linked in at Program-link time -- see PBR.hpp's own comment on
-// LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT for the full rationale (mirrors osgSlug's hook
+// DIRECT_LIGHTING_HOOK_DEFAULT), linked in at Program-link time -- see PBR.hpp's own comment on
+// DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT for the full rationale (mirrors osgSlug's hook
 // pattern). This is the validation vehicle for that new contract, live-tested 2026-08-16.
-#pragma osgx::pbr MATERIAL_STRUCT, LIGHT_SHADE_DECL
+#pragma osgx::pbr MATERIAL_STRUCT, DIRECT_LIGHTING_DECL
 
 in vec3 vNormal;
 in vec3 vPosition;
@@ -123,7 +123,7 @@ void main() {
 
 	vec3 color = ambientColor * ambientIntensity * mat.albedo * mat.ao;
 
-	color += osgx_ShadeDirect(N, V, worldPos, mat);
+	color += osgx_DirectLighting(N, V, worldPos, mat);
 
 	color = pow(clamp(color, vec3(0.0), vec3(1.0)), vec3(1.0 / 2.2));
 
@@ -139,14 +139,14 @@ osg::ref_ptr<osg::Program> makeProgram() {
 	// osgx::gltf::pbribl::createPBRIBLScene()'s own split (PBRIBL.cpp), which resolves its
 	// fragment shader but adds its vertex shader unchanged.
 	auto fragmentSrc = osgx::resolveShaderLibs(std::string(FRAGMENT_SHADER));
-	// The osgx_ShadeDirect() CONTRACT's default definition -- a second, separately compiled
+	// The osgx_DirectLighting() CONTRACT's default definition -- a second, separately compiled
 	// FRAGMENT shader object with no main() of its own, added alongside fragmentSrc above. GLSL
-	// cross-shader-object linking resolves fragmentSrc's forward-declared osgx_ShadeDirect() call
+	// cross-shader-object linking resolves fragmentSrc's forward-declared osgx_DirectLighting() call
 	// against this at Program-link time. Self-contained (carries its own #pragma), so it needs no
 	// further resolveShaderLibs() dependency wiring beyond this one call. Swap this shader object
-	// out for a different one (defining osgx_ShadeDirect() differently) to override direct-light
-	// shading without touching fragmentSrc at all -- see PBR.hpp's LIGHT_SHADE_DECL comment.
-	auto hookSrc = osgx::resolveShaderLibs(std::string(osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT));
+	// out for a different one (defining osgx_DirectLighting() differently) to override direct-light
+	// shading without touching fragmentSrc at all -- see PBR.hpp's DIRECT_LIGHTING_DECL comment.
+	auto hookSrc = osgx::resolveShaderLibs(std::string(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT));
 
 	program->setName("osgx_lights_demo");
 	program->addShader(new osg::Shader(osg::Shader::VERTEX, std::string(VERTEX_SHADER)));

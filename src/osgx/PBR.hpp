@@ -200,7 +200,7 @@ vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out v
 // inherited by every lit subgraph (dice, backdrop, whatever else) instead of wiring the same
 // uniforms into each shader by hand. OSGX_MAX_LIGHTS is a compile-time array bound, not a runtime
 // one -- osgx_lightCount (set at runtime, <= OSGX_MAX_LIGHTS) is what actually gates the loop a
-// caller (or DIRECT_LIGHT_HOOK_DEFAULT's osgx_ShadeDirect) writes over osgx_lights.
+// caller (or DIRECT_LIGHTING_HOOK_DEFAULT's osgx_DirectLighting) writes over osgx_lights.
 //
 // A single std430 buffer struct array replaces what used to be seven parallel flat uniform arrays
 // (lightPosIntensity/lightColor/lightType/lightDir/lightSpotAngles/lightSourceRadius plus
@@ -260,8 +260,8 @@ uniform int osgx_lightCount;
 // Combines osgx_DirectDiffuse + osgx_DirectSpecular into one per-light contribution against an
 // osgx_Material (MATERIAL_STRUCT) -- the "modular hook" createPBRIBLScene's own comment has been
 // waiting on: a caller loops `osgx_lightCount` times, calling osgx_PointLightRadiance for
-// L/radiance then this for the shaded result, and accumulates (or just calls osgx_ShadeDirect(),
-// see LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT below, which already does exactly that). Requires
+// L/radiance then this for the shaded result, and accumulates (or just calls osgx_DirectLighting(),
+// see DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT below, which already does exactly that). Requires
 // D_GGX/G_SCHLICK/G_SMITH/F_SCHLICK/DIRECT_SPECULAR/DIRECT_DIFFUSE/MATERIAL_STRUCT already in scope.
 inline constexpr const char* DIRECT_LIGHT = R"GLSL(
 vec3 osgx_DirectLight(vec3 N, vec3 V, vec3 L, vec3 radiance, osgx_Material mat) {
@@ -367,47 +367,47 @@ vec3 osgx_DirectLightSphere(
 }
 )GLSL";
 
-// osgx_ShadeDirect() CONTRACT -- the per-light dispatch loop above (LIGHT_UNIFORMS' osgx_lightCount/
+// osgx_DirectLighting() CONTRACT -- the per-light dispatch loop above (LIGHT_UNIFORMS' osgx_lightCount/
 // osgx_lights buffer array) factored out behind a single function boundary, instead of every consumer
 // hand-copying it into its own main() (PBRIBL.cpp's FULL_PBR_FRAGMENT_SHADER_SRC and
 // OpenSceneGraph.py's pyosg_dice.py both did exactly that, and the latter has already drifted out
 // of sync -- see osgx TODO.md). Follows the separate-compiled-shader-object "hook" pattern osgSlug
 // already uses to good effect (~/dev/osgSlug/src/Atlas.shaders.cpp's SHADER_NOOP_*_HOOK/HookList,
 // Atlas.cpp's createDefaultStateSet()): a consumer's OWN fragment shader only needs
-// LIGHT_SHADE_DECL spliced in (list MATERIAL_STRUCT earlier in the SAME pragma line -- this is a
+// DIRECT_LIGHTING_DECL spliced in (list MATERIAL_STRUCT earlier in the SAME pragma line -- this is a
 // bare forward declaration, osgx_Material must already be a known type) plus a call site
-// (`color += osgx_ShadeDirect(N, V, worldPos, mat);`); it never touches osgx_lightCount/osgx_lights/
+// (`color += osgx_DirectLighting(N, V, worldPos, mat);`); it never touches osgx_lightCount/osgx_lights/
 // DIRECT_LIGHT/DIRECT_LIGHT_SPHERE/etc. directly, and so can never drift out of sync with them the
-// way pyosg_dice.py's hand-copied loop did. The DEFINITION lives in DIRECT_LIGHT_HOOK_DEFAULT
+// way pyosg_dice.py's hand-copied loop did. The DEFINITION lives in DIRECT_LIGHTING_HOOK_DEFAULT
 // below, a fully self-contained, SEPARATELY compiled osg::Shader object added alongside the
 // consumer's own -- GLSL's ordinary cross-shader-object linking resolves the call at Program-link
 // time, exactly like osgSlug's SHADER_VERT calling osgSlug_Vertex(data) defined in a separate hook
 // shader object. A caller that genuinely needs different direct-light shading (not just different
 // material response, which osgx_Material/MATERIAL_STRUCT already covers) supplies its own shader
-// object defining osgx_ShadeDirect() instead of adding DIRECT_LIGHT_HOOK_DEFAULT -- same override
+// object defining osgx_DirectLighting() instead of adding DIRECT_LIGHTING_HOOK_DEFAULT -- same override
 // mechanism as osgSlug's HookList, minus the C++-side bookkeeping (a HookList-style helper plus the
 // Python binding are a deliberate follow-up, not done in this pass -- see TODO.md).
-inline constexpr const char* LIGHT_SHADE_DECL = R"GLSL(
-vec3 osgx_ShadeDirect(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat);
+inline constexpr const char* DIRECT_LIGHTING_DECL = R"GLSL(
+vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat);
 )GLSL";
 
 // Self-contained -- carries its own #version/PI/#pragma line so it compiles as a standalone
 // osg::Shader object regardless of what the consumer's own fragment shader happens to have in
 // scope. Add via:
 //   program->addShader(new osg::Shader(
-//     osg::Shader::FRAGMENT, osgx::resolveShaderLibs(osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT)
+//     osg::Shader::FRAGMENT, osgx::resolveShaderLibs(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT)
 //   ));
 // as an EXTRA shader object on the same Program that already has the consumer's own fragment
-// shader (which only needs LIGHT_SHADE_DECL + a call site, see above) -- not spliced by name via
+// shader (which only needs DIRECT_LIGHTING_DECL + a call site, see above) -- not spliced by name via
 // #pragma osgx::pbr, so it is deliberately NOT in registerShaderLibs()'s catalog.
-inline constexpr const char* DIRECT_LIGHT_HOOK_DEFAULT = R"GLSL(
+inline constexpr const char* DIRECT_LIGHTING_HOOK_DEFAULT = R"GLSL(
 #version 460 core
 
 const float PI = 3.14159265359;
 
 #pragma osgx::pbr MATERIAL_STRUCT, D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, DIRECT_SPECULAR, DIRECT_DIFFUSE, POINT_LIGHT_RADIANCE, LIGHT_UNIFORMS, DIRECT_LIGHT, DIRECTIONAL_LIGHT_RADIANCE, SPOT_LIGHT_RADIANCE, SPHERE_LIGHT_SPECULAR, DIRECT_LIGHT_SPHERE
 
-vec3 osgx_ShadeDirect(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
+vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 	vec3 color = vec3(0.0);
 
 	for(int i = 0; i < osgx_lightCount; i++) {
@@ -496,6 +496,52 @@ vec3 osgx_IBLSpecular(
 }
 )GLSL";
 
+// osgx_AmbientLighting() CONTRACT -- same "hook" pattern as osgx_DirectLighting() above (see its
+// own contract comment for the full rationale): a consumer's fragment shader only needs
+// AMBIENT_LIGHTING_DECL spliced in (list MATERIAL_STRUCT earlier in the SAME pragma line) plus a
+// call site (`color += osgx_AmbientLighting(N, V, mat, envMap, brdfLUT, envMaxMip, iblIntensity);`);
+// it never touches osgx_IBLSpecular/osgx_F_MultiScatter directly. The DEFINITION lives in
+// AMBIENT_LIGHTING_HOOK_DEFAULT below -- specular-only (no SH-9 diffuse irradiance yet, see
+// osgx::ibl TODO.md) -- a consumer wanting real diffuse IBL (PBRIBL.cpp's own evaluateIBL(), which
+// bakes a Lambertian irradiance cubemap and blends diffuse/specular against two independent
+// intensities) supplies its own shader object defining osgx_AmbientLighting() instead of adding
+// AMBIENT_LIGHTING_HOOK_DEFAULT -- same override mechanism, and why PBRIBL.cpp does not (yet) route
+// through this hook itself.
+inline constexpr const char* AMBIENT_LIGHTING_DECL = R"GLSL(
+vec3 osgx_AmbientLighting(
+	vec3 N,
+	vec3 V,
+	osgx_Material mat,
+	samplerCube envMap,
+	sampler2D brdfLUT,
+	float envMaxMip,
+	float intensity
+);
+)GLSL";
+
+// Self-contained -- carries its own #version/#pragma line so it compiles as a standalone
+// osg::Shader object regardless of what the consumer's own fragment shader happens to have in
+// scope. Add alongside DIRECT_LIGHTING_HOOK_DEFAULT (if also used) as another EXTRA shader object
+// on the same Program -- not spliced by name via #pragma osgx::pbr, so it is deliberately NOT in
+// registerShaderLibs()'s catalog.
+inline constexpr const char* AMBIENT_LIGHTING_HOOK_DEFAULT = R"GLSL(
+#version 460 core
+
+#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, IBL_SPECULAR
+
+vec3 osgx_AmbientLighting(
+	vec3 N,
+	vec3 V,
+	osgx_Material mat,
+	samplerCube envMap,
+	sampler2D brdfLUT,
+	float envMaxMip,
+	float intensity
+) {
+	return osgx_IBLSpecular(N, V, mat.F0, mat.roughness, envMap, brdfLUT, envMaxMip) * intensity;
+}
+)GLSL";
+
 // Geometric specular anti-aliasing (Tokuyoshi & Kaplanyan 2019 / Filament's normal filtering):
 // widens roughness where the shading normal changes rapidly across a pixel's screen-space
 // footprint, so a low-roughness, high-curvature surface (a beveled metal trim is the case that
@@ -538,6 +584,28 @@ vec3 osgx_TonemapPBRNeutral(vec3 color) {
 		color = mix(color, vec3(newPeak), g);
 	}
 	return clamp(color, 0.0, 1.0);
+}
+)GLSL";
+
+// osgx_Tonemap() CONTRACT -- same "hook" pattern as osgx_DirectLighting()/osgx_AmbientLighting()
+// above: a consumer's fragment shader only needs TONEMAP_DECL spliced in plus a call site
+// (`color = osgx_Tonemap(color);`) on its final linear color, before gamma. The DEFINITION lives
+// in TONEMAP_HOOK_DEFAULT below (osgx_TonemapPBRNeutral, unchanged) -- a consumer wanting a
+// different tone curve (ACES, a flat clamp, a look-specific LUT) supplies its own shader object
+// defining osgx_Tonemap() instead of adding TONEMAP_HOOK_DEFAULT.
+inline constexpr const char* TONEMAP_DECL = R"GLSL(
+vec3 osgx_Tonemap(vec3 color);
+)GLSL";
+
+// Self-contained, same shape as DIRECT_LIGHTING_HOOK_DEFAULT/AMBIENT_LIGHTING_HOOK_DEFAULT above --
+// not spliced by name via #pragma osgx::pbr, so deliberately NOT in registerShaderLibs()'s catalog.
+inline constexpr const char* TONEMAP_HOOK_DEFAULT = R"GLSL(
+#version 460 core
+
+#pragma osgx::pbr TONEMAP_PBR_NEUTRAL
+
+vec3 osgx_Tonemap(vec3 color) {
+	return osgx_TonemapPBRNeutral(color);
 }
 )GLSL";
 

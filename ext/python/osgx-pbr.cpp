@@ -28,32 +28,67 @@ void bind_pbr(py::module_& m_pbr) {
 	m_pbr.attr("DIRECT_LIGHT_SPHERE") = osgx::pbr::DIRECT_LIGHT_SPHERE;
 	m_pbr.attr("MAX_LIGHTS") = osgx::pbr::MAX_LIGHTS;
 	m_pbr.attr("LIGHT_STRUCT_FLOATS") = osgx::pbr::LIGHT_STRUCT_FLOATS;
-	m_pbr.attr("LIGHT_SHADE_DECL") = osgx::pbr::LIGHT_SHADE_DECL;
-	m_pbr.attr("DIRECT_LIGHT_HOOK_DEFAULT") = osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT;
+	m_pbr.attr("DIRECT_LIGHTING_DECL") = osgx::pbr::DIRECT_LIGHTING_DECL;
+	m_pbr.attr("DIRECT_LIGHTING_HOOK_DEFAULT") = osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT;
 	m_pbr.attr("F_MULTISCATTER") = osgx::pbr::F_MULTISCATTER;
 	m_pbr.attr("IBL_SPECULAR") = osgx::pbr::IBL_SPECULAR;
+	m_pbr.attr("AMBIENT_LIGHTING_DECL") = osgx::pbr::AMBIENT_LIGHTING_DECL;
+	m_pbr.attr("AMBIENT_LIGHTING_HOOK_DEFAULT") = osgx::pbr::AMBIENT_LIGHTING_HOOK_DEFAULT;
 	m_pbr.attr("TONEMAP_PBR_NEUTRAL") = osgx::pbr::TONEMAP_PBR_NEUTRAL;
+	m_pbr.attr("TONEMAP_DECL") = osgx::pbr::TONEMAP_DECL;
+	m_pbr.attr("TONEMAP_HOOK_DEFAULT") = osgx::pbr::TONEMAP_HOOK_DEFAULT;
 
 	m_pbr.def("snippets", &osgx::pbr::snippets);
 
-	// Assembles the osgx_ShadeDirect() CONTRACT's default definition as a standalone FRAGMENT
+	// Assembles the osgx_DirectLighting() CONTRACT's default definition as a standalone FRAGMENT
 	// osg::Shader, ready to add()/append() onto an osg::Program alongside a consumer's own
-	// fragment shader (which only needs LIGHT_SHADE_DECL spliced in via #pragma osgx::pbr, plus a
+	// fragment shader (which only needs DIRECT_LIGHTING_DECL spliced in via #pragma osgx::pbr, plus a
 	// call site) -- so a Python caller doesn't have to hand-assemble
-	// osg.Shader(osg.Shader.FRAGMENT, osgx.resolveShaderLibs(osgx.pbr.DIRECT_LIGHT_HOOK_DEFAULT))
-	// itself. See PBR.hpp's LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT comment for the full
+	// osg.Shader(osg.Shader.FRAGMENT, osgx.resolveShaderLibs(osgx.pbr.DIRECT_LIGHTING_HOOK_DEFAULT))
+	// itself. See PBR.hpp's DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT comment for the full
 	// rationale.
 	m_pbr.def(
-		"makeDirectLightHookShader",
+		"makeDirectLightingHookShader",
 		[]() {
 			return osg::ref_ptr<osg::Shader>(new osg::Shader(
 				osg::Shader::FRAGMENT,
-				osgx::resolveShaderLibs(std::string(osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT))
+				osgx::resolveShaderLibs(std::string(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT))
 			));
 		},
-		"Builds the osgx_ShadeDirect() CONTRACT's default-definition FRAGMENT shader object -- "
+		"Builds the osgx_DirectLighting() CONTRACT's default-definition FRAGMENT shader object -- "
 		"add it to a Program alongside a consumer fragment shader that only declares "
-		"LIGHT_SHADE_DECL plus a call site."
+		"DIRECT_LIGHTING_DECL plus a call site."
+	);
+
+	// osgx_AmbientLighting() CONTRACT's Python-side convenience -- same shape as
+	// makeDirectLightingHookShader() above. See PBR.hpp's AMBIENT_LIGHTING_DECL/
+	// AMBIENT_LIGHTING_HOOK_DEFAULT comment: specular-only default (no SH-9 diffuse yet).
+	m_pbr.def(
+		"makeAmbientLightingHookShader",
+		[]() {
+			return osg::ref_ptr<osg::Shader>(new osg::Shader(
+				osg::Shader::FRAGMENT,
+				osgx::resolveShaderLibs(std::string(osgx::pbr::AMBIENT_LIGHTING_HOOK_DEFAULT))
+			));
+		},
+		"Builds the osgx_AmbientLighting() CONTRACT's default-definition FRAGMENT shader object "
+		"(specular-only IBL, via osgx_IBLSpecular) -- add it to a Program alongside a consumer "
+		"fragment shader that only declares AMBIENT_LIGHTING_DECL plus a call site."
+	);
+
+	// osgx_Tonemap() CONTRACT's Python-side convenience -- same shape as
+	// makeDirectLightingHookShader() above. See PBR.hpp's TONEMAP_DECL/TONEMAP_HOOK_DEFAULT comment.
+	m_pbr.def(
+		"makeTonemapHookShader",
+		[]() {
+			return osg::ref_ptr<osg::Shader>(new osg::Shader(
+				osg::Shader::FRAGMENT,
+				osgx::resolveShaderLibs(std::string(osgx::pbr::TONEMAP_HOOK_DEFAULT))
+			));
+		},
+		"Builds the osgx_Tonemap() CONTRACT's default-definition FRAGMENT shader object "
+		"(osgx_TonemapPBRNeutral) -- add it to a Program alongside a consumer fragment shader "
+		"that only declares TONEMAP_DECL plus a call site."
 	);
 
 	py::class_<osgx::pbr::OrbitLightRig::Orbit>(m_pbr, "Orbit")
