@@ -463,7 +463,7 @@ void bind_core(py::module_& m) {
 	// osgx::pbr / osgx::ibl - ported from the STATIC path of pyosg-lighting/09-ibl.py and
 	// already proven in osgSlug's osgslug-pbr-ibl.cpp; the goal is for Python demos to reuse
 	// this toolkit (GLSL snippets + resolveShaderLibs() + the cubemap/BRDF-LUT/SH9 host-side
-	// helpers) instead of re-deriving the shader/UBO plumbing from scratch each time.
+	// helpers) instead of re-deriving the shader-buffer plumbing from scratch each time.
 	m.def(
 		"resolveShaderLibs",
 		&osgx::resolveShaderLibs,

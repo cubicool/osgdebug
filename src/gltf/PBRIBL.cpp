@@ -30,7 +30,7 @@ OSGX_ENABLE_WARNINGS
 
 // ================================================================================================
 // osgx::gltf::pbribl - the glue between the glTF loader material interface
-// and osgx::pbr's material-agnostic BRDF math: reads the UBO/texture-unit interface the C++ loader
+// and osgx::pbr's material-agnostic BRDF math: reads the material-buffer/texture-unit interface the C++ loader
 // populates per primitive into an osgx_Material (see osgx::pbr::MATERIAL_STRUCT), plus a couple
 // of small glTF-specific fragment helpers (shading normal, emissive, alpha coverage) that need
 // the same texture interface.
@@ -38,9 +38,9 @@ OSGX_ENABLE_WARNINGS
 // Candidates identified by porting OpenSceneGraph.py/examples/pyosg-lighting/09-ibl.py's material-
 // reading fragment code (getMaterial()/getShadingNormal()/getEmissive()/getAlphaCoverage()) down
 // to OpenSceneGraph.py/examples/pyosg-voxelize.py's trimmed no-IBL-required PBR fallback shader --
-// the same UBO-reading code was about to get copy-pasted a third time, which is exactly what
+// the same material-reading code was about to get copy-pasted a third time, which is exactly what
 // this adapter exists to avoid. Shader.hpp's MATERIAL_INPUTS is the fixed external interface (field
-// order/types must match Material.cpp's std140 layout exactly); everything else is GLSL glue.
+// order/types must match Material.cpp's layout exactly); everything else is GLSL glue.
 // ================================================================================================
 
 namespace osgx::gltf::pbribl {
@@ -210,7 +210,7 @@ namespace osgx::gltf::pbribl {
 //
 // IBL plus an optional handful of direct/punctual lights, via the osgx_ShadeDirect() CONTRACT
 // (LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT in PBR.hpp) -- one call
-// (`osgx_ShadeDirect(N, V, worldPos, mat)`) against osgx::pbr::LightSet's SSBO-backed light array
+// (`osgx_ShadeDirect(N, V, worldPos, mat)`) against osgx::pbr::LightSet's buffer-backed light array
 // (up to osgx::pbr::MAX_LIGHTS), instead of this shader hand-copying the per-light dispatch loop
 // itself (a prior revision did exactly that, and drifted out of sync with OpenSceneGraph.py's
 // pyosg_dice.py copy -- see TODO.md; both now share the one hook definition,

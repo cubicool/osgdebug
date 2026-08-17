@@ -119,8 +119,8 @@ void SkinPaletteCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 		GLTF_NOTIFY(1)
 			<< "updated skin[" << _skin->index << "] palette "
 			<< _skin->paletteMatrices->size()
-			<< " matrix/matrices at SSBO binding "
-			<< shader::JOINT_MATRICES_SSBO_BINDING << std::endl
+			<< " matrix/matrices at buffer binding "
+			<< shader::JOINT_MATRICES_BINDING << std::endl
 		;
 	}
 
@@ -288,7 +288,7 @@ void installSkinPaletteCallbacks(const std::vector<osg::ref_ptr<Skin>>& skins) {
 			skinnedNode->addUpdateCallback(new SkinPaletteCallback(skin));
 			skinnedNode->getOrCreateStateSet()->setAttributeAndModes(
 				new osg::ShaderStorageBufferBinding(
-					shader::JOINT_MATRICES_SSBO_BINDING,
+					shader::JOINT_MATRICES_BINDING,
 					skin->paletteMatrices,
 					0,
 					totalSize
@@ -301,7 +301,7 @@ void installSkinPaletteCallbacks(const std::vector<osg::ref_ptr<Skin>>& skins) {
 			GLTF_NOTIFY(1)
 				<< "installed skin[" << skin->index << "] palette callback on '"
 				<< skinnedNode->getName() << "'"
-				<< " SSBO binding=" << shader::JOINT_MATRICES_SSBO_BINDING
+				<< " buffer binding=" << shader::JOINT_MATRICES_BINDING
 				<< " bytes=" << totalSize << std::endl
 			;
 		}

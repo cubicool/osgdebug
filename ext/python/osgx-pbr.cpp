@@ -28,7 +28,6 @@ void bind_pbr(py::module_& m_pbr) {
 	m_pbr.attr("DIRECT_LIGHT_SPHERE") = osgx::pbr::DIRECT_LIGHT_SPHERE;
 	m_pbr.attr("MAX_LIGHTS") = osgx::pbr::MAX_LIGHTS;
 	m_pbr.attr("LIGHT_STRUCT_FLOATS") = osgx::pbr::LIGHT_STRUCT_FLOATS;
-	m_pbr.attr("LIGHT_SSBO_BINDING") = osgx::pbr::LIGHT_SSBO_BINDING;
 	m_pbr.attr("LIGHT_SHADE_DECL") = osgx::pbr::LIGHT_SHADE_DECL;
 	m_pbr.attr("DIRECT_LIGHT_HOOK_DEFAULT") = osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT;
 	m_pbr.attr("F_MULTISCATTER") = osgx::pbr::F_MULTISCATTER;

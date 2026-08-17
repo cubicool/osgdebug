@@ -50,7 +50,7 @@ void MaterialBuilder::applyMaterial(
 	const std::map<int, osg::Array*>& texCoordSets
 ) const {
 	// A primitive without a material uses glTF's defined default material;
-	// it must still receive this loader's material UBO and alpha state.
+	// it must still receive this loader's material buffer and alpha state.
 	// Returning early here previously left it with inherited/undefined state.
 	tinygltf::Material defaultMaterial;
 	const tinygltf::Material* material = &defaultMaterial;
@@ -445,14 +445,14 @@ void MaterialBuilder::applyMaterial(
 		}
 	}
 
-	// Export the material as a single osgx_gltf_Material UBO for downstream PBR shaders
+	// Export the material as a single osgx_gltf_Material buffer for downstream PBR shaders
 	// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field - this is
 	// this plugin's own extension to the material interface, not part of OSG's osg_*
 	// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
 	// with an unrelated shader's own material uniforms.
 	//
-	// std140 layout (must match the GLSL `layout(std140, binding = N) uniform
-	// osgx_gltf_Material { ... }` block exactly - see 09-ibl.py):
+	// std430 layout (must match the GLSL `layout(std430, binding = N) buffer
+	// osgx_gltf_Material { ... }` block exactly):
 	//
 	// vec4 baseColorFactor offset 0 (16 bytes)
 	// float roughnessFactor offset 16
@@ -482,11 +482,11 @@ void MaterialBuilder::applyMaterial(
 	(*materialData)[10] = 0.0f;
 	(*materialData)[11] = 0.0f;
 
-	materialData->setBufferObject(new osg::UniformBufferObject());
+	materialData->setBufferObject(new osg::ShaderStorageBufferObject());
 
 	geom->getOrCreateStateSet()->setAttributeAndModes(
-		new osg::UniformBufferBinding(
-			osgx::gltf::shader::MATERIAL_UBO_BINDING,
+		new osg::ShaderStorageBufferBinding(
+			osgx::gltf::shader::MATERIAL_BINDING,
 			materialData,
 			0,
 			static_cast<GLsizeiptr>(materialData->getTotalDataSize())

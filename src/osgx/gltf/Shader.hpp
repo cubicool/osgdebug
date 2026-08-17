@@ -22,9 +22,8 @@ inline constexpr char TANGENT_ATTRIBUTE_NAME[] = "osg_Tangent";
 inline constexpr char JOINT_INDICES_ATTRIBUTE_NAME[] = "osgx_gltf_JointIndices";
 inline constexpr char JOINT_WEIGHTS_ATTRIBUTE_NAME[] = "osgx_gltf_JointWeights";
 
-// UBO and SSBO binding points occupy separate OpenGL namespaces.
-inline constexpr unsigned int MATERIAL_UBO_BINDING = 0;
-inline constexpr unsigned int JOINT_MATRICES_SSBO_BINDING = 2;
+inline constexpr unsigned int MATERIAL_BINDING = 0;
+inline constexpr unsigned int JOINT_MATRICES_BINDING = 2;
 
 // Texture units populated per primitive by the loader.
 inline constexpr int BASE_COLOR_TEXTURE_UNIT = 0;
@@ -44,10 +43,10 @@ inline constexpr float ALPHA_MODE_OPAQUE = 0.0f;
 inline constexpr float ALPHA_MODE_MASK = 1.0f;
 inline constexpr float ALPHA_MODE_BLEND = 2.0f;
 
-// Canonical GLSL declaration matching the std140 data uploaded by the loader. osgx::gltf defines
+// Canonical GLSL declaration matching the data uploaded by the loader. osgx::gltf defines
 // this interface but deliberately does not impose a particular material or lighting shader.
 inline constexpr char MATERIAL_INPUTS[] = R"GLSL(
-layout(std140, binding = 0) uniform osgx_gltf_Material {
+layout(std430, binding = 0) readonly buffer osgx_gltf_Material {
 	vec4 baseColorFactor;
 	float roughnessFactor;
 	float metallicFactor;
@@ -73,11 +72,6 @@ inline void configureProgram(osg::Program& program) {
 	program.addBindAttribLocation(TANGENT_ATTRIBUTE_NAME, TANGENT_ATTRIBUTE);
 	program.addBindAttribLocation(JOINT_INDICES_ATTRIBUTE_NAME, JOINT_INDICES_ATTRIBUTE);
 	program.addBindAttribLocation(JOINT_WEIGHTS_ATTRIBUTE_NAME, JOINT_WEIGHTS_ATTRIBUTE);
-	// MATERIAL_INPUTS already hardcodes `layout(std140, binding = 0)` in GLSL, which GL 4.6
-	// honors directly -- this call doesn't change what binding is actually used, only silences
-	// OSG's own "uniform block ... has no binding" warning (Program.cpp checks its own separate
-	// C++-side registry, populated only via this call, regardless of what the shader source says).
-	program.addBindUniformBlock("osgx_gltf_Material", MATERIAL_UBO_BINDING);
 }
 
 inline void configureStateSet(osg::StateSet& stateSet) {

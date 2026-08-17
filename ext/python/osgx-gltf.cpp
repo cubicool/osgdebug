@@ -682,9 +682,6 @@ void bind_gltf(py::module_& m_gltf) {
 		py::str(osgx::gltf::shader::JOINT_INDICES_ATTRIBUTE_NAME);
 	m_gltf_shader.attr("JOINT_WEIGHTS_ATTRIBUTE_NAME") =
 		py::str(osgx::gltf::shader::JOINT_WEIGHTS_ATTRIBUTE_NAME);
-	m_gltf_shader.attr("MATERIAL_UBO_BINDING") = osgx::gltf::shader::MATERIAL_UBO_BINDING;
-	m_gltf_shader.attr("JOINT_MATRICES_SSBO_BINDING") =
-		osgx::gltf::shader::JOINT_MATRICES_SSBO_BINDING;
 	m_gltf_shader.attr("BASE_COLOR_TEXTURE_UNIT") = osgx::gltf::shader::BASE_COLOR_TEXTURE_UNIT;
 	m_gltf_shader.attr("NORMAL_TEXTURE_UNIT") = osgx::gltf::shader::NORMAL_TEXTURE_UNIT;
 	m_gltf_shader.attr("ORM_TEXTURE_UNIT") = osgx::gltf::shader::ORM_TEXTURE_UNIT;

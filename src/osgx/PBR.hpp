@@ -161,30 +161,28 @@ vec3 osgx_DirectDiffuse(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, vec
 }
 )GLSL";
 
-// Compile-time bound for LIGHT_UNIFORMS' GLSL SSBO array declaration below -- kept as a real C++
+// Compile-time bound for LIGHT_UNIFORMS' GLSL buffer array declaration below -- kept as a real C++
 // constant (not just a literal baked into the GLSL string) so callers can size a LightSet without
 // hardcoding a number that has to stay in sync by hand. If this changes, OSGX_MAX_LIGHTS inside
 // LIGHT_UNIFORMS must change with it. 6 covers a small handful of torchlights in one room without
 // over-provisioning the per-fragment loop.
 inline constexpr int MAX_LIGHTS = 6;
 
-// Size, in 4-byte floats, of one packed `osgx_Light` struct in LIGHT_UNIFORMS' std430 SSBO below
+// Size, in 4-byte floats, of one packed `osgx_Light` struct in LIGHT_UNIFORMS' std430 buffer below
 // (16 floats = 64 bytes) -- the C++-side stride LightSet's setters/getters index into `lights`
 // with. Must match the GLSL struct exactly; see LIGHT_UNIFORMS' own layout comment.
 inline constexpr std::size_t LIGHT_STRUCT_FLOATS = 16;
 
-// SSBO binding point for LIGHT_UNIFORMS' osgx_LightBuffer below. UBO and SSBO bindings occupy
-// separate OpenGL namespaces (same note as osgx::gltf::shader), but two SSBOs bound to the same
-// Program still must not collide with each other -- deliberately != osgx::gltf::shader::
-// JOINT_MATRICES_SSBO_BINDING (2), so a skinned glTF asset lit via osgx::pbr::LightSet can bind
-// both at once.
-inline constexpr unsigned int LIGHT_SSBO_BINDING = 3;
+// Binding point for LIGHT_UNIFORMS' osgx_LightBuffer below. It deliberately differs from
+// osgx::gltf::shader::JOINT_MATRICES_BINDING (2), so a skinned glTF asset lit via
+// osgx::pbr::LightSet can bind both at once.
+inline constexpr unsigned int LIGHT_BINDING = 3;
 
 // Punctual point-light radiance (glTF punctual-light convention: inverse-square falloff, no
 // artificial radius cutoff) plus the resulting light direction `L`, both needed by DIRECT_LIGHT
 // below. `posIntensity` is world-space position in .xyz and intensity in .w -- the exact packing
 // osgx::pbr::OrbitLightRig writes via LightSet::setPosition() into each osgx_Light's own
-// posIntensity field (LIGHT_UNIFORMS' SSBO struct below), so a caller wiring a static (e.g.
+// posIntensity field (LIGHT_UNIFORMS' buffer struct below), so a caller wiring a static (e.g.
 // torch-style) light just calls LightSet::setPoint() once instead of installing a NodeCallback.
 inline constexpr const char* POINT_LIGHT_RADIANCE = R"GLSL(
 vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out vec3 L) {
@@ -204,10 +202,10 @@ vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out v
 // one -- osgx_lightCount (set at runtime, <= OSGX_MAX_LIGHTS) is what actually gates the loop a
 // caller (or DIRECT_LIGHT_HOOK_DEFAULT's osgx_ShadeDirect) writes over osgx_lights.
 //
-// A single std430 SSBO struct array replaces what used to be seven parallel flat uniform arrays
+// A single std430 buffer struct array replaces what used to be seven parallel flat uniform arrays
 // (lightPosIntensity/lightColor/lightType/lightDir/lightSpotAngles/lightSourceRadius plus
-// lightCount) -- modeled on gltf::detail::Skin's paletteMatrices SSBO (a small, runtime-variable-
-// count array of structs), not Material.cpp's std140 UBO (small, FIXED-size, one-per-draw
+// lightCount) -- modeled on gltf::detail::Skin's paletteMatrices buffer (a small, runtime-variable-
+// count array of structs), not Material.cpp's fixed-size, one-per-draw
 // read-only data -- the right shape for a single material, not an array of lights). std430 (not
 // std140, which only applies to `uniform` blocks) is what actually buys the tighter packing here
 // -- no forced 16-byte rounding on scalar/vec2 array elements. Every uniform/block name below
@@ -250,7 +248,7 @@ struct osgx_Light {
 	vec2 _pad0;
 };
 
-// binding = 3 here must match LIGHT_SSBO_BINDING in C++ -- same hardcode-and-cross-reference
+// binding = 3 here must match LIGHT_BINDING in C++ -- same hardcode-and-cross-reference
 // pattern osgx::gltf::shader::MATERIAL_INPUTS uses for its own `binding = 0`.
 layout(std430, binding = 3) readonly buffer osgx_LightBuffer {
 	osgx_Light osgx_lights[OSGX_MAX_LIGHTS];
@@ -370,7 +368,7 @@ vec3 osgx_DirectLightSphere(
 )GLSL";
 
 // osgx_ShadeDirect() CONTRACT -- the per-light dispatch loop above (LIGHT_UNIFORMS' osgx_lightCount/
-// osgx_lights SSBO array) factored out behind a single function boundary, instead of every consumer
+// osgx_lights buffer array) factored out behind a single function boundary, instead of every consumer
 // hand-copying it into its own main() (PBRIBL.cpp's FULL_PBR_FRAGMENT_SHADER_SRC and
 // OpenSceneGraph.py's pyosg_dice.py both did exactly that, and the latter has already drifted out
 // of sync -- see osgx TODO.md). Follows the separate-compiled-shader-object "hook" pattern osgSlug
@@ -554,7 +552,7 @@ enum class LightType: int {
 	Spot = 2
 };
 
-// The static-position counterpart to OrbitLightRig below: owns/creates the LIGHT_UNIFORMS SSBO
+// The static-position counterpart to OrbitLightRig below: owns/creates the LIGHT_UNIFORMS buffer
 // buffer (+ its osgx_lightCount uniform) on a StateSet once and exposes typed setters/getters,
 // instead of a caller hand-writing the packed osgx_Light struct array themselves. A caller wiring
 // a fixed rig (wall torches, sconces, a sun, a flashlight) uses this directly; OrbitLightRig can
@@ -563,12 +561,12 @@ enum class LightType: int {
 struct LightSet {
 	osg::ref_ptr<osg::StateSet> ss;
 
-	// Allocates the SSBO buffer (size MAX_LIGHTS, zero-initialized) and installs it plus
+	// Allocates the buffer (size MAX_LIGHTS, zero-initialized) and installs it plus
 	// "osgx_lightCount" on `ss` -- osgx_lightCount starts at 0, so a freshly created LightSet
 	// lights nothing until setCount() and at least one setPoint/setDirectional/setSpot are called.
 	static LightSet create(osg::StateSet* ss);
 
-	// Whether this is a LightSet returned by create() whose StateSet and backing SSBO are still
+	// Whether this is a LightSet returned by create() whose StateSet and backing buffer are still
 	// available. A default-constructed LightSet is invalid until assigned the result of create().
 	bool valid() const;
 
@@ -633,7 +631,7 @@ struct LightSet {
 private:
 	// Backing store for every light's packed osgx_Light struct (MAX_LIGHTS * LIGHT_STRUCT_FLOATS
 	// floats, std430 layout -- see LIGHT_UNIFORMS' struct comment), bound to `ss` as a single
-	// ShaderStorageBufferObject at LIGHT_SSBO_BINDING. It stays private so it cannot be replaced
+	// ShaderStorageBufferObject at LIGHT_BINDING. It stays private so it cannot be replaced
 	// independently of that StateSet binding.
 	osg::ref_ptr<osg::FloatArray> _lights;
 
