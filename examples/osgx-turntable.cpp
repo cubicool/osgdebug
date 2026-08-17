@@ -38,7 +38,7 @@ OSGX_ENABLE_WARNINGS
 namespace {
 
 constexpr const char SKY_VERTEX_SHADER[] = R"GLSL(
-#version 330 core
+#version 430 core
 
 uniform mat4 osg_ProjectionMatrix;
 uniform mat4 osg_ViewMatrixInverse;
@@ -56,7 +56,7 @@ void main() {
 )GLSL";
 
 constexpr const char SKY_FRAGMENT_SHADER[] = R"GLSL(
-#version 330 core
+#version 430 core
 
 uniform samplerCube environmentMap;
 uniform int useEnvironmentMap;
@@ -122,7 +122,7 @@ void main() {
 )GLSL";
 
 constexpr const char INFINITE_FLOOR_VERTEX_SHADER[] = R"GLSL(
-#version 330 core
+#version 430 core
 
 uniform mat4 osg_ProjectionMatrix;
 uniform mat4 osg_ViewMatrixInverse;
@@ -150,7 +150,7 @@ void main() {
 )GLSL";
 
 constexpr const char INFINITE_FLOOR_FRAGMENT_SHADER[] = R"GLSL(
-#version 330 core
+#version 430 core
 
 uniform mat4 osg_ProjectionMatrix;
 uniform mat4 osg_ViewMatrix;

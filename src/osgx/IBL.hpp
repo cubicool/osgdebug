@@ -83,7 +83,7 @@ private:
 // ShaderLib` array below, which needs a genuine constant expression -- `inline constexpr` in a
 // header is the one form that satisfies both at once.
 inline constexpr const char* FULLSCREEN_VERT = R"GLSL(
-#version 330 core
+#version 430 core
 in vec4 osg_Vertex;
 in vec2 osg_MultiTexCoord0;
 out vec2 vUV;
@@ -97,7 +97,7 @@ void main() {
 // bake once. R channel = Fresnel scale, G channel = Fresnel bias; sampled in the consuming
 // shader as texture(brdfLUT, vec2(NdotV, roughness)).rg.
 inline constexpr const char* BRDF_LUT_FRAG = R"GLSL(
-#version 330 core
+#version 430 core
 const float PI = 3.14159265359;
 in vec2 vUV;
 out vec4 fragColor;

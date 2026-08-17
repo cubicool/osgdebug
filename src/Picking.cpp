@@ -23,7 +23,7 @@ namespace {
 
 // Core: declares the hook prototypes and provides the main() implementations.
 constexpr const char* PICK_VERT_CORE = R"GLSL(
-#version 330 core
+#version 430 core
 in vec4 osg_Vertex;
 uniform mat4 osg_ModelViewProjectionMatrix;
 void pickVertexHook();
@@ -34,7 +34,7 @@ void main() {
 )GLSL";
 
 constexpr const char* PICK_FRAG_CORE = R"GLSL(
-#version 330 core
+#version 430 core
 out vec4 fragColor;
 uint getPickID();
 void main() {
@@ -53,12 +53,19 @@ void main() {
 // Each osg::Shader source is compiled as its OWN translation unit (glCompileShader runs on
 // every shader object individually, before linking) -- GLSL requires #version to be the first
 // token if present at all, and defaults to 1.10 when absent. PICK_VERT_CORE/PICK_FRAG_CORE
-// above declare #version 330 core, but these hook strings didn't, so `uint` (GLSL 1.30+) failed
+// above declare #version 430 core, but these hook strings didn't, so `uint` (GLSL 1.30+) failed
 // to compile despite the core shaders being fine -- driver-dependent whether that's enforced
 // per-object or only at link time, which is why this didn't necessarily fail everywhere.
-constexpr const char* PICK_VERT_HOOK_NOOP = "#version 330 core\nvoid pickVertexHook() {}";
-constexpr const char* PICK_FRAG_HOOK_UNIFORM =
-	"#version 330 core\nuniform uint pickID; uint getPickID() { return pickID; }";
+constexpr const char* PICK_VERT_HOOK_NOOP = R"GLSL(
+#version 430 core
+void pickVertexHook() {}
+)GLSL";
+
+constexpr const char* PICK_FRAG_HOOK_UNIFORM = R"GLSL(
+#version 430 core
+uniform uint pickID;
+uint getPickID() { return pickID; }
+)GLSL";
 
 }
 

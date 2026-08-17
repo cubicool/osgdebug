@@ -27,7 +27,7 @@ namespace {
 // reconstructs a world-space camera ray, intersects that ray with z=0, then procedurally draws
 // grid lines at the hit point. There is no world-space quad to run out of.
 constexpr const char* INFINITE_FLOOR_VERTEX_SHADER = R"GLSL(
-#version 330 core
+#version 430 core
 
 uniform mat4 osg_ProjectionMatrix;
 uniform mat4 osg_ViewMatrixInverse;
@@ -54,7 +54,7 @@ void main() {
 )GLSL";
 
 constexpr const char* INFINITE_FLOOR_FRAGMENT_SHADER = R"GLSL(
-#version 330 core
+#version 430 core
 
 uniform mat4 osg_ProjectionMatrix;
 uniform mat4 osg_ViewMatrix;

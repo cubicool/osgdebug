@@ -32,7 +32,7 @@ OSGX_ENABLE_WARNINGS
 namespace {
 
 constexpr std::string_view VERTEX_SHADER = R"GLSL(
-#version 330 core
+#version 430 core
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
@@ -49,7 +49,7 @@ void main() {
 )GLSL";
 
 constexpr std::string_view FRAGMENT_SHADER = R"GLSL(
-#version 330 core
+#version 430 core
 
 in vec3 vNormal;
 

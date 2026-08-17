@@ -8,7 +8,7 @@ namespace {
 // logical canvas size. That keeps the grid's notion of "5 units apart" tied to the canvas the
 // caller specified, independent of how big the quad actually is in NDC/world.
 constexpr const char* GRID_VERTEX_SHADER = R"GLSL(
-#version 330 core
+#version 430 core
 
 uniform mat4 osg_ModelViewProjectionMatrix;
 uniform vec2 u_canvasSize;
@@ -26,7 +26,7 @@ void main(void) {
 )GLSL";
 
 constexpr const char* GRID_FRAGMENT_SHADER = R"GLSL(
-#version 330 core
+#version 430 core
 
 in vec2 gridPos;
 
