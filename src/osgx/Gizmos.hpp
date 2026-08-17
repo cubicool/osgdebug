@@ -38,28 +38,30 @@ public:
 	OSGX_META_Object(osgx_gizmo, LightMarkers)
 
 	LightMarkers() = default;
-	// `ss` must be the StateSet holding an osgx::pbr::LightSet's uniforms (LightSet::ss).
-	explicit LightMarkers(osg::StateSet* ss, float minMarkerRadius=0.05f, float spotConeLength=1.0f);
+	// `lights` is the live osgx::pbr::LightSet this marker set visualizes.
+	explicit LightMarkers(
+		const osgx::pbr::LightSet& lights, float minMarkerRadius=0.05f, float spotConeLength=1.0f
+	);
 	LightMarkers(const LightMarkers& rhs, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
 	osg::Group(rhs, co) {}
 
 private:
 	class UpdateCallback: public osg::NodeCallback {
 	public:
-		UpdateCallback(osg::StateSet* ss, float minMarkerRadius, float spotConeLength):
-		_ss(ss),
+		UpdateCallback(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength):
+		_lights(lights),
 		_minMarkerRadius(minMarkerRadius),
 		_spotConeLength(spotConeLength) {}
 
 		void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 
 	private:
-		osg::observer_ptr<osg::StateSet> _ss;
+		osgx::pbr::LightSet _lights;
 		float _minMarkerRadius;
 		float _spotConeLength;
 	};
 
-	void rebuild(osg::StateSet* ss, float minMarkerRadius, float spotConeLength);
+	void rebuild(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength);
 
 	osg::ref_ptr<osg::Geometry> _geometry;
 };
@@ -72,7 +74,7 @@ private:
 // from one hardcoded light_dir_u/light_color_u pair to LightSet's up-to-MAX_LIGHTS directional
 // slots. `scene`'s bounding sphere (computed once, at creation time, same as the Python original)
 // sizes and places every directional light's plane/arrow proportionally to the scene.
-osg::ref_ptr<osg::Camera> createDirectionalOverlay(osg::StateSet* ss, osg::Node* scene);
+osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& lights, osg::Node* scene);
 
 // Bundles both mechanisms -- one call for any osgx::pbr-lit scene using osgx::pbr::LightSet,
 // instead of a caller hand-wiring LightMarkers and createDirectionalOverlay separately into every

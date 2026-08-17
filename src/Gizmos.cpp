@@ -184,28 +184,20 @@ void buildSpotMarker(
 
 }
 
-LightMarkers::LightMarkers(osg::StateSet* ss, float minMarkerRadius, float spotConeLength) {
-	setUpdateCallback(new UpdateCallback(ss, minMarkerRadius, spotConeLength));
+LightMarkers::LightMarkers(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
+	setUpdateCallback(new UpdateCallback(lights, minMarkerRadius, spotConeLength));
 	setCullingActive(false);
 }
 
 void LightMarkers::UpdateCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
-	if(auto* markers = dynamic_cast<LightMarkers*>(node); markers && _ss.valid())
-		markers->rebuild(_ss.get(), _minMarkerRadius, _spotConeLength);
+	if(auto* markers = dynamic_cast<LightMarkers*>(node); markers && _lights.valid())
+		markers->rebuild(_lights, _minMarkerRadius, _spotConeLength);
 
 	traverse(node, nv);
 }
 
-void LightMarkers::rebuild(osg::StateSet* ss, float minMarkerRadius, float spotConeLength) {
-	auto* posU = ss->getUniform("lightPosIntensity");
-	auto* colorU = ss->getUniform("lightColor");
-	auto* typeU = ss->getUniform("lightType");
-	auto* dirU = ss->getUniform("lightDir");
-	auto* spotU = ss->getUniform("lightSpotAngles");
-	auto* radiusU = ss->getUniform("lightSourceRadius");
-	auto* countU = ss->getUniform("lightCount");
-
-	if(!posU || !colorU || !typeU || !dirU || !spotU || !radiusU || !countU) return;
+void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
+	if(!lights.valid()) return;
 
 	if(!_geometry) {
 		auto capacity = static_cast<unsigned int>(osgx::pbr::MAX_LIGHTS * detail::MAX_VERTS_PER_LIGHT);
@@ -235,10 +227,7 @@ void LightMarkers::rebuild(osg::StateSet* ss, float minMarkerRadius, float spotC
 		addChild(geode.get());
 	}
 
-	int count = 0;
-
-	countU->get(count);
-	count = std::clamp(count, 0, osgx::pbr::MAX_LIGHTS);
+	int count = std::clamp(lights.getCount(), 0, osgx::pbr::MAX_LIGHTS);
 
 	_geometry->removePrimitiveSet(0, _geometry->getNumPrimitiveSets());
 
@@ -246,27 +235,19 @@ void LightMarkers::rebuild(osg::StateSet* ss, float minMarkerRadius, float spotC
 	auto* colors = static_cast<osg::Vec3Array*>(_geometry->getVertexAttribArray(1));
 
 	for(int i = 0; i < count; i++) {
-		int type = 0;
-		osg::Vec4 posIntensity;
-		osg::Vec3 color;
-		float sourceRadius = 0.0f;
-
-		typeU->getElement(static_cast<unsigned int>(i), type);
-		posU->getElement(static_cast<unsigned int>(i), posIntensity);
-		colorU->getElement(static_cast<unsigned int>(i), color);
-		radiusU->getElement(static_cast<unsigned int>(i), sourceRadius);
+		auto index = static_cast<std::size_t>(i);
+		osgx::pbr::LightType type = lights.getType(index);
+		osg::Vec4 posIntensity = lights.getPosIntensity(index);
+		osg::Vec3 color = lights.getColor(index);
+		float sourceRadius = lights.getSourceRadius(index);
 
 		std::size_t slotStart = static_cast<std::size_t>(i) * static_cast<std::size_t>(detail::MAX_VERTS_PER_LIGHT);
 		osg::Vec3 c = detail::gizmoColor(color);
 		osg::Vec3 position(posIntensity.x(), posIntensity.y(), posIntensity.z());
 
-		if(type == static_cast<int>(osgx::pbr::LightType::Spot)) {
-			osg::Vec3 direction;
-			osg::Vec2 coneAngles;
-
-			dirU->getElement(static_cast<unsigned int>(i), direction);
-			spotU->getElement(static_cast<unsigned int>(i), coneAngles);
-
+		if(type == osgx::pbr::LightType::Spot) {
+			osg::Vec3 direction = lights.getDirection(index);
+			osg::Vec2 coneAngles = lights.getSpotAngles(index);
 			float outerAngle = std::acos(std::clamp(coneAngles.y(), -1.0f, 1.0f));
 
 			detail::buildSpotMarker(
@@ -275,7 +256,7 @@ void LightMarkers::rebuild(osg::StateSet* ss, float minMarkerRadius, float spotC
 			);
 		}
 
-		else if(type != static_cast<int>(osgx::pbr::LightType::Directional)) {
+		else if(type != osgx::pbr::LightType::Directional) {
 			float radius = std::max(sourceRadius, minMarkerRadius);
 
 			detail::buildPointMarker(verts, colors, _geometry.get(), slotStart, position, radius, c);
@@ -287,7 +268,7 @@ void LightMarkers::rebuild(osg::StateSet* ss, float minMarkerRadius, float spotC
 	_geometry->dirtyBound();
 }
 
-osg::ref_ptr<osg::Camera> createDirectionalOverlay(osg::StateSet* ss, osg::Node* scene) {
+osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& lights, osg::Node* scene) {
 	osg::BoundingSphere bound = scene ? scene->getBound() : osg::BoundingSphere(osg::Vec3(), 1.0f);
 	float boundRadius = bound.radius() > 0.0f ? bound.radius() : 1.0f;
 	osg::Vec3 boundCenter = bound.center();
@@ -333,13 +314,13 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(osg::StateSet* ss, osg::Node*
 	geode->addDrawable(geom.get());
 
 	struct DirectionalOverlayCallback: public osg::NodeCallback {
-		DirectionalOverlayCallback(osg::StateSet* lightSS, osg::Vec3 center, float planeHalf, float normalLen, float back, float wide):
-		_ss(lightSS), _center(center), _planeHalf(planeHalf), _normalLen(normalLen), _arrowBack(back), _arrowWidth(wide) {}
+		DirectionalOverlayCallback(const osgx::pbr::LightSet& lights, osg::Vec3 center, float planeHalf, float normalLen, float back, float wide):
+		_lights(lights), _center(center), _planeHalf(planeHalf), _normalLen(normalLen), _arrowBack(back), _arrowWidth(wide) {}
 
 		void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
 			auto* geode2 = dynamic_cast<osg::Geode*>(node);
 
-			if(!geode2 || geode2->getNumDrawables() == 0 || !_ss.valid()) {
+			if(!geode2 || geode2->getNumDrawables() == 0 || !_lights.valid()) {
 				traverse(node, nv);
 
 				return;
@@ -348,36 +329,19 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(osg::StateSet* ss, osg::Node*
 			auto* geom2 = static_cast<osg::Geometry*>(geode2->getDrawable(0));
 			auto* verts2 = static_cast<osg::Vec3Array*>(geom2->getVertexArray());
 			auto* colors2 = static_cast<osg::Vec3Array*>(geom2->getVertexAttribArray(1));
-			auto* typeU = _ss->getUniform("lightType");
-			auto* dirU = _ss->getUniform("lightDir");
-			auto* colorU = _ss->getUniform("lightColor");
-			auto* countU = _ss->getUniform("lightCount");
-
-			if(!typeU || !dirU || !colorU || !countU) {
-				traverse(node, nv);
-
-				return;
-			}
 
 			geom2->removePrimitiveSet(0, geom2->getNumPrimitiveSets());
 
-			int count = 0;
-
-			countU->get(count);
-			count = std::clamp(count, 0, osgx::pbr::MAX_LIGHTS);
+			int count = std::clamp(_lights.getCount(), 0, osgx::pbr::MAX_LIGHTS);
 
 			for(int i = 0; i < count; i++) {
-				int type = 0;
+				auto index = static_cast<std::size_t>(i);
+				osgx::pbr::LightType type = _lights.getType(index);
 
-				typeU->getElement(static_cast<unsigned int>(i), type);
+				if(type != osgx::pbr::LightType::Directional) continue;
 
-				if(type != static_cast<int>(osgx::pbr::LightType::Directional)) continue;
-
-				osg::Vec3 direction;
-				osg::Vec3 lightColorValue;
-
-				dirU->getElement(static_cast<unsigned int>(i), direction);
-				colorU->getElement(static_cast<unsigned int>(i), lightColorValue);
+				osg::Vec3 direction = _lights.getDirection(index);
+				osg::Vec3 lightColorValue = _lights.getColor(index);
 
 				// `direction` is the ray TRAVEL direction (light -> surface; see LIGHT_UNIFORMS'
 				// comment in PBR.hpp and osgx_DirectionalLightRadiance's `L = -normalize(direction)`
@@ -428,13 +392,13 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(osg::StateSet* ss, osg::Node*
 			traverse(node, nv);
 		}
 
-		osg::observer_ptr<osg::StateSet> _ss;
+		osgx::pbr::LightSet _lights;
 		osg::Vec3 _center;
 		float _planeHalf, _normalLen, _arrowBack, _arrowWidth;
 	};
 
 	geode->setUpdateCallback(
-		new DirectionalOverlayCallback(ss, boundCenter, planeHalfSize, normalLength, arrowBack, arrowWidth)
+		new DirectionalOverlayCallback(lights, boundCenter, planeHalfSize, normalLength, arrowBack, arrowWidth)
 	);
 
 	auto camera = osgx::make_ref<osg::Camera>();
@@ -456,8 +420,8 @@ LightGizmos createLightGizmos(
 ) {
 	LightGizmos gizmos;
 
-	gizmos.markers = osgx::make_ref<LightMarkers>(lights.ss.get(), minMarkerRadius, spotConeLength);
-	gizmos.overlay = createDirectionalOverlay(lights.ss.get(), scene);
+	gizmos.markers = osgx::make_ref<LightMarkers>(lights, minMarkerRadius, spotConeLength);
+	gizmos.overlay = createDirectionalOverlay(lights, scene);
 
 	return gizmos;
 }

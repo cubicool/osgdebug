@@ -208,20 +208,18 @@ namespace osgx::gltf::pbribl {
 // SH9 remains available as an independent osgx::ibl utility for callers that prefer its compact,
 // low-cost representation; it is deliberately not part of this reference-quality convenience path.
 //
-// IBL plus an optional handful of direct/punctual lights (LIGHT_UNIFORMS' lightCount/
-// lightPosIntensity/lightColor/lightType/lightDir/lightSpotAngles/lightSourceRadius, up to
-// osgx::pbr::MAX_LIGHTS). A prior revision carried one ad hoc direct light (lightPos/lightColor/
-// lightRadius uniforms); that was removed until osgx::pbr's *LightRig system (see OrbitLightRig
-// in PBR.hpp) was finished and could plug in here as a proper, modular hook instead of a second
-// hardcoded light source living next to it -- this is that hook. lightCount defaults to 0
-// (uniforms are zero-initialized by the driver when never set), so a caller that only wants IBL
-// sees no change; one that wants direct lights just sets osgx::pbr::LightSet's uniforms, here or
-// on an ancestor StateSet shared with whatever else should light identically (e.g. dice sharing a
-// scene's --scene backdrop, see OpenSceneGraph.py/examples/pyosg_dice.py's FRAGMENT_SHADER_IBL).
-// lightType picks the radiance function per light (point/directional/spot); a non-zero
-// lightSourceRadius on a point or spot switches its specular term to the representative-point
-// "sphere light" path (DIRECT_LIGHT_SPHERE) instead of adding a fourth light type -- see
-// LIGHT_UNIFORMS' own comment in PBR.hpp.
+// IBL plus an optional handful of direct/punctual lights, via the osgx_ShadeDirect() CONTRACT
+// (LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT in PBR.hpp) -- one call
+// (`osgx_ShadeDirect(N, V, worldPos, mat)`) against osgx::pbr::LightSet's SSBO-backed light array
+// (up to osgx::pbr::MAX_LIGHTS), instead of this shader hand-copying the per-light dispatch loop
+// itself (a prior revision did exactly that, and drifted out of sync with OpenSceneGraph.py's
+// pyosg_dice.py copy -- see TODO.md; both now share the one hook definition,
+// DIRECT_LIGHT_HOOK_DEFAULT, added as a second FRAGMENT osg::Shader object in
+// createPBRIBLScene() below). A LightSet's osgx_lightCount defaults to 0 (LightSet::create()
+// zero-initializes it), so a caller that only wants IBL sees no change; one that wants direct
+// lights just populates osgx::pbr::LightSet, here or on an ancestor StateSet shared with whatever
+// else should light identically (e.g. dice sharing a scene's --scene backdrop, see
+// OpenSceneGraph.py/examples/pyosg_dice.py's FRAGMENT_SHADER_IBL).
 // ================================================================================================
 
 namespace detail {
@@ -264,7 +262,7 @@ constexpr const char FULL_PBR_FRAGMENT_SHADER_SRC[] = R"GLSL(
 
 const float PI = 3.14159265359;
 
-#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_PBR_NEUTRAL, D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, DIRECT_SPECULAR, DIRECT_DIFFUSE, POINT_LIGHT_RADIANCE, LIGHT_UNIFORMS, DIRECT_LIGHT, DIRECTIONAL_LIGHT_RADIANCE, SPOT_LIGHT_RADIANCE, SPHERE_LIGHT_SPECULAR, DIRECT_LIGHT_SPHERE
+#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_PBR_NEUTRAL, LIGHT_SHADE_DECL
 #pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
 
 in vec3 vNGeom;
@@ -424,40 +422,15 @@ void main() {
 	emissive = (debugMode == 0 || debugMode == 14) ? emissive : vec3(0.0);
 #endif
 
-	// Direct/punctual lights (LIGHT_UNIFORMS): point, directional, and spot, e.g. a torch or a sun
-	// -- see the comment above this shader for the modular-hook history. Named distinctly from the
-	// diagnostics block's own invView/Nworld above so both compile together regardless of
-	// OSGX_PBRIBL_DIAGNOSTICS.
+	// Direct/punctual lights: point, directional, and spot, e.g. a torch or a sun -- the
+	// osgx_ShadeDirect() CONTRACT (see the comment above this shader) does the per-light dispatch;
+	// this shader only supplies N/V/worldPos/mat. Named distinctly from the diagnostics block's own
+	// invView/Nworld above so both compile together regardless of OSGX_PBRIBL_DIAGNOSTICS.
 	mat3 invViewRot = transpose(mat3(osg_ViewMatrix));
 	vec3 lightN = invViewRot * N;
 	vec3 lightV = invViewRot * V;
 	vec3 worldPos = (osg_ViewMatrixInverse * vec4(vPosition, 1.0)).xyz;
-	vec3 direct = vec3(0.0);
-
-	for(int i = 0; i < lightCount; i++) {
-		vec3 L;
-		vec3 radiance;
-
-		if(lightType[i] == OSGX_LIGHT_TYPE_DIRECTIONAL) {
-			radiance = osgx_DirectionalLightRadiance(lightDir[i], lightColor[i], lightPosIntensity[i].w, L);
-		} else if(lightType[i] == OSGX_LIGHT_TYPE_SPOT) {
-			radiance = osgx_SpotLightRadiance(
-				lightPosIntensity[i], lightColor[i], lightDir[i], lightSpotAngles[i], worldPos, L
-			);
-		} else {
-			radiance = osgx_PointLightRadiance(lightPosIntensity[i], lightColor[i], worldPos, L);
-		}
-
-		// A directional light has no position, so the representative-point "sphere" path (which
-		// needs a light-to-shading-point vector) does not apply to it.
-		if(lightSourceRadius[i] > 0.0 && lightType[i] != OSGX_LIGHT_TYPE_DIRECTIONAL) {
-			direct += osgx_DirectLightSphere(
-				lightN, lightV, L, lightPosIntensity[i].xyz - worldPos, radiance, mat, lightSourceRadius[i]
-			);
-		} else {
-			direct += osgx_DirectLight(lightN, lightV, L, radiance, mat);
-		}
-	}
+	vec3 direct = osgx_ShadeDirect(lightN, lightV, worldPos, mat);
 
 	vec3 color = surface + direct + emissive;
 
@@ -747,6 +720,14 @@ PBRIBLScene createPBRIBLScene(
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::FULL_PBR_FRAGMENT_SHADER_SRC)
+	));
+	// osgx_ShadeDirect() CONTRACT's default definition -- a second, separately compiled FRAGMENT
+	// shader object with no main() of its own; GLSL cross-shader-object linking resolves the
+	// FULL_PBR_FRAGMENT_SHADER_SRC's forward-declared osgx_ShadeDirect() call against this at
+	// Program-link time. See PBR.hpp's LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT comment.
+	prog->addShader(new osg::Shader(
+		osg::Shader::FRAGMENT,
+		resolveShaderLibs(osgx::pbr::DIRECT_LIGHT_HOOK_DEFAULT)
 	));
 
 	// resolveShaderLibs() expands the osgx snippet pragmas but preserves OSG's

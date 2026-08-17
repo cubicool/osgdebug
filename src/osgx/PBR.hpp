@@ -5,6 +5,7 @@
 
 OSGX_DISABLE_WARNINGS
 
+#include <osg/Array>
 #include <osg/NodeCallback>
 #include <osg/NodeVisitor>
 #include <osg/StateSet>
@@ -160,21 +161,31 @@ vec3 osgx_DirectDiffuse(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, vec
 }
 )GLSL";
 
-// Compile-time bound for LIGHT_UNIFORMS' GLSL array declarations below -- kept as a real C++
-// constant (not just a literal baked into the GLSL string) so a Python caller sizing its own
-// osg.Uniform(..., count) can read osgx.pbr.MAX_LIGHTS instead of hardcoding a number that has
-// to stay in sync by hand. If this changes, OSGX_MAX_LIGHTS inside LIGHT_UNIFORMS must change
-// with it. 6 covers a small handful of torchlights in one room without over-provisioning the
-// per-fragment loop.
+// Compile-time bound for LIGHT_UNIFORMS' GLSL SSBO array declaration below -- kept as a real C++
+// constant (not just a literal baked into the GLSL string) so callers can size a LightSet without
+// hardcoding a number that has to stay in sync by hand. If this changes, OSGX_MAX_LIGHTS inside
+// LIGHT_UNIFORMS must change with it. 6 covers a small handful of torchlights in one room without
+// over-provisioning the per-fragment loop.
 inline constexpr int MAX_LIGHTS = 6;
+
+// Size, in 4-byte floats, of one packed `osgx_Light` struct in LIGHT_UNIFORMS' std430 SSBO below
+// (16 floats = 64 bytes) -- the C++-side stride LightSet's setters/getters index into `lights`
+// with. Must match the GLSL struct exactly; see LIGHT_UNIFORMS' own layout comment.
+inline constexpr std::size_t LIGHT_STRUCT_FLOATS = 16;
+
+// SSBO binding point for LIGHT_UNIFORMS' osgx_LightBuffer below. UBO and SSBO bindings occupy
+// separate OpenGL namespaces (same note as osgx::gltf::shader), but two SSBOs bound to the same
+// Program still must not collide with each other -- deliberately != osgx::gltf::shader::
+// JOINT_MATRICES_SSBO_BINDING (2), so a skinned glTF asset lit via osgx::pbr::LightSet can bind
+// both at once.
+inline constexpr unsigned int LIGHT_SSBO_BINDING = 3;
 
 // Punctual point-light radiance (glTF punctual-light convention: inverse-square falloff, no
 // artificial radius cutoff) plus the resulting light direction `L`, both needed by DIRECT_LIGHT
 // below. `posIntensity` is world-space position in .xyz and intensity in .w -- the exact packing
-// osgx::pbr::OrbitLightRig already animates into its own "lightPosIntensity" uniform array, so a
-// caller wiring a static (e.g. torch-style) light just writes that same vec4 once instead of
-// installing a NodeCallback. `color` is a sibling per-light tint kept as a separate array uniform
-// so OrbitLightRig's existing vec4 contract doesn't change.
+// osgx::pbr::OrbitLightRig writes via LightSet::setPosition() into each osgx_Light's own
+// posIntensity field (LIGHT_UNIFORMS' SSBO struct below), so a caller wiring a static (e.g.
+// torch-style) light just calls LightSet::setPoint() once instead of installing a NodeCallback.
 inline constexpr const char* POINT_LIGHT_RADIANCE = R"GLSL(
 vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out vec3 L) {
 	vec3 toLight = posIntensity.xyz - worldPos;
@@ -186,44 +197,74 @@ vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out v
 }
 )GLSL";
 
-// Uniform declarations shared by every consumer of DIRECT_LIGHT/POINT_LIGHT_RADIANCE below -- one
-// contract, so a caller can set "lightCount"/"lightPosIntensity"/"lightColor" once on an ancestor
-// StateSet and have it inherited by every lit subgraph (dice, backdrop, whatever else) instead of
-// wiring the same three uniforms into each shader by hand. OSGX_MAX_LIGHTS is a compile-time array
-// bound, not a runtime one -- lightCount (set at runtime, <= OSGX_MAX_LIGHTS) is what actually
-// gates the loop a caller writes over these arrays.
+// Declarations shared by every consumer of DIRECT_LIGHT/POINT_LIGHT_RADIANCE below -- one
+// contract, so a caller can populate one osgx::pbr::LightSet on an ancestor StateSet and have it
+// inherited by every lit subgraph (dice, backdrop, whatever else) instead of wiring the same
+// uniforms into each shader by hand. OSGX_MAX_LIGHTS is a compile-time array bound, not a runtime
+// one -- osgx_lightCount (set at runtime, <= OSGX_MAX_LIGHTS) is what actually gates the loop a
+// caller (or DIRECT_LIGHT_HOOK_DEFAULT's osgx_ShadeDirect) writes over osgx_lights.
 //
-// lightType/lightDir/lightSpotAngles/lightSourceRadius are additive -- every existing consumer
-// (the point-light-only dice torch rig, osgx-gltf-viewer) never sets them, so they zero-init to
-// OSGX_LIGHT_TYPE_POINT / 0 / 0 / 0.0, which is exactly today's point-light behavior. A per-light
-// `type` (LightType in C++ below) picks the radiance function (POINT_LIGHT_RADIANCE/
-// DIRECTIONAL_LIGHT_RADIANCE/SPOT_LIGHT_RADIANCE); lightSourceRadius is deliberately NOT a fourth
-// "sphere" type -- it is a physical-size knob on a point or spot light (0 = the ideal Dirac-delta
-// case), matching how a sphere light actually differs from a point light: same inverse-square
-// falloff, only the specular highlight's shape changes (see DIRECT_LIGHT_SPHERE below). This is
-// unrelated to the "no artificial radius cutoff" decision noted on POINT_LIGHT_RADIANCE above --
-// that was about attenuation distance (deliberately not reintroduced here); this is about
-// physical light size.
+// A single std430 SSBO struct array replaces what used to be seven parallel flat uniform arrays
+// (lightPosIntensity/lightColor/lightType/lightDir/lightSpotAngles/lightSourceRadius plus
+// lightCount) -- modeled on gltf::detail::Skin's paletteMatrices SSBO (a small, runtime-variable-
+// count array of structs), not Material.cpp's std140 UBO (small, FIXED-size, one-per-draw
+// read-only data -- the right shape for a single material, not an array of lights). std430 (not
+// std140, which only applies to `uniform` blocks) is what actually buys the tighter packing here
+// -- no forced 16-byte rounding on scalar/vec2 array elements. Every uniform/block name below
+// carries the `osgx_` prefix (2026-08-16 rename) to avoid collision with an unrelated consumer
+// shader's own similarly-named uniforms, matching the rest of this catalog (osgx_Material,
+// osgx_DirectLight, etc.).
+//
+// Packed layout of one osgx_Light (std430; 16 floats / 64 bytes -- must match
+// LIGHT_STRUCT_FLOATS and the float offsets LightSet's setters/getters use in PBR.cpp):
+//   vec4  posIntensity   offset  0  (xyz = world-space position, w = intensity)
+//   vec3  color          offset 16
+//   int   type           offset 28  (OSGX_LIGHT_TYPE_* below)
+//   vec3  dir            offset 32  (ray travel direction, KHR_lights_punctual convention)
+//   float sourceRadius   offset 44  (0 = ideal point/spot; >0 = "sphere" specular widening)
+//   vec2  spotAngles     offset 48  (cos(inner), cos(outer))
+//   ...   padding        offset 56  (rounds the struct to a multiple of 16)
+//
+// type/dir/sourceRadius/spotAngles are additive -- a caller that only ever calls setPoint() with
+// sourceRadius=0 gets exactly today's point-light behavior. A per-light `type` (LightType in C++
+// below) picks the radiance function (POINT_LIGHT_RADIANCE/DIRECTIONAL_LIGHT_RADIANCE/
+// SPOT_LIGHT_RADIANCE); sourceRadius is deliberately NOT a fourth "sphere" type -- it is a
+// physical-size knob on a point or spot light, matching how a sphere light actually differs from
+// a point light: same inverse-square falloff, only the specular highlight's shape changes (see
+// DIRECT_LIGHT_SPHERE below). This is unrelated to the "no artificial radius cutoff" decision
+// noted on POINT_LIGHT_RADIANCE above -- that was about attenuation distance (deliberately not
+// reintroduced here); this is about physical light size.
 inline constexpr const char* LIGHT_UNIFORMS = R"GLSL(
 #define OSGX_MAX_LIGHTS 6
 #define OSGX_LIGHT_TYPE_POINT 0
 #define OSGX_LIGHT_TYPE_DIRECTIONAL 1
 #define OSGX_LIGHT_TYPE_SPOT 2
 
-uniform int lightCount;
-uniform vec4 lightPosIntensity[OSGX_MAX_LIGHTS];
-uniform vec3 lightColor[OSGX_MAX_LIGHTS];
-uniform int lightType[OSGX_MAX_LIGHTS];
-uniform vec3 lightDir[OSGX_MAX_LIGHTS];
-uniform vec2 lightSpotAngles[OSGX_MAX_LIGHTS];
-uniform float lightSourceRadius[OSGX_MAX_LIGHTS];
+struct osgx_Light {
+	vec4 posIntensity;
+	vec3 color;
+	int type;
+	vec3 dir;
+	float sourceRadius;
+	vec2 spotAngles;
+	vec2 _pad0;
+};
+
+// binding = 3 here must match LIGHT_SSBO_BINDING in C++ -- same hardcode-and-cross-reference
+// pattern osgx::gltf::shader::MATERIAL_INPUTS uses for its own `binding = 0`.
+layout(std430, binding = 3) readonly buffer osgx_LightBuffer {
+	osgx_Light osgx_lights[OSGX_MAX_LIGHTS];
+};
+
+uniform int osgx_lightCount;
 )GLSL";
 
 // Combines osgx_DirectDiffuse + osgx_DirectSpecular into one per-light contribution against an
 // osgx_Material (MATERIAL_STRUCT) -- the "modular hook" createPBRIBLScene's own comment has been
-// waiting on: a caller loops `lightCount` times, calling osgx_PointLightRadiance for L/radiance
-// then this for the shaded result, and accumulates. Requires D_GGX/G_SCHLICK/G_SMITH/F_SCHLICK/
-// DIRECT_SPECULAR/DIRECT_DIFFUSE/MATERIAL_STRUCT already in scope.
+// waiting on: a caller loops `osgx_lightCount` times, calling osgx_PointLightRadiance for
+// L/radiance then this for the shaded result, and accumulates (or just calls osgx_ShadeDirect(),
+// see LIGHT_SHADE_DECL/DIRECT_LIGHT_HOOK_DEFAULT below, which already does exactly that). Requires
+// D_GGX/G_SCHLICK/G_SMITH/F_SCHLICK/DIRECT_SPECULAR/DIRECT_DIFFUSE/MATERIAL_STRUCT already in scope.
 inline constexpr const char* DIRECT_LIGHT = R"GLSL(
 vec3 osgx_DirectLight(vec3 N, vec3 V, vec3 L, vec3 radiance, osgx_Material mat) {
 	float NdotV = max(dot(N, V), 0.0);
@@ -328,8 +369,8 @@ vec3 osgx_DirectLightSphere(
 }
 )GLSL";
 
-// osgx_ShadeDirect() CONTRACT -- the per-light dispatch loop above (LIGHT_UNIFORMS' lightCount/
-// lightType/... arrays) factored out behind a single function boundary, instead of every consumer
+// osgx_ShadeDirect() CONTRACT -- the per-light dispatch loop above (LIGHT_UNIFORMS' osgx_lightCount/
+// osgx_lights SSBO array) factored out behind a single function boundary, instead of every consumer
 // hand-copying it into its own main() (PBRIBL.cpp's FULL_PBR_FRAGMENT_SHADER_SRC and
 // OpenSceneGraph.py's pyosg_dice.py both did exactly that, and the latter has already drifted out
 // of sync -- see osgx TODO.md). Follows the separate-compiled-shader-object "hook" pattern osgSlug
@@ -337,7 +378,7 @@ vec3 osgx_DirectLightSphere(
 // Atlas.cpp's createDefaultStateSet()): a consumer's OWN fragment shader only needs
 // LIGHT_SHADE_DECL spliced in (list MATERIAL_STRUCT earlier in the SAME pragma line -- this is a
 // bare forward declaration, osgx_Material must already be a known type) plus a call site
-// (`color += osgx_ShadeDirect(N, V, worldPos, mat);`); it never touches lightType/lightCount/
+// (`color += osgx_ShadeDirect(N, V, worldPos, mat);`); it never touches osgx_lightCount/osgx_lights/
 // DIRECT_LIGHT/DIRECT_LIGHT_SPHERE/etc. directly, and so can never drift out of sync with them the
 // way pyosg_dice.py's hand-copied loop did. The DEFINITION lives in DIRECT_LIGHT_HOOK_DEFAULT
 // below, a fully self-contained, SEPARATELY compiled osg::Shader object added alongside the
@@ -371,23 +412,24 @@ const float PI = 3.14159265359;
 vec3 osgx_ShadeDirect(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 	vec3 color = vec3(0.0);
 
-	for(int i = 0; i < lightCount; i++) {
+	for(int i = 0; i < osgx_lightCount; i++) {
+		osgx_Light light = osgx_lights[i];
 		vec3 L;
 		vec3 radiance;
 
-		if(lightType[i] == OSGX_LIGHT_TYPE_DIRECTIONAL) {
-			radiance = osgx_DirectionalLightRadiance(lightDir[i], lightColor[i], lightPosIntensity[i].w, L);
-		} else if(lightType[i] == OSGX_LIGHT_TYPE_SPOT) {
+		if(light.type == OSGX_LIGHT_TYPE_DIRECTIONAL) {
+			radiance = osgx_DirectionalLightRadiance(light.dir, light.color, light.posIntensity.w, L);
+		} else if(light.type == OSGX_LIGHT_TYPE_SPOT) {
 			radiance = osgx_SpotLightRadiance(
-				lightPosIntensity[i], lightColor[i], lightDir[i], lightSpotAngles[i], worldPos, L
+				light.posIntensity, light.color, light.dir, light.spotAngles, worldPos, L
 			);
 		} else {
-			radiance = osgx_PointLightRadiance(lightPosIntensity[i], lightColor[i], worldPos, L);
+			radiance = osgx_PointLightRadiance(light.posIntensity, light.color, worldPos, L);
 		}
 
-		if(lightSourceRadius[i] > 0.0 && lightType[i] != OSGX_LIGHT_TYPE_DIRECTIONAL) {
+		if(light.sourceRadius > 0.0 && light.type != OSGX_LIGHT_TYPE_DIRECTIONAL) {
 			color += osgx_DirectLightSphere(
-				N, V, L, lightPosIntensity[i].xyz - worldPos, radiance, mat, lightSourceRadius[i]
+				N, V, L, light.posIntensity.xyz - worldPos, radiance, mat, light.sourceRadius
 			);
 		} else {
 			color += osgx_DirectLight(N, V, L, radiance, mat);
@@ -501,65 +543,40 @@ vec3 osgx_TonemapPBRNeutral(vec3 color) {
 }
 )GLSL";
 
-// Animates a handful of point lights orbiting a center point, writing world-space
-// position+intensity into a vec4 array uniform ("lightPosIntensity" by default) every update
-// traversal -- the motion is what confirms N/V/specular are wired correctly rather than just a
-// static flat-shaded color. Install as the update callback on whichever node the lit shape hangs
-// from; `ss` must be the StateSet holding that uniform (array size >= orbits.size()).
-//
-// Reusable across any osgx::pbr-lit scene -- configure `center`/`orbits`/`intensity` per use
-// instead of copying this callback into each consumer.
-struct OrbitLightRig: public osg::NodeCallback {
-	struct Orbit {
-		float radius, height, speed, phase, intensity;
-	};
-
-	osg::ref_ptr<osg::StateSet> ss;
-	osg::Vec3 center{0.0f, 0.0f, 0.0f};
-	float intensity = 1.0f; // global scale, e.g. a --light-intensity CLI flag
-	std::string uniformName = "lightPosIntensity";
-
-	// Default rig: (orbit radius, height above center, angular speed, phase, per-orbit intensity).
-	// Matches the original osgslug-pbr-ibl.cpp badge rig; override for a different look.
-	std::vector<Orbit> orbits = {
-		{0.55f, 0.70f, 0.50f, 0.0f, 1.00f},
-		{0.70f, 0.90f, -0.33f, 2.1f, 0.75f},
-		{0.45f, 0.50f, 0.80f, 4.2f, 0.50f},
-	};
-
-	void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
-};
-
-// Selects the radiance function LIGHT_UNIFORMS' `lightType[i]` picks in the fragment shader loop
-// (OSGX_LIGHT_TYPE_* above) -- kept as a real C++ enum, not just the raw int a caller would
-// otherwise have to remember, same reasoning as MAX_LIGHTS. Deliberately no `Sphere` member: a
-// sphere light is a Point or Spot light with a non-zero LightSet::setPoint/setSpot `sourceRadius`,
-// not a fourth branch (see LIGHT_UNIFORMS' own comment for why).
+// Selects the radiance function LIGHT_UNIFORMS' `osgx_lights[i].type` picks in the fragment
+// shader loop (OSGX_LIGHT_TYPE_* above) -- kept as a real C++ enum, not just the raw int a caller
+// would otherwise have to remember, same reasoning as MAX_LIGHTS. Deliberately no `Sphere` member:
+// a sphere light is a Point or Spot light with a non-zero LightSet::setPoint/setSpot
+// `sourceRadius`, not a fourth branch (see LIGHT_UNIFORMS' own comment for why).
 enum class LightType: int {
 	Point = 0,
 	Directional = 1,
 	Spot = 2
 };
 
-// The static-position counterpart to OrbitLightRig above: owns/creates every LIGHT_UNIFORMS array
-// on a StateSet once and exposes typed setters, instead of a caller hand-writing five parallel
-// osg::Uniform arrays (lightType/lightPosIntensity/lightColor/lightDir/lightSpotAngles/
-// lightSourceRadius) themselves. A caller wiring a fixed rig (wall torches, sconces, a sun, a
-// flashlight) uses this directly; OrbitLightRig can still animate on top of the SAME StateSet/
-// uniform names for the subset of lights that should orbit -- the two are complementary, not
-// alternatives.
+// The static-position counterpart to OrbitLightRig below: owns/creates the LIGHT_UNIFORMS SSBO
+// buffer (+ its osgx_lightCount uniform) on a StateSet once and exposes typed setters/getters,
+// instead of a caller hand-writing the packed osgx_Light struct array themselves. A caller wiring
+// a fixed rig (wall torches, sconces, a sun, a flashlight) uses this directly; OrbitLightRig can
+// still animate a light's position on top of the SAME LightSet for the subset of lights that
+// should orbit -- the two are complementary, not alternatives.
 struct LightSet {
 	osg::ref_ptr<osg::StateSet> ss;
 
-	// Allocates and installs all six LIGHT_UNIFORMS arrays (size MAX_LIGHTS) on `ss`, each
-	// zero-initialized -- lightCount starts at 0, so a freshly created LightSet lights nothing
-	// until setCount() and at least one setPoint/setDirectional/setSpot are called.
+	// Allocates the SSBO buffer (size MAX_LIGHTS, zero-initialized) and installs it plus
+	// "osgx_lightCount" on `ss` -- osgx_lightCount starts at 0, so a freshly created LightSet
+	// lights nothing until setCount() and at least one setPoint/setDirectional/setSpot are called.
 	static LightSet create(osg::StateSet* ss);
 
-	// `const` -- these mutate the StateSet `ss` points at, not any member of LightSet itself
-	// (`ss` is a handle, same reasoning as a `shared_ptr`'s pointee-mutating operations being
-	// const). Lets a LightSet captured by value into a `const`-qualified lambda (e.g. an ordinary,
-	// non-`mutable` event-handler callback) still call these directly.
+	// Whether this is a LightSet returned by create() whose StateSet and backing SSBO are still
+	// available. A default-constructed LightSet is invalid until assigned the result of create().
+	bool valid() const;
+
+	// `const` -- these mutate the buffer/StateSet `ss`/`lights` point at, not any member of
+	// LightSet itself (both are handles, same reasoning as a `shared_ptr`'s pointee-mutating
+	// operations being const). Lets a LightSet captured by value into a `const`-qualified lambda
+	// (e.g. an ordinary, non-`mutable` event-handler callback) still call these directly.
+	// Every index must be less than MAX_LIGHTS; otherwise the setter/getter throws std::out_of_range.
 	//
 	// `sourceRadius` > 0 switches this light's specular term to the representative-point path
 	// (DIRECT_LIGHT_SPHERE) -- this is what makes it read as a "sphere" light instead of an ideal
@@ -582,7 +599,7 @@ struct LightSet {
 	) const;
 
 	// `innerConeAngle`/`outerConeAngle` are in radians, matching KHR_lights_punctual; converted to
-	// the shader's pre-cosined lightSpotAngles here so the fragment shader never calls acos/cos.
+	// the shader's pre-cosined spotAngles here so the fragment shader never calls acos/cos.
 	void setSpot(
 		std::size_t index,
 		const osg::Vec3& position,
@@ -594,7 +611,63 @@ struct LightSet {
 		float sourceRadius=0.0f
 	) const;
 
+	// `count` must be in [0, MAX_LIGHTS]; otherwise throws std::out_of_range.
 	void setCount(int count) const;
+
+	// Sets ONLY a light's posIntensity field, leaving color/type/dir/spotAngles/sourceRadius
+	// untouched -- the one primitive OrbitLightRig below needs to animate a light already
+	// configured via setPoint/setSpot, without re-specifying everything else every frame.
+	void setPosition(std::size_t index, const osg::Vec3& position, float intensity) const;
+
+	// Read accessors -- e.g. osgx::gizmo::LightMarkers/createDirectionalOverlay read back a live
+	// LightSet's per-light state to place gizmo geometry; individual fields are no longer
+	// separately retrievable osg::Uniforms the way the old parallel-array design allowed.
+	int getCount() const;
+	osg::Vec4 getPosIntensity(std::size_t index) const;
+	osg::Vec3 getColor(std::size_t index) const;
+	LightType getType(std::size_t index) const;
+	osg::Vec3 getDirection(std::size_t index) const;
+	osg::Vec2 getSpotAngles(std::size_t index) const;
+	float getSourceRadius(std::size_t index) const;
+
+private:
+	// Backing store for every light's packed osgx_Light struct (MAX_LIGHTS * LIGHT_STRUCT_FLOATS
+	// floats, std430 layout -- see LIGHT_UNIFORMS' struct comment), bound to `ss` as a single
+	// ShaderStorageBufferObject at LIGHT_SSBO_BINDING. It stays private so it cannot be replaced
+	// independently of that StateSet binding.
+	osg::ref_ptr<osg::FloatArray> _lights;
+
+	float* lightFloats(std::size_t index, std::size_t offset) const;
+};
+
+// Animates a handful of point lights orbiting a center point, writing world-space position+
+// intensity into an existing LightSet's posIntensity field (via LightSet::setPosition) every
+// update traversal -- the motion is what confirms N/V/specular are wired correctly rather than
+// just a static flat-shaded color. Install as the update callback on whichever node the lit shape
+// hangs from; `lights` must already be a created LightSet (LightSet::create()) with at least
+// orbits.size() lights configured via setPoint/setSpot (for their color/type/etc. -- this callback
+// only ever touches position/intensity).
+//
+// Reusable across any osgx::pbr-lit scene -- configure `center`/`orbits`/`intensity` per use
+// instead of copying this callback into each consumer.
+struct OrbitLightRig: public osg::NodeCallback {
+	struct Orbit {
+		float radius, height, speed, phase, intensity;
+	};
+
+	LightSet lights;
+	osg::Vec3 center{0.0f, 0.0f, 0.0f};
+	float intensity = 1.0f; // global scale, e.g. a --light-intensity CLI flag
+
+	// Default rig: (orbit radius, height above center, angular speed, phase, per-orbit intensity).
+	// Matches the original osgslug-pbr-ibl.cpp badge rig; override for a different look.
+	std::vector<Orbit> orbits = {
+		{0.55f, 0.70f, 0.50f, 0.0f, 1.00f},
+		{0.70f, 0.90f, -0.33f, 2.1f, 0.75f},
+		{0.45f, 0.50f, 0.80f, 4.2f, 0.50f},
+	};
+
+	void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 };
 
 }

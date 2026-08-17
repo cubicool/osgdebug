@@ -1,5 +1,6 @@
 #include "osgx-python.hpp"
 #include "osgx/Gizmos.hpp"
+#include "osgx/PBR.hpp"
 
 namespace osgx_python {
 
@@ -10,8 +11,8 @@ void bind_gizmos(py::module_& m_gizmo) {
 		osg::ref_ptr<osgx::gizmo::LightMarkers>
 	>(m_gizmo, "LightMarkers")
 		.def(
-			py::init<osg::StateSet*, float, float>(),
-			"ss"_a,
+			py::init<const osgx::pbr::LightSet&, float, float>(),
+			"lights"_a,
 			"minMarkerRadius"_a=0.05f,
 			"spotConeLength"_a=1.0f
 		)
@@ -26,7 +27,7 @@ void bind_gizmos(py::module_& m_gizmo) {
 	m_gizmo.def(
 		"createDirectionalOverlay",
 		&osgx::gizmo::createDirectionalOverlay,
-		"ss"_a,
+		"lights"_a,
 		"scene"_a,
 		"Non-depth-tested POST_RENDER wireframe plane+arrow overlay for LightSet's directional lights."
 	);
