@@ -1,7 +1,7 @@
 // vimrun! ./examples/osgx-lights
 //
 // A standalone demo of osgx::pbr's typed direct lights (directional/point/sphere/spot) and their
-// osgx::gizmo visualizations, without any glTF asset or baked IBL environment -- just one shaded
+// osgx::LightGizmos visualizations, without any glTF asset or baked IBL environment -- just one shaded
 // osgx::Cube (6 flat, axis-aligned faces -- deliberately not a more "interesting" shape, so which
 // face is lit is visually unambiguous), a hand-assembled minimal PBR fragment shader (osgx::pbr's
 // GLSL snippets composed directly, the same mechanism osgx::gltf::pbribl's
@@ -180,7 +180,7 @@ constexpr std::array<std::string_view, static_cast<std::size_t>(Demo::Count)> DE
 };
 
 // Spot's initial apex-to-target distance, in world units -- SPOT_DISTANCE below sizes
-// createLightGizmos()'s spotConeLength (main()) to match, so the cone gizmo reaches the object
+// LightGizmos' spotConeLength (main()) to match, so the cone gizmo reaches the object
 // instead of stopping short of it (LightMarkers' own default spotConeLength=1.0 is unit-scene-
 // scale, too short here) -- generous enough to still mostly cover the ImGui position slider's
 // range (see LightsState below) as the light is dragged around live.
@@ -295,11 +295,10 @@ int main() {
 	// the point/sphere marker reads clearly against a radius-1.2 object; spotConeLength set to
 	// SPOT_DISTANCE so the cone gizmo reaches the object instead of stopping short of it the way
 	// the library default (unit-scene-scale) would here.
-	auto gizmos = osgx::gizmo::createLightGizmos(lights, geode.get(), 0.15f, SPOT_DISTANCE);
+	auto gizmos = osgx::make_ref<osgx::LightGizmos>(lights, geode.get(), 0.15f, SPOT_DISTANCE);
 
 	root->addChild(geode.get());
-	root->addChild(gizmos.markers.get());
-	root->addChild(gizmos.overlay.get());
+	root->addChild(gizmos);
 
 	auto printActive = [state]() {
 		std::cout << "osgx-lights: showing "

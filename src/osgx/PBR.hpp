@@ -685,9 +685,9 @@ struct LightSet {
 	// configured via setPoint/setSpot, without re-specifying everything else every frame.
 	void setPosition(std::size_t index, const osg::Vec3& position, float intensity) const;
 
-	// Read accessors -- e.g. osgx::gizmo::LightMarkers/createDirectionalOverlay read back a live
-	// LightSet's per-light state to place gizmo geometry; individual fields are no longer
-	// separately retrievable osg::Uniforms the way the old parallel-array design allowed.
+	// Read accessors -- e.g. osgx::LightMarkers/LightGizmos read back a live LightSet's per-light
+	// state to place gizmo geometry; individual fields are no longer separately retrievable
+	// osg::Uniforms the way the old parallel-array design allowed.
 	int getCount() const;
 	osg::Vec4 getPosIntensity(std::size_t index) const;
 	osg::Vec3 getColor(std::size_t index) const;

@@ -44,6 +44,19 @@ public:
 		assign(init.begin(), init.end());
 	}
 
+	// Preallocates `count` default-constructed elements -- BaseArray's own sized constructor
+	// (e.g. osg::Vec3Array(unsigned int)) isn't inherited, since Array declares its own
+	// constructor set instead of `using BaseArray::BaseArray;`. For an arithmetic
+	// ElementDataType (osgx::FloatArray), a bare int/unsigned literal prefers the variadic
+	// single-element constructor below instead (its exact-match template deduction beats the
+	// int->size_t conversion this overload needs) -- pass an actual std::size_t (e.g. the `_sz`
+	// UDL from Core.hpp) to select this overload unambiguously in that case. Non-arithmetic
+	// element types (Vec2Array/Vec3Array/Vec4Array) have no such ambiguity: any integral argument
+	// resolves here cleanly, since ElementDataType isn't constructible from it at all.
+	explicit Array(std::size_t count) {
+		resize(count);
+	}
+
 	template<std::ranges::input_range R>
 	explicit Array(R&& r) {
 		resize(std::ranges::size(r));

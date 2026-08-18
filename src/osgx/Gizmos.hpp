@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Array.hpp"
 #include "Core.hpp"
 #include "PBR.hpp"
 
@@ -14,25 +15,24 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-namespace osgx::gizmo {
+namespace osgx {
 
-// Debug visualization for osgx::pbr::LightSet lights -- deliberately not part of osgx::debug,
-// which is specifically GL_KHR_debug integration, not visual scene gizmos. Two mechanisms, since
-// a directional light and a point/spot/sphere light are genuinely different visualization
-// problems (see LightGizmos below): only the latter has a real position to place depth-tested
-// geometry at.
+// Debug visualization for osgx::pbr::LightSet lights -- deliberately not part of osgx::debug, which is
+// specifically GL_KHR_debug integration, not visual scene gizmos. Two mechanisms, since a
+// directional light and a point/spot/sphere light are genuinely different visualization problems
+// (see LightGizmos below): only the latter has a real position to place depth-tested geometry at.
 
-// Depth-tested, real scene-space markers for point/sphere/spot lights (up to
-// osgx::pbr::MAX_LIGHTS), added as an ordinary child of the lit scene. One osg::Geometry, rebuilt
-// in place every update traversal from the live LightSet uniforms (an osg::NodeCallback installed
-// on this Group) -- combines Shapes.hpp's Polyhedron::rebuild() "mutate the existing arrays,
-// don't replace them" pattern with the per-frame-uniform-read NodeCallback idiom already used by
-// PBR.hpp's OrbitLightRig and Picking.hpp's PickCameraSync. Marker shape per active light: three
-// orthogonal wireframe circles sized to max(lightSourceRadius, minMarkerRadius) for a point/sphere
-// light (so an ideal point light still shows a small marker, a sphere light shows its true
-// physical size); a wireframe cone (ring + spokes from the apex) for a spot light, sized by its
-// outer cone angle and spotConeLength. A directional light has no position and is never drawn
-// here -- see createDirectionalOverlay() below.
+// Depth-tested, real scene-space markers for point/sphere/spot lights (up to osgx::pbr::MAX_LIGHTS),
+// added as an ordinary child of the lit scene. One osg::Geometry, rebuilt in place every update
+// traversal from the live LightSet uniforms (an osg::NodeCallback installed on this Group) --
+// combines Shapes.hpp's Polyhedron::rebuild() "mutate the existing arrays, don't replace them"
+// pattern with the per-frame-uniform-read NodeCallback idiom already used by PBR.hpp's
+// OrbitLightRig and Picking.hpp's PickCameraSync. Marker shape per active light: three orthogonal
+// wireframe circles sized to max(lightSourceRadius, minMarkerRadius) for a point/sphere light (so
+// an ideal point light still shows a small marker, a sphere light shows its true physical size); a
+// wireframe cone (ring + spokes from the apex) for a spot light, sized by its outer cone angle and
+// spotConeLength. A directional light has no position and is never drawn here -- see LightGizmos
+// below, which pairs this with a directional-only overlay.
 class LightMarkers: public osg::Group {
 public:
 	OSGX_META_Object(osgx_gizmo, LightMarkers)
@@ -66,34 +66,42 @@ private:
 	osg::ref_ptr<osg::Geometry> _geometry;
 };
 
-// Non-depth-tested POST_RENDER overlay for directional lights -- a directional light has no
-// position, so there is no real depth to test its marker against. Ports
-// create_light_gizmo()/LightGizmoCallback/GIZMO_VERTEX_SHADER/GIZMO_FRAGMENT_SHADER from
+// Bundles both LightMarkers (depth-tested point/spot/sphere markers) and a directional-only
+// overlay camera into one addable node -- `root->addChild(gizmos)` instead of a caller
+// hand-wiring two separate pieces into every example. The overlay is a non-depth-tested
+// POST_RENDER child camera (a directional light has no position, so there is no real depth to
+// test its marker against); it ports create_light_gizmo()/LightGizmoCallback/
+// GIZMO_VERTEX_SHADER/GIZMO_FRAGMENT_SHADER from
 // OpenSceneGraph.py/examples/pyosg-lighting/11-sketchfab-lambertian.py (wireframe plane
 // perpendicular to the light direction plus a direction arrow) essentially unchanged, generalized
 // from one hardcoded light_dir_u/light_color_u pair to LightSet's up-to-MAX_LIGHTS directional
-// slots. `scene`'s bounding sphere (computed once, at creation time, same as the Python original)
-// sizes and places every directional light's plane/arrow proportionally to the scene.
-osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& lights, osg::Node* scene);
-
-// Bundles both mechanisms -- one call for any osgx::pbr-lit scene using osgx::pbr::LightSet,
-// instead of a caller hand-wiring LightMarkers and createDirectionalOverlay separately into every
-// example.
-struct LightGizmos {
-	osg::ref_ptr<osg::Group> markers;   // add as a child of the lit scene
-	osg::ref_ptr<osg::Camera> overlay;  // add to the viewer as an extra POST_RENDER pass
-};
-
+// slots. `scene`'s bounding sphere (computed once, at construction time, same as the Python
+// original) sizes and places every directional light's plane/arrow proportionally to the scene.
+//
 // `minMarkerRadius`/`spotConeLength` forward straight to LightMarkers -- their defaults are
 // unit-scene-scale, and a caller whose lights sit much farther from the target than that (a spot
-// light standing well back from its subject, say) needs to size them up or the cone/sphere markers
-// draw too small/short to visually reach anything, exactly as small and disconnected from the lit
-// object as the defaults would otherwise be for a larger scene.
-LightGizmos createLightGizmos(
-	const osgx::pbr::LightSet& lights,
-	osg::Node* scene,
-	float minMarkerRadius=0.05f,
-	float spotConeLength=1.0f
-);
+// light standing well back from its subject, say) needs to size them up or the cone/sphere
+// markers draw too small/short to visually reach anything.
+class LightGizmos: public osg::Group {
+public:
+	OSGX_META_Object(osgx_gizmo, LightGizmos)
+
+	LightGizmos() = default;
+	explicit LightGizmos(
+		const osgx::pbr::LightSet& lights,
+		osg::Node* scene,
+		float minMarkerRadius=0.05f,
+		float spotConeLength=1.0f
+	);
+	LightGizmos(const LightGizmos& rhs, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
+	osg::Group(rhs, co) {}
+
+	LightMarkers* getMarkers() const { return _markers.get(); }
+	osg::Camera* getOverlay() const { return _overlay.get(); }
+
+private:
+	osg::ref_ptr<LightMarkers> _markers;
+	osg::ref_ptr<osg::Camera> _overlay;
+};
 
 }

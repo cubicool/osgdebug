@@ -15,7 +15,7 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <cmath>
 
-namespace osgx::gizmo {
+namespace osgx {
 
 namespace detail {
 
@@ -58,7 +58,7 @@ void main() {
 )GLSL";
 
 osg::ref_ptr<osg::Program> createGizmoProgram() {
-	auto program = new osg::Program();
+	auto program = osgx::make_ref<osg::Program>();
 
 	program->setName("osgx_gizmo");
 	program->addShader(new osg::Shader(osg::Shader::VERTEX, GIZMO_VERTEX_SHADER));
@@ -88,26 +88,29 @@ void perpendicularBasis(const osg::Vec3& n, osg::Vec3& u, osg::Vec3& v) {
 	v = n ^ u;
 }
 
-// Appends a wireframe circle (CIRCLE_SEGMENTS or SPOT_RING_SEGMENTS vertices, drawn as a
-// LINE_LOOP primitive set covering [verts->size(), verts->size()+segments)) centered at `center`
-// in the plane spanned by `u`/`v`.
+// Appends a wireframe circle (verts.size() vertices, drawn as a LINE_LOOP primitive set covering
+// [start, start+verts.size())) centered at `center` in the plane spanned by `u`/`v`. `verts`/
+// `colors` are already the caller's sub-span for this circle -- indices here are span-local, only
+// the primitive-set's GL start offset needs the absolute `start`.
 void appendCircle(
-	osg::Vec3Array* verts,
-	osg::Vec3Array* colors,
+	std::span<osg::Vec3> verts,
+	std::span<osg::Vec3> colors,
 	osg::Geometry* geom,
 	std::size_t start,
-	int segments,
 	const osg::Vec3& center,
 	const osg::Vec3& u,
 	const osg::Vec3& v,
 	float radius,
 	const osg::Vec3& color
 ) {
+	auto segments = static_cast<int>(verts.size());
+
 	for(int i = 0; i < segments; i++) {
 		float a = 2.0f * osg::PIf * static_cast<float>(i) / static_cast<float>(segments);
+		auto idx = static_cast<std::size_t>(i);
 
-		(*verts)[start + static_cast<std::size_t>(i)] = center + u * (std::cos(a) * radius) + v * (std::sin(a) * radius);
-		(*colors)[start + static_cast<std::size_t>(i)] = color;
+		verts[idx] = center + u * (std::cos(a) * radius) + v * (std::sin(a) * radius);
+		colors[idx] = color;
 	}
 
 	geom->addPrimitiveSet(new osg::DrawArrays(GL_LINE_LOOP, static_cast<GLint>(start), segments));
@@ -116,24 +119,26 @@ void appendCircle(
 // Point/sphere marker: three orthogonal wireframe circles (XY/XZ/YZ great circles) at `position`,
 // sized to `radius`. Consumes exactly 3*CIRCLE_SEGMENTS vertices starting at `start`.
 void buildPointMarker(
-	osg::Vec3Array* verts,
-	osg::Vec3Array* colors,
+	osgx::Vec3Array* verts,
+	osgx::Vec3Array* colors,
 	osg::Geometry* geom,
 	std::size_t start,
 	const osg::Vec3& position,
 	float radius,
 	const osg::Vec3& color
 ) {
+	auto segs = static_cast<std::size_t>(CIRCLE_SEGMENTS);
+
 	appendCircle(
-		verts, colors, geom, start, CIRCLE_SEGMENTS,
+		verts->span(start, segs), colors->span(start, segs), geom, start,
 		position, osg::Vec3(1.0f, 0.0f, 0.0f), osg::Vec3(0.0f, 1.0f, 0.0f), radius, color
 	);
 	appendCircle(
-		verts, colors, geom, start + CIRCLE_SEGMENTS, CIRCLE_SEGMENTS,
+		verts->span(start + segs, segs), colors->span(start + segs, segs), geom, start + segs,
 		position, osg::Vec3(1.0f, 0.0f, 0.0f), osg::Vec3(0.0f, 0.0f, 1.0f), radius, color
 	);
 	appendCircle(
-		verts, colors, geom, start + 2 * CIRCLE_SEGMENTS, CIRCLE_SEGMENTS,
+		verts->span(start + 2 * segs, segs), colors->span(start + 2 * segs, segs), geom, start + 2 * segs,
 		position, osg::Vec3(0.0f, 1.0f, 0.0f), osg::Vec3(0.0f, 0.0f, 1.0f), radius, color
 	);
 }
@@ -142,8 +147,8 @@ void buildPointMarker(
 // outer cone half-angle) plus SPOT_SPOKES lines from the apex to that ring. Consumes at most
 // MAX_VERTS_PER_LIGHT vertices starting at `start` (SPOT_RING_SEGMENTS + SPOT_SPOKES*2).
 void buildSpotMarker(
-	osg::Vec3Array* verts,
-	osg::Vec3Array* colors,
+	osgx::Vec3Array* verts,
+	osgx::Vec3Array* colors,
 	osg::Geometry* geom,
 	std::size_t start,
 	const osg::Vec3& apex,
@@ -162,113 +167,33 @@ void buildSpotMarker(
 
 	osg::Vec3 ringCenter = apex + axis * coneLength;
 	float ringRadius = coneLength * std::tan(outerConeAngle);
+	auto ringSegs = static_cast<std::size_t>(SPOT_RING_SEGMENTS);
 
-	appendCircle(verts, colors, geom, start, SPOT_RING_SEGMENTS, ringCenter, u, v, ringRadius, color);
+	appendCircle(verts->span(start, ringSegs), colors->span(start, ringSegs), geom, start, ringCenter, u, v, ringRadius, color);
 
-	std::size_t spokeStart = start + static_cast<std::size_t>(SPOT_RING_SEGMENTS);
+	std::size_t spokeStart = start + ringSegs;
 	int stride = std::max(1, SPOT_RING_SEGMENTS / SPOT_SPOKES);
+	auto spokeCount = static_cast<std::size_t>(SPOT_SPOKES) * 2;
+	auto spokeVerts = verts->span(spokeStart, spokeCount);
+	auto spokeColors = colors->span(spokeStart, spokeCount);
 
 	for(int i = 0; i < SPOT_SPOKES; i++) {
 		float a = 2.0f * osg::PIf * static_cast<float>(i * stride) / static_cast<float>(SPOT_RING_SEGMENTS);
 		osg::Vec3 ringPoint = ringCenter + u * (std::cos(a) * ringRadius) + v * (std::sin(a) * ringRadius);
-		std::size_t base = spokeStart + static_cast<std::size_t>(i) * 2;
+		std::size_t base = static_cast<std::size_t>(i) * 2;
 
-		(*verts)[base] = apex;
-		(*colors)[base] = color;
-		(*verts)[base + 1] = ringPoint;
-		(*colors)[base + 1] = color;
+		spokeVerts[base] = apex;
+		spokeColors[base] = color;
+		spokeVerts[base + 1] = ringPoint;
+		spokeColors[base + 1] = color;
 	}
 
 	geom->addPrimitiveSet(new osg::DrawArrays(GL_LINES, static_cast<GLint>(spokeStart), SPOT_SPOKES * 2));
 }
 
-}
-
-LightMarkers::LightMarkers(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
-	setUpdateCallback(new UpdateCallback(lights, minMarkerRadius, spotConeLength));
-	setCullingActive(false);
-}
-
-void LightMarkers::UpdateCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
-	if(auto* markers = dynamic_cast<LightMarkers*>(node); markers && _lights.valid())
-		markers->rebuild(_lights, _minMarkerRadius, _spotConeLength);
-
-	traverse(node, nv);
-}
-
-void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
-	if(!lights.valid()) return;
-
-	if(!_geometry) {
-		auto capacity = static_cast<unsigned int>(osgx::pbr::MAX_LIGHTS * detail::MAX_VERTS_PER_LIGHT);
-		auto verts = osgx::make_ref<osg::Vec3Array>(capacity);
-		auto colors = osgx::make_ref<osg::Vec3Array>(capacity);
-
-		verts->setBinding(osg::Array::BIND_PER_VERTEX);
-		colors->setBinding(osg::Array::BIND_PER_VERTEX);
-		verts->setDataVariance(osg::Object::DYNAMIC);
-		colors->setDataVariance(osg::Object::DYNAMIC);
-
-		_geometry = osgx::make_ref<osg::Geometry>();
-		_geometry->setUseVertexBufferObjects(true);
-		_geometry->setDataVariance(osg::Object::DYNAMIC);
-		_geometry->setVertexArray(verts.get());
-		_geometry->setVertexAttribArray(0, verts.get());
-		_geometry->setVertexAttribArray(1, colors.get());
-
-		auto* ss2 = _geometry->getOrCreateStateSet();
-
-		ss2->setAttributeAndModes(detail::createGizmoProgram().get(), osg::StateAttribute::ON);
-		ss2->setAttributeAndModes(new osg::LineWidth(2.0f), osg::StateAttribute::ON);
-
-		auto geode = osgx::make_ref<osg::Geode>();
-
-		geode->addDrawable(_geometry.get());
-		addChild(geode.get());
-	}
-
-	int count = std::clamp(lights.getCount(), 0, osgx::pbr::MAX_LIGHTS);
-
-	_geometry->removePrimitiveSet(0, _geometry->getNumPrimitiveSets());
-
-	auto* verts = static_cast<osg::Vec3Array*>(_geometry->getVertexArray());
-	auto* colors = static_cast<osg::Vec3Array*>(_geometry->getVertexAttribArray(1));
-
-	for(int i = 0; i < count; i++) {
-		auto index = static_cast<std::size_t>(i);
-		osgx::pbr::LightType type = lights.getType(index);
-		osg::Vec4 posIntensity = lights.getPosIntensity(index);
-		osg::Vec3 color = lights.getColor(index);
-		float sourceRadius = lights.getSourceRadius(index);
-
-		std::size_t slotStart = static_cast<std::size_t>(i) * static_cast<std::size_t>(detail::MAX_VERTS_PER_LIGHT);
-		osg::Vec3 c = detail::gizmoColor(color);
-		osg::Vec3 position(posIntensity.x(), posIntensity.y(), posIntensity.z());
-
-		if(type == osgx::pbr::LightType::Spot) {
-			osg::Vec3 direction = lights.getDirection(index);
-			osg::Vec2 coneAngles = lights.getSpotAngles(index);
-			float outerAngle = std::acos(std::clamp(coneAngles.y(), -1.0f, 1.0f));
-
-			detail::buildSpotMarker(
-				verts, colors, _geometry.get(), slotStart,
-				position, direction, outerAngle, spotConeLength, c
-			);
-		}
-
-		else if(type != osgx::pbr::LightType::Directional) {
-			float radius = std::max(sourceRadius, minMarkerRadius);
-
-			detail::buildPointMarker(verts, colors, _geometry.get(), slotStart, position, radius, c);
-		}
-	}
-
-	verts->dirty();
-	colors->dirty();
-	_geometry->dirtyBound();
-}
-
-osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& lights, osg::Node* scene) {
+// Builds the non-depth-tested POST_RENDER overlay camera for directional lights -- see
+// LightGizmos' doc comment in Gizmos.hpp for the full rationale.
+osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::pbr::LightSet& lights, osg::Node* scene) {
 	osg::BoundingSphere bound = scene ? scene->getBound() : osg::BoundingSphere(osg::Vec3(), 1.0f);
 	float boundRadius = bound.radius() > 0.0f ? bound.radius() : 1.0f;
 	osg::Vec3 boundCenter = bound.center();
@@ -283,10 +208,10 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& li
 
 	// 10 vertices per directional slot: 4 (plane LINE_LOOP) + 2 (direction stub, LINES) + 4
 	// (arrowhead, two LINES segments) -- exactly mirrors the Python original's per-light layout.
-	constexpr int VERTS_PER_LIGHT = 10;
-	auto capacity = static_cast<unsigned int>(osgx::pbr::MAX_LIGHTS * VERTS_PER_LIGHT);
-	auto verts = osgx::make_ref<osg::Vec3Array>(capacity);
-	auto colors = osgx::make_ref<osg::Vec3Array>(capacity);
+	constexpr std::size_t VERTS_PER_LIGHT = 10;
+	auto capacity = static_cast<std::size_t>(osgx::pbr::MAX_LIGHTS) * VERTS_PER_LIGHT;
+	auto verts = osgx::make_ref<osgx::Vec3Array>(capacity);
+	auto colors = osgx::make_ref<osgx::Vec3Array>(capacity);
 
 	verts->setBinding(osg::Array::BIND_PER_VERTEX);
 	colors->setBinding(osg::Array::BIND_PER_VERTEX);
@@ -297,21 +222,21 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& li
 
 	geom->setUseVertexBufferObjects(true);
 	geom->setDataVariance(osg::Object::DYNAMIC);
-	geom->setVertexArray(verts.get());
-	geom->setVertexAttribArray(0, verts.get());
-	geom->setVertexAttribArray(1, colors.get());
+	geom->setVertexArray(verts);
+	geom->setVertexAttribArray(0, verts);
+	geom->setVertexAttribArray(1, colors);
 	geom->setCullingActive(false);
 
 	auto* geomSS = geom->getOrCreateStateSet();
 
-	geomSS->setAttributeAndModes(detail::createGizmoProgram().get(), osg::StateAttribute::ON);
+	geomSS->setAttributeAndModes(createGizmoProgram(), osg::StateAttribute::ON);
 	geomSS->setAttributeAndModes(new osg::LineWidth(2.0f), osg::StateAttribute::ON);
 	geomSS->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
 	geomSS->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
 
 	auto geode = osgx::make_ref<osg::Geode>();
 
-	geode->addDrawable(geom.get());
+	geode->addDrawable(geom);
 
 	struct DirectionalOverlayCallback: public osg::NodeCallback {
 		DirectionalOverlayCallback(const osgx::pbr::LightSet& lights, osg::Vec3 center, float planeHalf, float normalLen, float back, float wide):
@@ -327,8 +252,8 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& li
 			}
 
 			auto* geom2 = static_cast<osg::Geometry*>(geode2->getDrawable(0));
-			auto* verts2 = static_cast<osg::Vec3Array*>(geom2->getVertexArray());
-			auto* colors2 = static_cast<osg::Vec3Array*>(geom2->getVertexAttribArray(1));
+			auto* verts2 = static_cast<osgx::Vec3Array*>(geom2->getVertexArray());
+			auto* colors2 = static_cast<osgx::Vec3Array*>(geom2->getVertexAttribArray(1));
 
 			geom2->removePrimitiveSet(0, geom2->getNumPrimitiveSets());
 
@@ -356,33 +281,36 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& li
 				osg::Vec3 center = _center + n * _normalLen;
 				osg::Vec3 u, v;
 
-				detail::perpendicularBasis(n, u, v);
+				perpendicularBasis(n, u, v);
 
-				std::size_t start = static_cast<std::size_t>(i) * 10;
+				auto slot = verts2->span(static_cast<std::size_t>(i) * 10, 10);
+				auto slotColors = colors2->span(static_cast<std::size_t>(i) * 10, 10);
 
-				(*verts2)[start + 0] = center + u * _planeHalf + v * _planeHalf;
-				(*verts2)[start + 1] = center - u * _planeHalf + v * _planeHalf;
-				(*verts2)[start + 2] = center - u * _planeHalf - v * _planeHalf;
-				(*verts2)[start + 3] = center + u * _planeHalf - v * _planeHalf;
-				(*verts2)[start + 4] = center;
+				slot[0] = center + u * _planeHalf + v * _planeHalf;
+				slot[1] = center - u * _planeHalf + v * _planeHalf;
+				slot[2] = center - u * _planeHalf - v * _planeHalf;
+				slot[3] = center + u * _planeHalf - v * _planeHalf;
+				slot[4] = center;
 
 				osg::Vec3 tip = center - n * _normalLen;
 
-				(*verts2)[start + 5] = tip;
+				slot[5] = tip;
 
 				osg::Vec3 wingBase = tip + n * _arrowBack;
 
-				(*verts2)[start + 6] = tip;
-				(*verts2)[start + 7] = wingBase + u * _arrowWidth;
-				(*verts2)[start + 8] = tip;
-				(*verts2)[start + 9] = wingBase - u * _arrowWidth;
+				slot[6] = tip;
+				slot[7] = wingBase + u * _arrowWidth;
+				slot[8] = tip;
+				slot[9] = wingBase - u * _arrowWidth;
 
-				osg::Vec3 c = detail::gizmoColor(lightColorValue);
+				osg::Vec3 c = gizmoColor(lightColorValue);
 
-				for(std::size_t k = 0; k < 10; k++) (*colors2)[start + k] = c;
+				for(auto& sc : slotColors) sc = c;
 
-				geom2->addPrimitiveSet(new osg::DrawArrays(GL_LINE_LOOP, static_cast<GLint>(start), 4));
-				geom2->addPrimitiveSet(new osg::DrawArrays(GL_LINES, static_cast<GLint>(start) + 4, 6));
+				auto start = static_cast<GLint>(static_cast<std::size_t>(i) * 10);
+
+				geom2->addPrimitiveSet(new osg::DrawArrays(GL_LINE_LOOP, start, 4));
+				geom2->addPrimitiveSet(new osg::DrawArrays(GL_LINES, start + 4, 6));
 			}
 
 			verts2->dirty();
@@ -407,23 +335,105 @@ osg::ref_ptr<osg::Camera> createDirectionalOverlay(const osgx::pbr::LightSet& li
 	camera->setRenderOrder(osg::Camera::POST_RENDER);
 	camera->setClearMask(0);
 	camera->setAllowEventFocus(false);
-	camera->addChild(geode.get());
+	camera->addChild(geode);
 
 	return camera;
 }
 
-LightGizmos createLightGizmos(
+}
+
+LightMarkers::LightMarkers(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
+	setUpdateCallback(new UpdateCallback(lights, minMarkerRadius, spotConeLength));
+	setCullingActive(false);
+}
+
+void LightMarkers::UpdateCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
+	if(auto* markers = dynamic_cast<LightMarkers*>(node); markers && _lights.valid())
+		markers->rebuild(_lights, _minMarkerRadius, _spotConeLength);
+
+	traverse(node, nv);
+}
+
+void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
+	if(!lights.valid()) return;
+
+	if(!_geometry) {
+		auto capacity = static_cast<std::size_t>(osgx::pbr::MAX_LIGHTS) * static_cast<std::size_t>(detail::MAX_VERTS_PER_LIGHT);
+		auto verts = osgx::make_ref<osgx::Vec3Array>(capacity);
+		auto colors = osgx::make_ref<osgx::Vec3Array>(capacity);
+
+		verts->setBinding(osg::Array::BIND_PER_VERTEX);
+		colors->setBinding(osg::Array::BIND_PER_VERTEX);
+		verts->setDataVariance(osg::Object::DYNAMIC);
+		colors->setDataVariance(osg::Object::DYNAMIC);
+
+		_geometry = osgx::make_ref<osg::Geometry>();
+		_geometry->setUseVertexBufferObjects(true);
+		_geometry->setDataVariance(osg::Object::DYNAMIC);
+		_geometry->setVertexArray(verts);
+		_geometry->setVertexAttribArray(0, verts);
+		_geometry->setVertexAttribArray(1, colors);
+
+		auto* ss2 = _geometry->getOrCreateStateSet();
+
+		ss2->setAttributeAndModes(detail::createGizmoProgram(), osg::StateAttribute::ON);
+		ss2->setAttributeAndModes(new osg::LineWidth(2.0f), osg::StateAttribute::ON);
+
+		auto geode = osgx::make_ref<osg::Geode>();
+
+		geode->addDrawable(_geometry);
+		addChild(geode);
+	}
+
+	int count = std::clamp(lights.getCount(), 0, osgx::pbr::MAX_LIGHTS);
+
+	_geometry->removePrimitiveSet(0, _geometry->getNumPrimitiveSets());
+
+	auto* verts = static_cast<osgx::Vec3Array*>(_geometry->getVertexArray());
+	auto* colors = static_cast<osgx::Vec3Array*>(_geometry->getVertexAttribArray(1));
+
+	for(int i = 0; i < count; i++) {
+		auto index = static_cast<std::size_t>(i);
+		osgx::pbr::LightType type = lights.getType(index);
+		osg::Vec4 posIntensity = lights.getPosIntensity(index);
+		osg::Vec3 color = lights.getColor(index);
+		float sourceRadius = lights.getSourceRadius(index);
+
+		std::size_t slotStart = static_cast<std::size_t>(i) * static_cast<std::size_t>(detail::MAX_VERTS_PER_LIGHT);
+		osg::Vec3 c = detail::gizmoColor(color);
+		osg::Vec3 position(posIntensity.x(), posIntensity.y(), posIntensity.z());
+
+		if(type == osgx::pbr::LightType::Spot) {
+			osg::Vec3 direction = lights.getDirection(index);
+			osg::Vec2 coneAngles = lights.getSpotAngles(index);
+			float outerAngle = std::acos(std::clamp(coneAngles.y(), -1.0f, 1.0f));
+
+			detail::buildSpotMarker(verts, colors, _geometry, slotStart, position, direction, outerAngle, spotConeLength, c);
+		}
+
+		else if(type != osgx::pbr::LightType::Directional) {
+			float radius = std::max(sourceRadius, minMarkerRadius);
+
+			detail::buildPointMarker(verts, colors, _geometry, slotStart, position, radius, c);
+		}
+	}
+
+	verts->dirty();
+	colors->dirty();
+	_geometry->dirtyBound();
+}
+
+LightGizmos::LightGizmos(
 	const osgx::pbr::LightSet& lights,
 	osg::Node* scene,
 	float minMarkerRadius,
 	float spotConeLength
 ) {
-	LightGizmos gizmos;
+	_markers = osgx::make_ref<LightMarkers>(lights, minMarkerRadius, spotConeLength);
+	_overlay = detail::buildDirectionalOverlay(lights, scene);
 
-	gizmos.markers = osgx::make_ref<LightMarkers>(lights, minMarkerRadius, spotConeLength);
-	gizmos.overlay = createDirectionalOverlay(lights, scene);
-
-	return gizmos;
+	addChild(_markers);
+	addChild(_overlay);
 }
 
 }
