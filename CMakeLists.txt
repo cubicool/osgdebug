@@ -50,9 +50,12 @@ else()
 	set(OSGX_WARNING_OPTIONS)
 endif()
 
-# add_subdirectory("OSG") # EXCLUDE_FROM_ALL)
-
-find_package(OpenSceneGraph REQUIRED
+# Standalone osgx discovers an installed OSG in the usual way. When it is
+# embedded below a project that has already added OSG as a subdirectory (for
+# example OpenSceneGraph.py's pinned FetchContent build), use those targets
+# directly instead: an installation/package config must not be required.
+set(OSGX_OSG_COMPONENTS
+	OpenThreads
 	osg
 	osgDB
 	osgGA
@@ -63,6 +66,26 @@ find_package(OpenSceneGraph REQUIRED
 	osgWidget
 	osgAnimation
 )
+
+if(TARGET osg)
+	set(OPENSCENEGRAPH_LIBRARIES ${OSGX_OSG_COMPONENTS})
+	set(OPENSCENEGRAPH_INCLUDE_DIRS
+		"${OpenSceneGraph_SOURCE_DIR}/include"
+		"${OpenSceneGraph_BINARY_DIR}/include"
+	)
+else()
+	find_package(OpenSceneGraph REQUIRED
+		osg
+		osgDB
+		osgGA
+		osgViewer
+		osgUtil
+		osgFX
+		osgText
+		osgWidget
+		osgAnimation
+	)
+endif()
 find_package(OpenGL REQUIRED)
 
 # Detected once here (not per-subdirectory/per-target) so OSGX_WITH_IMGUI and the
