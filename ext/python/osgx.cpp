@@ -7,11 +7,33 @@
 #include "osgx-python.hpp"
 #include "osgx/Version.hpp"
 
+#include <osgDB/Registry>
+
+#include <algorithm>
+#include <filesystem>
+
+namespace {
+
+void add_wheel_plugin_path(py::module_& module) {
+	const auto module_file = py::str(module.attr("__file__")).cast<std::string>();
+	const auto plugin_directory = std::filesystem::path(module_file).parent_path() / "osgPlugins-3.6.5";
+	const auto plugin_path = plugin_directory.string();
+	auto& paths = osgDB::Registry::instance()->getLibraryFilePathList();
+
+	if(std::find(paths.begin(), paths.end(), plugin_path) == paths.end()) {
+		paths.push_back(plugin_path);
+	}
+}
+
+} // namespace
+
 PYBIND11_MODULE(osgx, m) {
 	// Side effect, not the value: forces the OpenSceneGraph module's pybind11 types (osg::Geometry,
 	// osgGA::CameraManipulator, etc.) to be registered before any osgx py::class_<> that derives
 	// from one of them runs below.
 	py::module_::import("OpenSceneGraph");
+
+	add_wheel_plugin_path(m);
 
 	osgx_python::bind_core(m);
 	osgx_python::bind_callbacks(m);

@@ -373,7 +373,7 @@ if(OSGX_BUILD_UTILS)
 	add_subdirectory("utils")
 endif()
 
-if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
+if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 	if(NOT EXISTS "${OSGX_OPENSCENEGRAPH_PY_DIR}/etc/pybind11/CMakeLists.txt")
 		message(FATAL_ERROR
 			"OSGX_BUILD_PYTHON is ON, but OSGX_OPENSCENEGRAPH_PY_DIR "
@@ -383,7 +383,11 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 		)
 	endif()
 
-	add_subdirectory("${OSGX_OPENSCENEGRAPH_PY_DIR}/etc/pybind11" "ext/pybind11")
+	# An embedding parent may already provide this exact vendored pybind11
+	# target. Reusing it avoids defining the targets a second time.
+	if(NOT TARGET pybind11::module)
+		add_subdirectory("${OSGX_OPENSCENEGRAPH_PY_DIR}/etc/pybind11" "ext/pybind11")
+	endif()
 
 	# The bindings are split across ext/python/osgx-*.cpp -- one translation unit per osgx::
 	# submodule (see ext/python/osgx-python.hpp for the bind_*() declarations) -- instead of one
@@ -475,4 +479,10 @@ if(OSGX_BUILD_PYTHON AND Python3_Development_FOUND)
 	)
 	target_link_libraries(osgx_python PRIVATE osgx_python_bindings)
 	osgx_compile_options(osgx_python)
+
+	if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+		set_source_files_properties("ext/python/osgx.cpp" PROPERTIES
+			COMPILE_OPTIONS "-w"
+		)
+	endif()
 endif()
