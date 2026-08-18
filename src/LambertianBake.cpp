@@ -287,7 +287,11 @@ void LambertianCubeReadback::operator()(osg::RenderInfo& ri) const {
 
 	if(_sync) glFinish();
 
+#if OSG_MIN_VERSION_REQUIRED(3, 7, 0)
+	texObj->bind(*ri.getState());
+#else
 	texObj->bind();
+#endif
 
 	readCubeMapFaces(ri.getContextID(), GL_FLOAT, false, _result);
 

@@ -128,7 +128,11 @@ void BRDFLUTReadback::operator()(osg::RenderInfo& ri) const {
 
 	if(_sync) glFinish();
 
+#if OSG_MIN_VERSION_REQUIRED(3, 7, 0)
+	texObj->bind(*ri.getState());
+#else
 	texObj->bind();
+#endif
 
 	_result = new osg::Image();
 

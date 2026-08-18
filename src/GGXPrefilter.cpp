@@ -309,7 +309,11 @@ void GGXPrefilterReadback::operator()(osg::RenderInfo& ri) const {
 	// (see GGXPrefilterOptions::syncReadback) is the async/best-effort mode.
 	if(sync) glFinish();
 
+#if OSG_MIN_VERSION_REQUIRED(3, 7, 0)
+	texObj->bind(*ri.getState());
+#else
 	texObj->bind();
+#endif
 
 	readCubeMapFaces(ri.getContextID(), GL_FLOAT, true, result);
 
