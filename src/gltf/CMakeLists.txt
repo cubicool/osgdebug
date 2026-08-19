@@ -53,6 +53,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 	# GCC 15 emits a preprocessor warning for that header in C++20 mode; keep warnings-as-errors
 	# enabled for project code while isolating the third-party compatibility warning here.
 	set_property(SOURCE TinyGLTF.cpp APPEND PROPERTY COMPILE_OPTIONS "-Wno-cpp")
+	# GCC 14's stringop-overflow analysis cannot prove the bounds in stb_image's PNG parser.
+	# This is vendored third-party code, so keep -Werror for the rest of osgx and suppress only
+	# the false positive on the translation unit that includes stb_image's implementation.
+	if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+		set_property(SOURCE TinyGLTF.cpp APPEND PROPERTY COMPILE_OPTIONS "-Wno-stringop-overflow")
+	endif()
 endif()
 
 if(OSGX_INSTALL)
