@@ -1,3 +1,4 @@
+#include "osgx/Array.hpp"
 #include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
@@ -467,20 +468,20 @@ void MaterialBuilder::applyMaterial(
 	// a factor-only material (no texture at all - e.g. Fox's roughnessFactor=0.58 with
 	// no metallicRoughnessTexture) doesn't get its authored factor silently discarded by
 	// an unconditional texture() read of an unbound unit.
-	osg::ref_ptr<osg::FloatArray> materialData = new osg::FloatArray(12);
-
-	(*materialData)[0] = baseColorFactor.x();
-	(*materialData)[1] = baseColorFactor.y();
-	(*materialData)[2] = baseColorFactor.z();
-	(*materialData)[3] = baseColorFactor.w();
-	(*materialData)[4] = static_cast<float>(pbr.roughnessFactor);
-	(*materialData)[5] = static_cast<float>(pbr.metallicFactor);
-	(*materialData)[6] = haveCoreBaseColor ? 1.0f : 0.0f;
-	(*materialData)[7] = haveMetallicRoughnessMap ? 1.0f : 0.0f;
-	(*materialData)[8] = haveOcclusion ? 1.0f : 0.0f;
-	(*materialData)[9] = haveNormalMap ? 1.0f : 0.0f;
-	(*materialData)[10] = 0.0f;
-	(*materialData)[11] = 0.0f;
+	auto materialData = osgx::make_ref<osgx::FloatArray>(
+		baseColorFactor.x(),
+		baseColorFactor.y(),
+		baseColorFactor.z(),
+		baseColorFactor.w(),
+		static_cast<float>(pbr.roughnessFactor),
+		static_cast<float>(pbr.metallicFactor),
+		haveCoreBaseColor ? 1.0f : 0.0f,
+		haveMetallicRoughnessMap ? 1.0f : 0.0f,
+		haveOcclusion ? 1.0f : 0.0f,
+		haveNormalMap ? 1.0f : 0.0f,
+		0.0f,
+		0.0f
+	);
 
 	materialData->setBufferObject(new osg::ShaderStorageBufferObject());
 

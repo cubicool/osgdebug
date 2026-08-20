@@ -173,8 +173,8 @@ int main(int argc, char** argv) {
 
 		auto capture = osgx::make_ref<osgx::platform::PointerCapture>(viewer);
 
-		viewer.addEventHandler(capture.get());
-		viewer.addEventHandler(new OrbitCaptureBridge(capture.get(), manip.get()));
+		viewer.addEventHandler(capture);
+		viewer.addEventHandler(new OrbitCaptureBridge(capture, manip));
 
 		std::cout
 			<< "OrbitAxisManipulator" << std::endl
@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
 
 				else if(key == '3') {
 					if(patrol.valid()) {
-						manip->removeUpdateCameraCallback(patrol.get());
+						manip->removeUpdateCameraCallback(patrol);
 
 						// While active, the patrol overwrote the camera's view matrix every frame --
 						// Base::updateCamera() still ran first each frame though, so the underlying
@@ -274,7 +274,7 @@ int main(int argc, char** argv) {
 
 						// LOOP never finishes on its own -- runOnce is inert here either way; the
 						// toggle above is what actually stops it.
-						manip->addUpdateCameraCallback(patrol.get(), false);
+						manip->addUpdateCameraCallback(patrol, false);
 					}
 				}
 

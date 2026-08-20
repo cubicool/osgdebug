@@ -1,5 +1,7 @@
 #include "osgx/Shapes.hpp"
 
+#include "osgx/Array.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -366,7 +368,7 @@ void Polyhedron::rebuild() {
 			throw std::invalid_argument("Polyhedron custom attribute overlaps a built-in attribute location");
 		}
 
-		expandedAttributes.push_back(makeExpandedArray(attribute.values.get(), outputCount));
+		expandedAttributes.push_back(makeExpandedArray(attribute.values, outputCount));
 	}
 
 	positions.reserve(outputCount);
@@ -402,7 +404,7 @@ void Polyhedron::rebuild() {
 						: faceVertexOffsets[faceIndex] + corner
 					;
 
-					copyElement(expandedAttributes[attributeIndex].get(), outputIndex, attribute.values.get(), sourceIndex);
+					copyElement(expandedAttributes[attributeIndex], outputIndex, attribute.values, sourceIndex);
 				}
 			}
 		}
@@ -410,8 +412,8 @@ void Polyhedron::rebuild() {
 
 	removePrimitiveSet(0, getNumPrimitiveSets());
 
-	auto positionArray = new osg::Vec3Array(positions.begin(), positions.end());
-	auto normalArray = new osg::Vec3Array(normals.begin(), normals.end());
+	auto positionArray = new osgx::Vec3Array(positions);
+	auto normalArray = new osgx::Vec3Array(normals);
 
 	positionArray->setBinding(osg::Array::BIND_PER_VERTEX);
 	normalArray->setBinding(osg::Array::BIND_PER_VERTEX);
@@ -422,7 +424,7 @@ void Polyhedron::rebuild() {
 	setVertexAttribArray(_layout.normal, normalArray);
 
 	if(!uvs.empty()) {
-		auto uvArray = new osg::Vec2Array(uvs.begin(), uvs.end());
+		auto uvArray = new osgx::Vec2Array(uvs);
 
 		uvArray->setBinding(osg::Array::BIND_PER_VERTEX);
 		setVertexAttribArray(_layout.uv, uvArray);

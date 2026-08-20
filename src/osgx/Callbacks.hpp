@@ -139,7 +139,7 @@ public:
 	}
 
 	void remove(Callback* cb) {
-		std::erase_if(_callbacks, [&](auto& p){ return p.get() == cb; });
+		std::erase_if(_callbacks, [&](auto& p){ return p == cb; });
 	}
 
 	// Index-based accessors -- kept alongside add()/remove() (not a replacement) so callers

@@ -76,7 +76,7 @@ LightSet LightSet::create(osg::StateSet* ss) {
 	ss->setAttributeAndModes(
 		new osg::ShaderStorageBufferBinding(
 			LIGHT_BINDING,
-			result._lights.get(),
+			result._lights,
 			0,
 			static_cast<GLsizeiptr>(result._lights->getTotalDataSize())
 		),

@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
 		traits->width = 800;
 		traits->height = 600;
 
-		auto gc = osgx::platform::createEGLWindow(traits.get());
+		auto gc = osgx::platform::createEGLWindow(traits);
 
 		if(!gc || !gc->valid()) {
 			std::cerr << "Failed to create EGL window" << std::endl;
@@ -145,7 +145,7 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		viewer.getCamera()->setGraphicsContext(gc.get());
+		viewer.getCamera()->setGraphicsContext(gc);
 		viewer.getCamera()->setViewport(0, 0, traits->width, traits->height);
 		viewer.getCamera()->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER);
 
@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
 		traits->width = 800;
 		traits->height = 600;
 
-		auto gc = osgx::platform::createGBMWindow(traits.get());
+		auto gc = osgx::platform::createGBMWindow(traits);
 
 		if(!gc || !gc->valid()) {
 			std::cerr
@@ -178,7 +178,7 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		viewer.getCamera()->setGraphicsContext(gc.get());
+		viewer.getCamera()->setGraphicsContext(gc);
 		viewer.getCamera()->setViewport(0, 0, traits->width, traits->height);
 		viewer.getCamera()->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER);
 

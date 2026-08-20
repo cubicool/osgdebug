@@ -83,7 +83,7 @@ osg::ref_ptr<osg::Group> createScene(std::unordered_map<uint32_t, PickEntry>& ob
 		mt->addChild(geo);
 		root->addChild(mt);
 
-		objects[static_cast<uint32_t>(i + 1)] = { mt.get(), base };
+		objects[static_cast<uint32_t>(i + 1)] = { mt, base };
 	}
 
 	return root;
@@ -141,11 +141,11 @@ int main(int argc, char** argv) {
 	if(async) {
 		auto pickTex = osgx::make_ref<osg::Texture2D>();
 
-		pickCam = osgx::makePickCamera(1, 1, pickTex.get());
+		pickCam = osgx::makePickCamera(1, 1, pickTex);
 		pickCam->addChild(scene);
 
 		auto rb = osgx::make_ref<osgx::PickReadbackAsync>(
-			pickTex.get(), 1, 1, osgx::PickReadbackAsync::Mode::CONTINUOUS
+			pickTex, 1, 1, osgx::PickReadbackAsync::Mode::CONTINUOUS
 		);
 
 		pickCam->setPostDrawCallback(rb);
@@ -153,13 +153,13 @@ int main(int argc, char** argv) {
 		rb->onEnter = onEnter;
 		rb->onLeave = onLeave;
 
-		auto* sync  = new osgx::PickCameraSync(viewer.getCamera(), true, W, H, rb.get());
-		auto* hover = new osgx::PickHoverCallback(rb.get());
+		auto* sync  = new osgx::PickCameraSync(viewer.getCamera(), true, W, H, rb);
+		auto* hover = new osgx::PickHoverCallback(rb);
 
 		sync->setNestedCallback(hover);
 		pickCam->setUpdateCallback(sync);
 
-		viewer.addEventHandler(new osgx::PickHandler(rb.get(), true));
+		viewer.addEventHandler(new osgx::PickHandler(rb, true));
 	}
 
 	// ------------------------------------------------------------------------------------------------
@@ -173,25 +173,25 @@ int main(int argc, char** argv) {
 		pickImage->allocateImage(1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE);
 
 		// makePickCamera() zeroes the image itself once attached -- see its comment for why.
-		pickCam = osgx::makePickCamera(1, 1, pickImage.get());
+		pickCam = osgx::makePickCamera(1, 1, pickImage);
 		pickCam->addChild(scene);
 
 		auto rb = osgx::make_ref<osgx::PickReadbackSync>(
-			1, osgx::spiralPick, pickImage.get(), W, H,
+			1, osgx::spiralPick, pickImage, W, H,
 			osgx::PickReadbackSync::Mode::CONTINUOUS
 		);
 
 		rb->onEnter = onEnter;
 		rb->onLeave = onLeave;
 
-		auto* sync  = new osgx::PickCameraSync(viewer.getCamera(), true, W, H, rb.get());
-		auto* hover = new osgx::PickHoverCallback(rb.get());
+		auto* sync  = new osgx::PickCameraSync(viewer.getCamera(), true, W, H, rb);
+		auto* hover = new osgx::PickHoverCallback(rb);
 
-		hover->setNestedCallback(rb.get());
+		hover->setNestedCallback(rb);
 		sync->setNestedCallback(hover);
 		pickCam->setUpdateCallback(sync);
 
-		viewer.addEventHandler(new osgx::PickHandler(rb.get(), true));
+		viewer.addEventHandler(new osgx::PickHandler(rb, true));
 	}
 
 	auto root = osgx::make_ref<osg::Group>();

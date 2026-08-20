@@ -474,7 +474,7 @@ int main(int argc, char** argv) {
 	subject = normalizeSubject(subject);
 
 	root->addChild(makeHemisphereSky(
-		skybox.valid() ? skybox.get() : environment.envMap.get(),
+		skybox.valid() ? skybox : environment.envMap,
 		skybox.valid()
 	));
 	root->addChild(subject);
@@ -529,8 +529,8 @@ int main(int argc, char** argv) {
 
 	auto capture = osgx::make_ref<osgx::platform::PointerCapture>(viewer);
 
-	viewer.addEventHandler(capture.get());
-	viewer.addEventHandler(new OrbitCaptureBridge(capture.get(), manipulator.get()));
+	viewer.addEventHandler(capture);
+	viewer.addEventHandler(new OrbitCaptureBridge(capture, manipulator));
 
 	std::cout
 		<< "OrbitAxisManipulator" << std::endl

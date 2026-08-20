@@ -147,32 +147,32 @@ int main(int argc, char** argv) {
 	if(useAsync) {
 		auto pickTex = osgx::make_ref<osg::Texture2D>();
 
-		pickCam = osgx::makePickCamera(pickW, pickH, pickTex.get());
+		pickCam = osgx::makePickCamera(pickW, pickH, pickTex);
 		pickCam->addChild(scene);
 
 		auto mode    = pick1x1 ? osgx::PickReadbackAsync::Mode::CONTINUOUS
 		                        : osgx::PickReadbackAsync::Mode::CLICK;
-		auto asyncRb = osgx::make_ref<osgx::PickReadbackAsync>(pickTex.get(), pickW, pickH, mode);
+		auto asyncRb = osgx::make_ref<osgx::PickReadbackAsync>(pickTex, pickW, pickH, mode);
 
 		pickCam->setPostDrawCallback(asyncRb);
 
-		rb = asyncRb.get();
+		rb = asyncRb;
 	} else {
 		auto pickImage = osgx::make_ref<osg::Image>();
 
 		pickImage->allocateImage(pickW, pickH, 1, GL_RGBA, GL_UNSIGNED_BYTE);
 		std::memset(pickImage->data(), 0, static_cast<std::size_t>(pickImage->getTotalSizeInBytesIncludingMipmaps()));
 
-		pickCam = osgx::makePickCamera(pickW, pickH, pickImage.get());
+		pickCam = osgx::makePickCamera(pickW, pickH, pickImage);
 		pickCam->addChild(scene);
 
 		auto mode = pick1x1 ? osgx::PickReadbackSync::Mode::CONTINUOUS
 		                     : osgx::PickReadbackSync::Mode::CLICK;
 		syncRb = osgx::make_ref<osgx::PickReadbackSync>(
-			pickSize, osgx::spiralPick, pickImage.get(), W, H, mode
+			pickSize, osgx::spiralPick, pickImage, W, H, mode
 		);
 
-		rb = syncRb.get();
+		rb = syncRb;
 	}
 
 	viewer.addEventHandler(new osgx::PickHandler(rb, pick1x1));
@@ -192,7 +192,7 @@ int main(int argc, char** argv) {
 	// In SYNC mode, PickReadbackSync is chained behind it so both run from the same callback slot.
 	auto* sync = new osgx::PickCameraSync(viewer.getCamera(), pick1x1, W, H, rb);
 
-	if(syncRb) sync->setNestedCallback(syncRb.get());
+	if(syncRb) sync->setNestedCallback(syncRb);
 
 	pickCam->setUpdateCallback(sync);
 

@@ -588,7 +588,7 @@ private:
 	void _applyPending() {
 		if(!_pendingRemoves.empty()) {
 			for(auto* cb : _pendingRemoves) {
-				std::erase_if(_callbacks, [&](const Entry& e) { return e.callback.get() == cb; });
+				std::erase_if(_callbacks, [&](const Entry& e) { return e.callback == cb; });
 			}
 
 			_pendingRemoves.clear();

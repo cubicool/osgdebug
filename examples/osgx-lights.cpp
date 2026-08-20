@@ -269,9 +269,9 @@ int main() {
 	auto shape = osgx::make_ref<osgx::Cube>(osg::Vec3(), 1.2f);
 	auto* ss = geode->getOrCreateStateSet();
 
-	geode->addDrawable(shape.get());
+	geode->addDrawable(shape);
 	ss->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
-	ss->setAttributeAndModes(makeProgram().get(), osg::StateAttribute::ON);
+	ss->setAttributeAndModes(makeProgram(), osg::StateAttribute::ON);
 	// Neutral gray (R=G=B) -- any color tint the shape shows is entirely the active light's own
 	// color, not mixed with a pre-tinted albedo.
 	ss->addUniform(new osg::Uniform("albedo", osg::Vec3(0.5f, 0.5f, 0.5f)));
@@ -295,9 +295,9 @@ int main() {
 	// the point/sphere marker reads clearly against a radius-1.2 object; spotConeLength set to
 	// SPOT_DISTANCE so the cone gizmo reaches the object instead of stopping short of it the way
 	// the library default (unit-scene-scale) would here.
-	auto gizmos = osgx::make_ref<osgx::LightGizmos>(lights, geode.get(), 0.15f, SPOT_DISTANCE);
+	auto gizmos = osgx::make_ref<osgx::LightGizmos>(lights, geode, 0.15f, SPOT_DISTANCE);
 
-	root->addChild(geode.get());
+	root->addChild(geode);
 	root->addChild(gizmos);
 
 	auto printActive = [state]() {
@@ -328,7 +328,7 @@ int main() {
 		return true;
 	}));
 
-	viewer.setSceneData(root.get());
+	viewer.setSceneData(root);
 
 	auto* manip = new osgGA::TrackballManipulator();
 

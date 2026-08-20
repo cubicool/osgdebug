@@ -1,3 +1,4 @@
+#include "osgx/Array.hpp"
 #include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
@@ -178,9 +179,9 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 				? static_cast<unsigned int>(verts->size())
 				: 1
 			;
-			auto* colors = new osg::Vec4Array(count);
+			auto* colors = new osgx::Vec4Array();
 
-			std::fill(colors->begin(), colors->end(), baseColorFactor);
+			colors->append_n(baseColorFactor, count);
 
 			geom->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
 		}
