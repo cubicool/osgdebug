@@ -21,6 +21,7 @@ OSGX_ENABLE_WARNINGS
 #include <vector>
 
 #include "osgx/LambertianBake.hpp"
+#include "osgx/Shadow.hpp"
 
 // Forward declaration only -- keeps tinygltf's header out of this public header's include list.
 // Only PBRIBL.cpp, which implements decodeIBLEnvironments(), needs the real definition.
@@ -161,13 +162,21 @@ struct PBRIBLScene {
 	bool valid() const;
 };
 
-// Applies the glTF PBR/IBL renderer to a node using reusable prepared resources.
+// Applies the glTF PBR/IBL renderer to a node using reusable prepared resources. `shadowMap`, when
+// non-null, swaps in osgx::shadow::DIRECT_LIGHTING_HOOK_SHADOWED in place of
+// osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT and wires its depth texture + shadow uniforms onto
+// `node`'s StateSet -- the caller still owns building the ShadowMap itself (its light direction
+// has to match whatever the caller populates into osgx::pbr::LightSet at ShadowMap::casterIndex)
+// and adding `shadowMap->camera` to the scene graph; this only handles the shader-side wiring.
+// Default (nullptr) is unshadowed IBL+direct lighting, unchanged from before this parameter
+// existed.
 PBRIBLScene createPBRIBLScene(
 	osg::Node* node,
 	const PBRIBLEnvironment& environment,
 	float iblDiffuseIntensity=1.0f,
 	float iblSpecularIntensity=1.0f,
-	bool diagnostics=false
+	bool diagnostics=false,
+	const osgx::shadow::ShadowMap* shadowMap=nullptr
 );
 
 }

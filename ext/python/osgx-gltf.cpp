@@ -11,6 +11,7 @@
 #include "osgx/gltf/Reader.hpp"
 #include "osgx/gltf/Shader.hpp"
 #include "osgx/gltf/SimplePlayer.hpp"
+#include "osgx/Shadow.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -775,7 +776,10 @@ void bind_gltf(py::module_& m_gltf) {
 		"iblDiffuseIntensity"_a=1.0f,
 		"iblSpecularIntensity"_a=1.0f,
 		"diagnostics"_a=false,
-		"Apply osgx::gltf's optional osgx-powered PBR/IBL renderer using prepared resources."
+		"shadowMap"_a=nullptr,
+		"Apply osgx::gltf's optional osgx-powered PBR/IBL renderer using prepared resources. Pass "
+		"an osgx.shadow.ShadowMap to shadow the key/directional light (osgx::pbr::LightSet index "
+		"shadowMap.casterIndex); omit it for today's unshadowed behavior."
 	);
 
 	py::class_<osgx::gltf::SimplePlayer>(m_gltf, "SimplePlayer")

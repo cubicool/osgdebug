@@ -20,6 +20,13 @@ PYBIND11_MODULE(osgx, m) {
 
 	osgx_python::bind_pbr(m_pbr);
 
+	auto m_shadow = m.def_submodule(
+		"shadow",
+		"osgx::shadow - directional shadow mapping for osgx::pbr::LightSet-lit scenes"
+	);
+
+	osgx_python::bind_shadow(m_shadow);
+
 	auto m_ibl = m.def_submodule(
 		"ibl",
 		"osgx::ibl - prefiltered cubemap + BRDF LUT + SH9/baked-Lambertian diffuse"

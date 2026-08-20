@@ -14,6 +14,7 @@ OSGX_ENABLE_WARNINGS
 #include "osgx/GGXPrefilter.hpp"
 #include "osgx/IBL.hpp"
 #include "osgx/PBR.hpp"
+#include "osgx/Shadow.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -184,6 +185,7 @@ void registerShaderLibs() {
 std::string resolveShaderLibs(std::string_view source) {
 	osgx::pbr::registerShaderLibs();
 	osgx::ibl::registerShaderLibs();
+	osgx::shadow::registerShaderLibs();
 
 	registerShaderLibs();
 
@@ -701,7 +703,8 @@ PBRIBLScene createPBRIBLScene(
 	const PBRIBLEnvironment& environment,
 	float iblDiffuseIntensity,
 	float iblSpecularIntensity,
-	bool diagnostics
+	bool diagnostics,
+	const osgx::shadow::ShadowMap* shadowMap
 ) {
 	// osgx::gltf::pbribl::resolveShaderLibs() below idempotently registers the generic osgx catalogs and
 	// this component's glTF catalog before expansion. This keeps the one-call helper independent of
@@ -726,13 +729,17 @@ PBRIBLScene createPBRIBLScene(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::FULL_PBR_FRAGMENT_SHADER_SRC)
 	));
-	// osgx_DirectLighting() CONTRACT's default definition -- a second, separately compiled FRAGMENT
-	// shader object with no main() of its own; GLSL cross-shader-object linking resolves the
+	// osgx_DirectLighting() CONTRACT's definition -- a second, separately compiled FRAGMENT shader
+	// object with no main() of its own; GLSL cross-shader-object linking resolves the
 	// FULL_PBR_FRAGMENT_SHADER_SRC's forward-declared osgx_DirectLighting() call against this at
 	// Program-link time. See PBR.hpp's DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT comment.
+	// `shadowMap` swaps in the shadowed variant (Shadow.hpp's DIRECT_LIGHTING_HOOK_SHADOWED) --
+	// same contract/call signature, so nothing else in this shader changes either way.
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
-		resolveShaderLibs(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT)
+		resolveShaderLibs(
+			shadowMap ? osgx::shadow::DIRECT_LIGHTING_HOOK_SHADOWED : osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT
+		)
 	));
 	// osgx_Tonemap() CONTRACT's default definition -- same pattern as DIRECT_LIGHTING_HOOK_DEFAULT
 	// above, a third, separately compiled FRAGMENT shader object with no main() of its own. See
@@ -762,6 +769,18 @@ PBRIBLScene createPBRIBLScene(
 	ss->addUniform(pis.iblDiffuseIntensity);
 	ss->addUniform(pis.iblSpecularIntensity);
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
+
+	// Shadow: unit 4 -- matches the fixed unit the old hand-rolled pyosg-lighting examples always
+	// used for their own shadowMap sampler (0-3 are glTF material, 5/6/7 are IBL above), kept here
+	// purely for continuity, not a hard requirement of anything else in this shader.
+	if(shadowMap) {
+		ss->setTextureAttributeAndModes(4, shadowMap->depthTexture, osg::StateAttribute::ON);
+		ss->addUniform(new osg::Uniform("osgx_shadowMap", 4));
+		ss->addUniform(shadowMap->shadowMatrix);
+		ss->addUniform(shadowMap->bias);
+		ss->addUniform(shadowMap->strength);
+		ss->addUniform(shadowMap->casterIndex);
+	}
 
 	// foldZUpToGLTFAxis() (PBRIBL.hpp) -- pre-folds osgx_ZUpToGLTF's fixed permutation into each
 	// row here, once, so the shader's osgx_OrientIBL() can be called directly on a raw Z-up

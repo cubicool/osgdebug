@@ -163,6 +163,7 @@ add_library(osgx SHARED
 	src/Manipulators.cpp
 	src/PBR.cpp
 	src/Picking.cpp
+	src/Shadow.cpp
 	src/Shapes.cpp
 	src/Shader.cpp
 )
@@ -184,6 +185,7 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Manipulators.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/PBR.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Picking.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shadow.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shapes.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shader.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Debug.hpp>"
@@ -399,6 +401,7 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 		"ext/python/osgx-core.cpp"
 		"ext/python/osgx-callbacks.cpp"
 		"ext/python/osgx-pbr.cpp"
+		"ext/python/osgx-shadow.cpp"
 		"ext/python/osgx-ibl.cpp"
 		"ext/python/osgx-debug.cpp"
 		"ext/python/osgx-platform.cpp"

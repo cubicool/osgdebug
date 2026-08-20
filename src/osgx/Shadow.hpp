@@ -1,0 +1,207 @@
+#pragma once
+
+#include "Core.hpp"
+#include "Shader.hpp"
+
+OSGX_DISABLE_WARNINGS
+
+#include <osg/Camera>
+#include <osg/Matrixd>
+#include <osg/Texture2D>
+#include <osg/Uniform>
+#include <osg/Vec3>
+#include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
+
+namespace osgx {
+
+// ================================================================================================
+// osgx::shadow -- directional shadow mapping, shared by any osgx::pbr::LightSet-lit scene (nothing
+// here is glTF/PBR-specific). Only ONE light -- the key/directional light -- is ever shadowed here;
+// point/spot-light shadows need a cubemap and meaningfully different frustum math, and are a
+// separate, later feature. This is the real osgx home for the shadow_cam/shadowFactor() pattern
+// OpenSceneGraph.py/examples/pyosg-lighting/08-shadows.py and 09-ibl.py both independently
+// hand-rolled (and, in 08-shadows.py's case, duplicated a second time between the model and floor
+// fragment shaders) -- see ai/project_lighting_series_pip_simplification.md for the origin.
+//
+// World-space, not eye-space: osgx::gltf::pbribl's direct-lighting call site (PBRIBL.cpp's
+// FULL_PBR_FRAGMENT_SHADER_SRC) already reconstructs a genuine world-space `worldPos` for
+// osgx_DirectLighting() (via osg_ViewMatrixInverse), unlike the old hand-rolled examples, which
+// shaded in eye space and had to compose `inverse(camView)` into their shadow matrix every frame
+// to compensate. Working in world space here instead means `shadowMatrix` is just `lightProj *
+// lightView` -- no per-frame main-camera dependency at all -- and only needs recomputing
+// (updateShadowMatrix()) if the light itself moves, which no pyosg-lighting example has ever done.
+// ================================================================================================
+
+namespace shadow {
+
+struct ShadowMapOptions {
+	int size = 1024;
+
+	// Half-FOV in degrees for the shadow camera's frustum. Deliberately generous/fixed rather than
+	// a tight fit to the scene bound -- `margin` below is what actually keeps depth precision sane
+	// as the scene bound's own radius changes; a tighter FOV would just mean placing the camera
+	// closer for the same coverage, buying nothing.
+	float halfFovDegrees = 25.0f;
+
+	// Multiplies sceneBoundRadius both when placing the shadow camera (further back for a bigger
+	// scene) and when sizing its near/far planes. Ported directly from 09-ibl.py's own
+	// investigation: a shadow camera placed at a FIXED distance from the scene puts near/far
+	// arbitrarily close together for a small scene and arbitrarily far apart for a large one --
+	// Lantern (a ~15-unit-radius glTF model) hit a ~2870:1 near:far ratio this way, collapsing
+	// shadow-map depth precision to nothing (the depth comparison in osgx_ShadowFactor() never
+	// triggers -- looks like "no shadow" but is really "no usable depth precision"). Scaling the
+	// camera's distance by the scene's own bound keeps near:far bounded to a healthy ratio
+	// regardless of scene scale, with no per-scene tuning.
+	float margin = 1.3f;
+
+	float bias = 0.005f;
+	float strength = 0.7f; // 0 = shadows have no effect, 1 = fully black
+};
+
+// A directional shadow map: owns the PRE_RENDER depth-only camera (`camera` -- add it to the
+// scene graph, e.g. as a sibling of whatever the shadowed model's own parent is, exactly where
+// the old hand-rolled examples added their own `shadow_cam`) plus the uniforms
+// pbr::DIRECT_LIGHTING_HOOK_SHADOWED reads every frame. Depth-only: no dummy color attachment
+// needed (the old hand-rolled Python examples worked around a since-irrelevant pybind11 binding
+// gap -- osg::Camera::setDrawBuffer/setReadBuffer are ordinary C++ calls here).
+struct ShadowMap {
+	osg::ref_ptr<osg::Camera> camera;
+	osg::ref_ptr<osg::Texture2D> depthTexture;
+
+	// world space -> light clip space. Set once by createDirectionalShadowMap(); only needs
+	// recomputing (updateShadowMatrix()) if the light direction changes after creation.
+	osg::ref_ptr<osg::Uniform> shadowMatrix;
+	osg::ref_ptr<osg::Uniform> bias;
+	osg::ref_ptr<osg::Uniform> strength;
+
+	// Which osgx_lights[] index (osgx::pbr::LightSet) this shadow map is cast by/matched against --
+	// DIRECT_LIGHTING_HOOK_SHADOWED multiplies exactly that light's contribution by
+	// osgx_ShadowFactor(); every other light is unaffected. Defaults to 0 (the common "index 0 is
+	// the key light" convention every existing pyosg-lighting example already follows).
+	osg::ref_ptr<osg::Uniform> casterIndex;
+
+	osg::Matrixd lightView, lightProj;
+
+	bool valid() const;
+};
+
+// Builds `camera` looking from a point `sceneBoundRadius * options.margin /
+// tan(options.halfFovDegrees)` away from `sceneBoundCenter`, back along `lightDirection`, toward
+// `sceneBoundCenter`. `lightDirection` is the ray TRAVEL direction, matching
+// osgx::pbr::LightSet::setDirectional()'s own convention -- the camera looks the opposite way,
+// toward where the light is coming FROM, same as any physical shadow-casting light would.
+ShadowMap createDirectionalShadowMap(
+	const osg::Vec3& lightDirection,
+	const osg::Vec3& sceneBoundCenter,
+	float sceneBoundRadius,
+	const ShadowMapOptions& options={}
+);
+
+// Recomputes `shadowMatrix` from `shadowMap.lightView`/`lightProj` -- call after mutating either
+// directly (e.g. a future moving-light feature); a no-op to call redundantly otherwise. Does NOT
+// reposition `camera` itself or touch its view/projection -- for a genuinely moved light, call
+// createDirectionalShadowMap() again instead.
+void updateShadowMatrix(ShadowMap& shadowMap);
+
+// GLSL uniform declarations osgx_ShadowFactor() (SHADOW_FACTOR below) and
+// pbr::DIRECT_LIGHTING_HOOK_SHADOWED both assume are already in scope. `osgx_shadowMap` is
+// intentionally left for the caller to bind to whatever texture unit it likes (no fixed
+// convention imposed here) -- see ShadowMap::depthTexture.
+inline constexpr const char* SHADOW_UNIFORMS = R"GLSL(
+uniform sampler2D osgx_shadowMap;
+uniform mat4 osgx_shadowMatrix;
+uniform float osgx_shadowBias;
+uniform float osgx_shadowStrength;
+uniform int osgx_shadowCasterIndex;
+)GLSL";
+
+// PCF 3x3 shadow test, WORLD-space -- ported from 08-shadows.py/09-ibl.py's shadowFactor(),
+// generalized from the eye-space `vPosition` those files fed it to a world-space `worldPos`
+// instead (see the file-level comment above for why). Requires SHADOW_UNIFORMS already in scope.
+inline constexpr const char* SHADOW_FACTOR = R"GLSL(
+float osgx_ShadowFactor(vec3 worldPos) {
+	vec4 sc = osgx_shadowMatrix * vec4(worldPos, 1.0);
+
+	sc /= sc.w;
+
+	vec3 uv = sc.xyz * 0.5 + 0.5;
+
+	if(any(lessThan(uv, vec3(0.0))) || any(greaterThan(uv, vec3(1.0)))) return 1.0;
+
+	vec2 sz = 1.0 / vec2(textureSize(osgx_shadowMap, 0));
+	float shadow = 0.0;
+
+	for(int x = -1; x <= 1; x++) {
+		for(int y = -1; y <= 1; y++) {
+			shadow += (
+				uv.z - osgx_shadowBias > texture(osgx_shadowMap, uv.xy + vec2(x, y) * sz).r
+			) ? 1.0 : 0.0;
+		}
+	}
+
+	return mix(1.0, 1.0 - osgx_shadowStrength, shadow / 9.0);
+}
+)GLSL";
+
+// Shadowed counterpart to osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT (PBR.hpp) -- identical per-light
+// dispatch loop, except the light at index `osgx_shadowCasterIndex` (default 0, the "index 0 is
+// the key light" convention every existing pyosg-lighting example already follows) has its
+// contribution multiplied by osgx_ShadowFactor(worldPos), computed once per fragment (not once per
+// light -- it only depends on position, not which light is being evaluated). A caller with a
+// ShadowMap adds THIS shader object instead of DIRECT_LIGHTING_HOOK_DEFAULT -- same hook-swap
+// mechanism (see PBR.hpp's DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT contract comment),
+// no other shader changes needed: both define osgx_DirectLighting() with the identical (N, V,
+// worldPos, mat) signature DIRECT_LIGHTING_DECL forward-declares. Self-contained (own #version/PI/
+// #pragma lines), so not spliced by name via #pragma osgx::shadow -- deliberately NOT in
+// registerShaderLibs()'s catalog, same reasoning as DIRECT_LIGHTING_HOOK_DEFAULT itself.
+inline constexpr const char* DIRECT_LIGHTING_HOOK_SHADOWED = R"GLSL(
+#version 460 core
+
+const float PI = 3.14159265359;
+
+#pragma osgx::pbr MATERIAL_STRUCT, D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, DIRECT_SPECULAR, DIRECT_DIFFUSE, POINT_LIGHT_RADIANCE, LIGHT_UNIFORMS, DIRECT_LIGHT, DIRECTIONAL_LIGHT_RADIANCE, SPOT_LIGHT_RADIANCE, SPHERE_LIGHT_SPECULAR, DIRECT_LIGHT_SPHERE
+#pragma osgx::shadow SHADOW_UNIFORMS, SHADOW_FACTOR
+
+vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
+	vec3 color = vec3(0.0);
+	float shadow = osgx_ShadowFactor(worldPos);
+
+	for(int i = 0; i < osgx_lightCount; i++) {
+		osgx_Light light = osgx_lights[i];
+		vec3 L;
+		vec3 radiance;
+
+		if(light.type == OSGX_LIGHT_TYPE_DIRECTIONAL) {
+			radiance = osgx_DirectionalLightRadiance(light.dir, light.color, light.posIntensity.w, L);
+		} else if(light.type == OSGX_LIGHT_TYPE_SPOT) {
+			radiance = osgx_SpotLightRadiance(
+				light.posIntensity, light.color, light.dir, light.spotAngles, worldPos, L
+			);
+		} else {
+			radiance = osgx_PointLightRadiance(light.posIntensity, light.color, worldPos, L);
+		}
+
+		vec3 contribution;
+
+		if(light.sourceRadius > 0.0 && light.type != OSGX_LIGHT_TYPE_DIRECTIONAL) {
+			contribution = osgx_DirectLightSphere(
+				N, V, L, light.posIntensity.xyz - worldPos, radiance, mat, light.sourceRadius
+			);
+		} else {
+			contribution = osgx_DirectLight(N, V, L, radiance, mat);
+		}
+
+		color += contribution * ((i == osgx_shadowCasterIndex) ? shadow : 1.0);
+	}
+
+	return color;
+}
+)GLSL";
+
+void registerShaderLibs();
+
+}
+
+}

@@ -11,6 +11,7 @@
 #include "Shapes.hpp"
 #include "Shader.hpp"
 #include "PBR.hpp"
+#include "Shadow.hpp"
 #include "Gizmos.hpp"
 #include "IBL.hpp"
 #include "CaptureCubeMap.hpp"
