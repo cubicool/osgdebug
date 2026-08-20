@@ -27,6 +27,13 @@ PYBIND11_MODULE(osgx, m) {
 
 	osgx_python::bind_shadow(m_shadow);
 
+	auto m_gbuffer = m.def_submodule(
+		"gbuffer",
+		"osgx::gbuffer - generic deferred G-buffer camera setup"
+	);
+
+	osgx_python::bind_gbuffer(m_gbuffer);
+
 	auto m_ibl = m.def_submodule(
 		"ibl",
 		"osgx::ibl - prefiltered cubemap + BRDF LUT + SH9/baked-Lambertian diffuse"

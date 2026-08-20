@@ -782,6 +782,90 @@ void bind_gltf(py::module_& m_gltf) {
 		"shadowMap.casterIndex); omit it for today's unshadowed behavior."
 	);
 
+	py::class_<osgx::gltf::pbribl::PBRIBLGBuffer>(m_gltf_pbribl, "PBRIBLGBuffer")
+		.def(py::init<>())
+		.def_readwrite("gbuffer", &osgx::gltf::pbribl::PBRIBLGBuffer::gbuffer)
+		.def_readwrite("albedoTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::albedoTexture)
+		.def_readwrite("normalTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::normalTexture)
+		.def_readwrite("materialTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::materialTexture)
+		.def_readwrite("emissiveTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::emissiveTexture)
+		.def_readwrite("positionTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::positionTexture)
+		.def_readwrite("depthTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::depthTexture)
+		.def("valid", &osgx::gltf::pbribl::PBRIBLGBuffer::valid)
+	;
+
+	m_gltf_pbribl.def(
+		"createPBRIBLGeometryPass",
+		&osgx::gltf::pbribl::createPBRIBLGeometryPass,
+		"node"_a,
+		"width"_a,
+		"height"_a,
+		"Deferred-split geometry pass: writes material only (albedo/view-space normal/ORM/"
+		"emissive + depth) to a PBRIBLGBuffer, no lighting. Feed the result to "
+		"createPBRIBLLightingPass()."
+	);
+
+	py::class_<osgx::gltf::pbribl::PBRIBLLightingPassOptions>(m_gltf_pbribl, "PBRIBLLightingPassOptions")
+		.def(py::init<>())
+		.def_readwrite("tonemap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::tonemap)
+		.def_readwrite("shadowMap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::shadowMap)
+		.def_readwrite("aoTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::aoTexture)
+		.def_readwrite("diagnostics", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::diagnostics)
+	;
+
+	py::class_<osgx::gltf::pbribl::PBRIBLLightingScene>(m_gltf_pbribl, "PBRIBLLightingScene")
+		.def(py::init<>())
+		.def_readwrite("node", &osgx::gltf::pbribl::PBRIBLLightingScene::node)
+		.def_readwrite(
+			"iblDiffuseIntensity",
+			&osgx::gltf::pbribl::PBRIBLLightingScene::iblDiffuseIntensity
+		)
+		.def_readwrite(
+			"iblSpecularIntensity",
+			&osgx::gltf::pbribl::PBRIBLLightingScene::iblSpecularIntensity
+		)
+		.def_readwrite(
+			"mainViewMatrix",
+			&osgx::gltf::pbribl::PBRIBLLightingScene::mainViewMatrix
+		)
+		.def_readwrite(
+			"mainViewMatrixInverse",
+			&osgx::gltf::pbribl::PBRIBLLightingScene::mainViewMatrixInverse
+		)
+		.def("valid", &osgx::gltf::pbribl::PBRIBLLightingScene::valid)
+	;
+
+	m_gltf_pbribl.def(
+		"createPBRIBLLightingPass",
+		&osgx::gltf::pbribl::createPBRIBLLightingPass,
+		"gbuffer"_a,
+		"environment"_a,
+		"mainCamera"_a,
+		"iblDiffuseIntensity"_a=1.0f,
+		"iblSpecularIntensity"_a=1.0f,
+		"options"_a=osgx::gltf::pbribl::PBRIBLLightingPassOptions{},
+		"Deferred-split lighting pass: a fullscreen quad reading `gbuffer` (position included, "
+		"not reconstructed from depth), rotating it into world space via `mainCamera`'s real "
+		"view matrix, running the same evaluateIBL()/osgx_DirectLighting() logic "
+		"createPBRIBLScene() does. Call updatePBRIBLLightingPass() from a preDrawCallback on the "
+		"FIRST PRE_RENDER camera in the scene graph every frame to keep it in sync as mainCamera "
+		"moves -- NOT from mainCamera's own preDrawCallback or from application code after "
+		"frame() returns, both of which hand this pass a stale matrix."
+	);
+	m_gltf_pbribl.def(
+		"updatePBRIBLLightingPass",
+		&osgx::gltf::pbribl::updatePBRIBLLightingPass,
+		"scene"_a,
+		"mainCamera"_a,
+		"Refreshes a PBRIBLLightingScene's manually-maintained view-matrix uniforms from "
+		"mainCamera's current matrices. Call from a preDrawCallback on the FIRST PRE_RENDER "
+		"camera in the scene graph (by render order) every frame -- every PRE_RENDER camera "
+		"finishes drawing before mainCamera's own preDrawCallback fires, so calling this from "
+		"mainCamera's callback (or from application code after viewer.frame() returns) hands the "
+		"lighting pass a one-frame-stale matrix relative to what the geometry pass just rendered "
+		"with, which shows up as artifacts that worsen while the camera is moving."
+	);
+
 	py::class_<osgx::gltf::SimplePlayer>(m_gltf, "SimplePlayer")
 		.def(py::init<osg::Node*>(), "model"_a)
 		.def("__bool__", [](const osgx::gltf::SimplePlayer& player) {

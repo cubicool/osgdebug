@@ -458,6 +458,178 @@ void main() {
 }
 )GLSL";
 
+// Geometry-pass fragment shader for the deferred split (createPBRIBLGeometryPass() below) --
+// material only, no lighting at all, not even emissive combine (emissive is stored, not added
+// yet). Reuses FULL_PBR_VERTEX_SHADER above unchanged: vNGeom/vPosition/vTangent/vUV are already
+// exactly what osgx_gltf_ShadingNormal()/osgx_gltf_GetMaterial() need, and are already VIEW
+// space, which is exactly the convention gNormal below stores (matching the main camera whose
+// real matrices createPBRIBLLightingPass()'s fullscreen quad reconstructs world-space values
+// from).
+constexpr const char GBUFFER_FRAGMENT_SHADER_SRC[] = R"GLSL(
+#version 460 core
+
+#pragma osgx::pbr MATERIAL_STRUCT
+#pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
+
+in vec3 vNGeom;
+in vec3 vPosition;
+in vec4 vTangent;
+in vec2 vUV;
+
+uniform vec3 emissiveFactor;
+
+layout(location = 0) out vec4 gAlbedo;   // rgb = albedo, a = ambient occlusion
+layout(location = 1) out vec4 gNormal;   // rgb = view-space shading normal
+layout(location = 2) out vec4 gMaterial; // r = roughness, g = metallic
+layout(location = 3) out vec4 gEmissive; // rgb = emissive (HDR), a = alpha coverage
+layout(location = 4) out vec4 gPosition; // rgb = view-space position
+
+void main() {
+	float alpha = osgx_gltf_AlphaCoverage(vUV);
+
+	if(osgx_gltf_alphaMode == 1.0 && alpha < osgx_gltf_alphaCutoff) discard;
+
+	vec3 N = osgx_gltf_ShadingNormal(vNGeom, vTangent, vPosition, vUV);
+	osgx_Material mat = osgx_gltf_GetMaterial(vUV, N);
+
+	gAlbedo = vec4(mat.albedo, mat.ao);
+	gNormal = vec4(normalize(N), 0.0);
+	gMaterial = vec4(mat.roughness, mat.metallic, 0.0, 0.0);
+	gEmissive = vec4(osgx_gltf_Emissive(vUV, emissiveFactor), alpha);
+	// Real eye-space position, straight from the vertex shader -- NOT reconstructed from depth
+	// in the lighting pass (see PBRIBLGBuffer::positionTexture's comment in PBRIBL.hpp for why).
+	gPosition = vec4(vPosition, 1.0);
+}
+)GLSL";
+
+// Lighting-pass fragment shader for the deferred split (createPBRIBLLightingPass() below) --
+// runs the SAME evaluateIBL() as FULL_PBR_FRAGMENT_SHADER_SRC above (kept as an independent
+// copy rather than a shared function: the two read N/V/worldPos from different sources --
+// varyings there, G-buffer textures here -- so sharing would need its own indirection layer for
+// no real benefit at this size) plus osgx_DirectLighting(), reading G-buffer textures (position
+// included -- NOT reconstructed from depth; see PBRIBLGBuffer::positionTexture's comment)
+// instead of interpolated per-vertex varyings. OSGX_PBRIBL_NO_TONEMAP/OSGX_PBRIBL_AO mirror
+// PBRIBLLightingPassOptions::tonemap/aoTexture -- see that struct's comment in PBRIBL.hpp for
+// why each is an independent opt-out/opt-in rather than one flag.
+constexpr const char LIGHTING_FRAGMENT_SHADER_SRC[] = R"GLSL(
+#version 460 core
+#pragma import_defines ( OSGX_PBRIBL_DIAGNOSTICS, OSGX_PBRIBL_NO_TONEMAP, OSGX_PBRIBL_AO )
+
+const float PI = 3.14159265359;
+
+#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_DECL, DIRECT_LIGHTING_DECL
+
+in vec2 vUV;
+
+uniform sampler2D gAlbedo;
+uniform sampler2D gNormal;
+uniform sampler2D gMaterial;
+uniform sampler2D gEmissive;
+uniform sampler2D gPosition;
+
+// Manually maintained every frame by updatePBRIBLLightingPass() -- see that function's comment
+// (and createPBRIBLLightingPass()'s) for why this quad's own osg_ViewMatrix/osg_ViewMatrixInverse
+// can't be trusted the way FULL_PBR_FRAGMENT_SHADER_SRC's forward-pass equivalents can. No
+// projection-matrix uniform here -- position comes straight from gPosition, not a depth
+// reconstruction, so only the VIEW matrix (genuinely consistent across nested cameras) is needed.
+uniform mat4 osgx_mainViewMatrix;
+uniform mat4 osgx_mainViewMatrixInverse;
+
+uniform samplerCube envMap;
+uniform sampler2D brdfLUT;
+uniform samplerCube diffuseEnv;
+uniform float iblDiffuseIntensity;
+uniform float iblSpecularIntensity;
+uniform vec3 iblAxis[3];
+
+#ifdef OSGX_PBRIBL_AO
+uniform sampler2D aoTex;
+#endif
+
+out vec4 fragColor;
+
+struct Lighting {
+	vec3 diffuse;
+	vec3 specular;
+};
+
+vec3 osgx_OrientIBL(vec3 d) {
+	return vec3(dot(d, iblAxis[0]), dot(d, iblAxis[1]), dot(d, iblAxis[2]));
+}
+
+Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
+	Lighting result;
+
+	vec3 diffuseIrradiance = texture(diffuseEnv, osgx_OrientIBL(N)).rgb;
+	float maxMip = float(max(textureQueryLevels(envMap) - 2, 0));
+	vec3 R = reflect(-V, N);
+	vec3 R_gl = osgx_OrientIBL(R);
+	vec3 prefiltered = textureLod(envMap, R_gl, mat.roughness * maxMip).rgb;
+
+	vec3 Fd = osgx_F_MultiScatter(N, V, mat.roughness, vec3(0.04), brdfLUT);
+	vec3 Fm = osgx_F_MultiScatter(N, V, mat.roughness, mat.albedo, brdfLUT);
+	vec3 kD_ibl = (1.0 - Fd) * (1.0 - mat.metallic);
+
+	result.diffuse = diffuseIrradiance * mat.albedo * kD_ibl * mat.ao * iblDiffuseIntensity;
+	result.specular = prefiltered * mix(Fd, Fm, mat.metallic) * mat.ao * iblSpecularIntensity;
+
+	return result;
+}
+
+void main() {
+	vec3 N_view = texture(gNormal, vUV).rgb;
+
+	// A cleared-but-never-written pixel has a zero-length normal -- real geometry always writes
+	// a normalized one. Cheaper and more robust than a separate coverage mask texture.
+	if(dot(N_view, N_view) < 0.0001) discard;
+
+	vec4 albedoSample = texture(gAlbedo, vUV);
+	vec4 materialSample = texture(gMaterial, vUV);
+	vec4 emissiveSample = texture(gEmissive, vUV);
+	vec3 viewPos = texture(gPosition, vUV).xyz;
+
+	osgx_Material mat;
+
+	mat.albedo = albedoSample.rgb;
+	mat.ao = albedoSample.a;
+	mat.roughness = materialSample.r;
+	mat.metallic = materialSample.g;
+	mat.F0 = mix(vec3(0.04), mat.albedo, mat.metallic);
+
+#ifdef OSGX_PBRIBL_AO
+	mat.ao *= texture(aoTex, vUV).r;
+#endif
+
+	// Specular AA (see PBR.hpp's SPECULAR_AA) works from screen-space derivatives, which are
+	// available on a G-buffer texture sample exactly the same way they are on an interpolated
+	// varying -- sampling a neighboring fragment's own written normal here is the standard
+	// deferred-renderer form of this technique, not an approximation of the forward-pass one.
+	vec3 N_view_n = normalize(N_view);
+
+	mat.roughness = osgx_SpecularAA(N_view_n, mat.roughness);
+
+	vec3 V_view = normalize(-viewPos);
+
+	mat3 invView = transpose(mat3(osgx_mainViewMatrix));
+	vec3 N = invView * N_view_n;
+	vec3 V = invView * V_view;
+	vec3 worldPos = (osgx_mainViewMatrixInverse * vec4(viewPos, 1.0)).xyz;
+
+	Lighting ambient = evaluateIBL(mat, N, V);
+	vec3 surface = ambient.diffuse + ambient.specular;
+	vec3 direct = osgx_DirectLighting(N, V, worldPos, mat);
+
+	vec3 color = surface + direct + emissiveSample.rgb;
+
+#ifndef OSGX_PBRIBL_NO_TONEMAP
+	color = osgx_Tonemap(color);
+	color = pow(color, vec3(1.0 / 2.2));
+#endif
+
+	fragColor = vec4(color, emissiveSample.a);
+}
+)GLSL";
+
 }
 
 bool PBRIBLEnvironment::valid() const {
@@ -820,6 +992,222 @@ PBRIBLScene createPBRIBLScene(
 	ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
 
 	return pis;
+}
+
+bool PBRIBLGBuffer::valid() const {
+	return gbuffer.valid()
+		&& albedoTexture.valid()
+		&& normalTexture.valid()
+		&& materialTexture.valid()
+		&& emissiveTexture.valid()
+		&& positionTexture.valid()
+		&& depthTexture.valid()
+	;
+}
+
+PBRIBLGBuffer createPBRIBLGeometryPass(osg::Node* node, int width, int height) {
+	PBRIBLGBuffer result;
+
+	if(!node) return result;
+
+	auto prog = osgx::make_ref<osg::Program>();
+
+	shader::configureProgram(*prog);
+
+	prog->setName("osgx_gltf_PBRIBLGeometryPass");
+	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
+	prog->addShader(new osg::Shader(
+		osg::Shader::FRAGMENT,
+		resolveShaderLibs(detail::GBUFFER_FRAGMENT_SHADER_SRC)
+	));
+
+	auto* ss = node->getOrCreateStateSet();
+
+	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
+
+	// Same texture-unit-labeling fix createPBRIBLScene() needs -- the loader binds the actual
+	// Texture2Ds per geometry but never sets the sampler uniforms naming which unit is which.
+	shader::configureStateSet(*ss);
+
+	static constexpr osgx::gbuffer::AttachmentFormat formats[] = {
+		osgx::gbuffer::AttachmentFormat::RGBA8,   // gAlbedo
+		osgx::gbuffer::AttachmentFormat::RGB16F,  // gNormal (signed, view-space)
+		osgx::gbuffer::AttachmentFormat::RGBA8,   // gMaterial
+		osgx::gbuffer::AttachmentFormat::RGBA16F, // gEmissive (HDR)
+		osgx::gbuffer::AttachmentFormat::RGBA32F  // gPosition (view-space, real precision needed)
+	};
+
+	result.gbuffer = osgx::gbuffer::createGBufferCamera(node, width, height, formats);
+
+	if(!result.gbuffer.valid()) return result;
+
+	result.albedoTexture = result.gbuffer.colorTextures[0];
+	result.normalTexture = result.gbuffer.colorTextures[1];
+	result.materialTexture = result.gbuffer.colorTextures[2];
+	result.emissiveTexture = result.gbuffer.colorTextures[3];
+	result.positionTexture = result.gbuffer.colorTextures[4];
+	result.depthTexture = result.gbuffer.depthTexture;
+
+	return result;
+}
+
+bool PBRIBLLightingScene::valid() const { return node.valid(); }
+
+// The fullscreen quad's own camera is necessarily ABSOLUTE_RF/identity-view/identity-projection
+// (that's what makes an NDC quad cover the screen) -- OSG's automatic osg_ViewMatrix therefore
+// resolves to identity on it, not `mainCamera`'s real matrices. Rather than fight that (as
+// createPBRIBLScene()'s forward-pass shader can, by simply living on real scene geometry under
+// the real camera), this pass carries its own osgx_mainViewMatrix/osgx_mainViewMatrixInverse
+// uniforms, populated once here and kept current by updatePBRIBLLightingPass() every frame --
+// the same fix 11-sketchfab.py's own Increment 1 needed for exactly this reason. There is
+// deliberately NO projection-matrix uniform: an earlier version reconstructed view-space
+// position from gDepth + an inverse projection matrix here, which turned out to be unreliable
+// -- each nested PRE_RENDER camera (this lighting pass, the geometry pass, mainCamera itself)
+// clamps its own PRIVATE per-camera projection copy during its own cull pass and never writes
+// that clamped result back onto the Camera object, so a projection matrix read off `mainCamera`
+// after the fact does not reliably match what the geometry pass actually used to write depth --
+// confirmed as the real cause of a live position/shadow artifact that visibly worsened while
+// orbiting the camera. `gPosition` (PBRIBLGBuffer) sidesteps the problem entirely by writing
+// real position straight from the vertex shader instead; only the VIEW matrix is reconstructed
+// here now, and that one genuinely is shared correctly across RELATIVE_RF-nested cameras.
+PBRIBLLightingScene createPBRIBLLightingPass(
+	const PBRIBLGBuffer& gbuffer,
+	const PBRIBLEnvironment& environment,
+	osg::Camera* mainCamera,
+	float iblDiffuseIntensity,
+	float iblSpecularIntensity,
+	const PBRIBLLightingPassOptions& options
+) {
+	PBRIBLLightingScene result;
+
+	if(!gbuffer.valid() || !environment.valid() || !mainCamera) return result;
+
+	auto prog = osgx::make_ref<osg::Program>();
+
+	prog->setName("osgx_gltf_PBRIBLLightingPass");
+	prog->addShader(new osg::Shader(osg::Shader::VERTEX, osgx::ibl::FULLSCREEN_VERT));
+	prog->addShader(new osg::Shader(
+		osg::Shader::FRAGMENT,
+		resolveShaderLibs(detail::LIGHTING_FRAGMENT_SHADER_SRC)
+	));
+	prog->addShader(new osg::Shader(
+		osg::Shader::FRAGMENT,
+		resolveShaderLibs(
+			options.shadowMap
+				? osgx::shadow::DIRECT_LIGHTING_HOOK_SHADOWED
+				: osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT
+		)
+	));
+
+	if(options.tonemap) {
+		prog->addShader(new osg::Shader(
+			osg::Shader::FRAGMENT,
+			resolveShaderLibs(osgx::pbr::TONEMAP_HOOK_DEFAULT)
+		));
+	}
+
+	auto quad = osg::createTexturedQuadGeometry(
+		osg::Vec3(-1, -1, 0), osg::Vec3(2, 0, 0), osg::Vec3(0, 2, 0)
+	);
+	auto geode = osgx::make_ref<osg::Geode>();
+
+	geode->addDrawable(quad);
+
+	auto cam = osgx::make_ref<osg::Camera>();
+
+	// POST_RENDER, drawing to whatever framebuffer this camera ends up under (the backbuffer,
+	// if added directly to the viewer's scene graph) -- the "pipeline ends here" default that
+	// matches options.tonemap's own default (true). A caller chaining more passes after this
+	// one (bloom, exposure, etc.) with options.tonemap=false still gets a valid camera back;
+	// re-target it to an offscreen texture (attach() + PRE_RENDER) themselves.
+	cam->setName("osgx_gltf_PBRIBLLightingPass");
+	cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+	cam->setRenderOrder(osg::Camera::POST_RENDER);
+	cam->setClearMask(0);
+	cam->setProjectionMatrix(osg::Matrix::identity());
+	cam->setViewMatrix(osg::Matrix::identity());
+	cam->addChild(geode);
+
+	auto* ss = cam->getOrCreateStateSet();
+
+	ss->setAttributeAndModes(prog, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(0, gbuffer.albedoTexture, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(1, gbuffer.normalTexture, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(2, gbuffer.materialTexture, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(3, gbuffer.emissiveTexture, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(4, gbuffer.positionTexture, osg::StateAttribute::ON);
+	ss->addUniform(new osg::Uniform("gAlbedo", 0));
+	ss->addUniform(new osg::Uniform("gNormal", 1));
+	ss->addUniform(new osg::Uniform("gMaterial", 2));
+	ss->addUniform(new osg::Uniform("gEmissive", 3));
+	ss->addUniform(new osg::Uniform("gPosition", 4));
+	ss->setTextureAttributeAndModes(5, environment.envMap, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(6, environment.brdfLUT, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(7, environment.diffuseEnv, osg::StateAttribute::ON);
+	ss->addUniform(new osg::Uniform("envMap", 5));
+	ss->addUniform(new osg::Uniform("brdfLUT", 6));
+	ss->addUniform(new osg::Uniform("diffuseEnv", 7));
+
+	result.iblDiffuseIntensity = new osg::Uniform("iblDiffuseIntensity", iblDiffuseIntensity);
+	result.iblSpecularIntensity = new osg::Uniform("iblSpecularIntensity", iblSpecularIntensity);
+	ss->addUniform(result.iblDiffuseIntensity);
+	ss->addUniform(result.iblSpecularIntensity);
+
+	auto* iblAxis = new osg::Uniform(osg::Uniform::FLOAT_VEC3, "iblAxis", 3);
+
+	for(std::size_t i = 0; i < environment.iblAxis.size(); i++) {
+		iblAxis->setElement(
+			static_cast<unsigned int>(i), foldZUpToGLTFAxis(environment.iblAxis[i])
+		);
+	}
+
+	ss->addUniform(iblAxis);
+
+	result.mainViewMatrix = new osg::Uniform("osgx_mainViewMatrix", osg::Matrixf::identity());
+	result.mainViewMatrixInverse = new osg::Uniform(
+		"osgx_mainViewMatrixInverse", osg::Matrixf::identity()
+	);
+	ss->addUniform(result.mainViewMatrix);
+	ss->addUniform(result.mainViewMatrixInverse);
+
+	if(!options.tonemap) ss->setDefine("OSGX_PBRIBL_NO_TONEMAP");
+	if(options.diagnostics) ss->setDefine("OSGX_PBRIBL_DIAGNOSTICS");
+
+	if(options.aoTexture) {
+		ss->setTextureAttributeAndModes(8, options.aoTexture, osg::StateAttribute::ON);
+		ss->addUniform(new osg::Uniform("aoTex", 8));
+		ss->setDefine("OSGX_PBRIBL_AO");
+	}
+
+	if(options.shadowMap) {
+		ss->setTextureAttributeAndModes(9, options.shadowMap->depthTexture, osg::StateAttribute::ON);
+		ss->addUniform(new osg::Uniform("osgx_shadowMap", 9));
+		ss->addUniform(options.shadowMap->shadowMatrix);
+		ss->addUniform(options.shadowMap->bias);
+		ss->addUniform(options.shadowMap->strength);
+		ss->addUniform(options.shadowMap->casterIndex);
+	}
+
+	ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
+
+	result.node = cam;
+
+	updatePBRIBLLightingPass(result, mainCamera);
+
+	return result;
+}
+
+void updatePBRIBLLightingPass(PBRIBLLightingScene& scene, const osg::Camera* mainCamera) {
+	if(!scene.valid() || !mainCamera) return;
+
+	if(scene.mainViewMatrix) {
+		scene.mainViewMatrix->set(osg::Matrixf(mainCamera->getViewMatrix()));
+	}
+
+	if(scene.mainViewMatrixInverse) {
+		scene.mainViewMatrixInverse->set(osg::Matrixf(mainCamera->getInverseViewMatrix()));
+	}
 }
 
 }

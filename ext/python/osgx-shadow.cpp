@@ -37,7 +37,7 @@ void bind_shadow(py::module_& m_shadow) {
 	py::class_<osgx::shadow::ShadowMapOptions>(m_shadow, "ShadowMapOptions")
 		.def(py::init<>())
 		.def_readwrite("size", &osgx::shadow::ShadowMapOptions::size)
-		.def_readwrite("halfFovDegrees", &osgx::shadow::ShadowMapOptions::halfFovDegrees)
+		.def_readwrite("extent", &osgx::shadow::ShadowMapOptions::extent)
 		.def_readwrite("margin", &osgx::shadow::ShadowMapOptions::margin)
 		.def_readwrite("bias", &osgx::shadow::ShadowMapOptions::bias)
 		.def_readwrite("strength", &osgx::shadow::ShadowMapOptions::strength)
@@ -72,7 +72,21 @@ void bind_shadow(py::module_& m_shadow) {
 		&osgx::shadow::updateShadowMatrix,
 		"shadowMap"_a,
 		"Recomputes shadowMatrix from shadowMap.lightView/lightProj -- only needed after mutating "
-		"either directly (e.g. a moving light); a no-op to call redundantly otherwise."
+		"either directly; a no-op to call redundantly otherwise. Does NOT reposition the camera "
+		"itself -- see repositionDirectionalShadowMap() for that."
+	);
+	m_shadow.def(
+		"repositionDirectionalShadowMap",
+		&osgx::shadow::repositionDirectionalShadowMap,
+		"shadowMap"_a,
+		"lightDirection"_a,
+		"sceneBoundCenter"_a,
+		"sceneBoundRadius"_a,
+		"options"_a=osgx::shadow::ShadowMapOptions{},
+		"Repositions an EXISTING ShadowMap for a new light direction/scene bound, in place -- no "
+		"new camera/FBO/depth-texture allocation, just recomputed view/projection matrices. Cheap "
+		"enough to call every frame (or on every GUI-slider tick) for an interactively-moving "
+		"light; createDirectionalShadowMap() remains correct for a light fixed at scene-build time."
 	);
 }
 

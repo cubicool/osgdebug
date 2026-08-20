@@ -20,8 +20,24 @@
 //
 // Press 's' to toggle the shadow on/off (swaps back to the unshadowed hook shader) -- the
 // clearest possible A/B: same scene, same light, only the shadow term changes.
+//
+// Also exercises three fixes made to osgx::shadow itself (see osgx/TODO.md's old Shadow section,
+// and OpenSceneGraph.py's 11-sketchfab.py pivot, which is what surfaced all three):
+//
+// 1. createDirectionalShadowMap() now builds an ORTHOGRAPHIC frustum, not a perspective one -- the
+//    physically-correct shape for a directional (parallel-ray) light. This file used to get away
+//    with perspective because its floor is small/close; nothing here changed to accommodate it.
+// 2. createDirectionalShadowMap() now installs its OWN minimal depth-only Program on the shadow
+//    camera (ON|OVERRIDE) -- this file's own hand-rolled makeDepthOnlyProgram()/casters-StateSet
+//    workaround is GONE below; the library now does this for every caller, for free.
+// 3. The light direction is live-draggable (ImGui section below, OSGX_IMGUI builds only) via
+//    osgx::shadow::repositionDirectionalShadowMap() -- an in-place camera reposition, not a full
+//    createDirectionalShadowMap() rebuild, cheap enough to call on every slider tick. The light
+//    gizmo (osgx::LightGizmos) reads the same live osgx::pbr::LightSet, so it and the shadow
+//    track the dragged direction together with no manual sync code.
 
 #include "osgx/osgx.hpp"
+#include "osgx/ImGui.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -141,27 +157,6 @@ osg::ref_ptr<osg::Program> makeProgram(bool shadowed) {
 	return program;
 }
 
-// Trivial fragment shader for the shadow camera's depth-only pass: a core-profile context has no
-// fixed-function fallback, so the casters below still need SOME bound Program to produce
-// gl_Position even though nothing they write to color matters (the shadow camera's drawBuffer is
-// GL_NONE). Reuses VERTEX_SHADER unchanged; the fragment shader here does nothing on purpose.
-constexpr std::string_view DEPTH_ONLY_FRAGMENT_SHADER = R"GLSL(
-#version 460 core
-void main() {}
-)GLSL";
-
-osg::ref_ptr<osg::Program> makeDepthOnlyProgram() {
-	auto program = osgx::make_ref<osg::Program>();
-
-	program->setName("osgx_shadow_demo_depthOnly");
-	program->addShader(new osg::Shader(osg::Shader::VERTEX, std::string(VERTEX_SHADER)));
-	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, std::string(DEPTH_ONLY_FRAGMENT_SHADER)));
-	program->addBindAttribLocation("position", 0);
-	program->addBindAttribLocation("normal", 1);
-
-	return program;
-}
-
 // A flat floor quad, XY plane at the given Z, built with the same vertex-attribute layout
 // osgx::Cube uses (position=0, normal=1) so it renders through the identical Program the cubes
 // use -- no separate floor shader needed, unlike the old hand-rolled pyosg-lighting examples.
@@ -224,8 +219,11 @@ int main() {
 
 	// Directional light travel direction (down and across) -- steep enough that all three cubes
 	// cast a clearly visible shadow onto the floor without one cube's shadow completely burying
-	// another's.
-	const osg::Vec3 lightDir = osg::Vec3(0.5f, 0.35f, -1.0f);
+	// another's. Not const: the ImGui "Directional Light" section below drags this live (see
+	// repositionDirectionalShadowMap() further down).
+	osg::Vec3 lightDir = osg::Vec3(0.5f, 0.35f, -1.0f);
+	osg::Vec3 lightColor = osg::Vec3(1.0f, 0.96f, 0.88f);
+	float lightIntensity = 3.0f;
 	const osg::Vec3 sceneBoundCenter(0.0f, 0.0f, 0.5f);
 	constexpr float sceneBoundRadius = 2.2f;
 
@@ -259,7 +257,7 @@ int main() {
 	auto lights = osgx::pbr::LightSet::create(mainSS);
 
 	lights.setCount(1);
-	lights.setDirectional(0, lightDir, osg::Vec3(1.0f, 0.96f, 0.88f), 3.0f);
+	lights.setDirectional(0, lightDir, lightColor, lightIntensity);
 
 	osgx::shadow::ShadowMapOptions shadowOptions;
 
@@ -267,9 +265,10 @@ int main() {
 		lightDir, sceneBoundCenter, sceneBoundRadius, shadowOptions
 	);
 
-	casters->getOrCreateStateSet()->setAttributeAndModes(
-		makeDepthOnlyProgram().get(), osg::StateAttribute::ON
-	);
+	// No depth-only Program set here anymore -- createDirectionalShadowMap() now installs one
+	// directly on shadowMap.camera's own StateSet (ON|OVERRIDE), which applies automatically to
+	// any subgraph added as its child. `casters` used to need its own explicit workaround; it
+	// doesn't anymore, and neither does any other osgx::shadow caller.
 	shadowMap.camera->addChild(casters.get());
 
 	// Shadow texture unit 0 -- this demo has no other textures. `shadowMap`'s own bias/strength/
@@ -285,12 +284,26 @@ int main() {
 
 	mainSS->setAttributeAndModes(makeProgram(shadowed).get(), osg::StateAttribute::ON);
 
+	// minMarkerRadius/spotConeLength stay at their unit-scene-scale library defaults -- this
+	// scene's own cubes/floor are already close to unit scale, unlike osgx-lights.cpp's object.
+	// `mainGroup` (not `root`) so the gizmo sizes itself off the actual shaded scene, not the
+	// shadow camera/gizmo overlay's own unrelated bounds.
+	auto gizmos = osgx::make_ref<osgx::LightGizmos>(lights, mainGroup.get());
+
 	root->addChild(shadowMap.camera.get());
 	root->addChild(mainGroup.get());
+	root->addChild(gizmos.get());
 
 	std::cout << "osgx-shadow: shadow ON (press 's' to toggle)" << std::endl;
 
 	auto viewer = osgViewer::Viewer();
+
+#ifdef OSGX_IMGUI
+	// Dear ImGui's single global context isn't safe to touch from more than one OSG draw thread --
+	// see osgx::imgui::Widget's own class comment; harmless to set unconditionally even when
+	// OSGX_IMGUI is off.
+	viewer.setThreadingModel(osgViewer::Viewer::SingleThreaded);
+#endif
 
 	viewer.addEventHandler(new osgx::LambdaKeyHandler('s', [mainSS, &shadowed](auto&, auto&) {
 		shadowed = !shadowed;
@@ -311,6 +324,44 @@ int main() {
 	manip->home(0.0);
 	viewer.getCamera()->setClearColor(osg::Vec4(0.04f, 0.05f, 0.08f, 1.0f));
 	viewer.addEventHandler(new osgViewer::StatsHandler());
+
+#ifdef OSGX_IMGUI
+	// Proves osgx::shadow::repositionDirectionalShadowMap(): dragging the light live reshapes the
+	// shadow (and moves osgx::LightGizmos' overlay, reading the same LightSet) without ever
+	// rebuilding shadowMap's camera/FBO/depth texture.
+	//
+	// gizmos->getOverlay() pinned explicitly as the draw camera -- osgx::LightGizmos' overlay is a
+	// POST_RENDER camera nested under `root` (not a View slave), which draws AFTER the master
+	// camera's own PostDrawCallback (where Widget's default drawCamera=nullptr guess fires); left
+	// at the default, the panel rendered, then was immediately painted over by the gizmo overlay's
+	// own later draw. See Widget's own constructor comment for this exact scenario.
+	auto* gui = new osgx::imgui::Widget(viewer, gizmos->getOverlay());
+
+	gui->addSection("Directional Light", [
+		lights, &shadowMap, &lightDir, &lightColor, &lightIntensity, sceneBoundCenter, sceneBoundRadius, shadowOptions
+	](osg::RenderInfo&) {
+		bool changed = false;
+
+		changed |= ImGui::SliderFloat3("Direction", lightDir.ptr(), -1.0f, 1.0f);
+		changed |= ImGui::ColorEdit3("Color", lightColor.ptr());
+		changed |= ImGui::SliderFloat("Intensity", &lightIntensity, 0.0f, 10.0f);
+
+		if(changed) {
+			// A dragged slider can pass through (0,0,0) -- lookAt() (inside
+			// repositionDirectionalShadowMap()) is degenerate for a zero-length direction, so
+			// hold the last valid direction instead of feeding it one.
+			if(lightDir.length2() > 1e-8f) {
+				lights.setDirectional(0, lightDir, lightColor, lightIntensity);
+
+				osgx::shadow::repositionDirectionalShadowMap(
+					shadowMap, lightDir, sceneBoundCenter, sceneBoundRadius, shadowOptions
+				);
+			} else {
+				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
+			}
+		}
+	}, osgx::imgui::makeSectionOptions(false, true));
+#endif
 
 	return viewer.run();
 }

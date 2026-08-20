@@ -34,6 +34,7 @@ void bind_core(py::module_& m);
 void bind_callbacks(py::module_& m);
 void bind_pbr(py::module_& m_pbr);
 void bind_shadow(py::module_& m_shadow);
+void bind_gbuffer(py::module_& m_gbuffer);
 void bind_ibl(py::module_& m_ibl);
 void bind_debug(py::module_& m_debug);
 void bind_platform(py::module_& m_platform);

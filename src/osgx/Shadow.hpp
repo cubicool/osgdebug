@@ -39,21 +39,27 @@ namespace shadow {
 struct ShadowMapOptions {
 	int size = 1024;
 
-	// Half-FOV in degrees for the shadow camera's frustum. Deliberately generous/fixed rather than
-	// a tight fit to the scene bound -- `margin` below is what actually keeps depth precision sane
-	// as the scene bound's own radius changes; a tighter FOV would just mean placing the camera
-	// closer for the same coverage, buying nothing.
-	float halfFovDegrees = 25.0f;
+	// Half-width, in world units, of the ORTHOGRAPHIC shadow frustum's box (both the X/Y extent
+	// and the margin added to near/far -- see `margin` below). A directional light's rays are
+	// parallel by definition, so this -- not a field-of-view angle -- is what actually determines
+	// coverage; a perspective frustum here would make the light behave like a nearby spotlight
+	// whose rays diverge, which visibly disagrees with a direct-lighting term that (correctly)
+	// treats every point in the scene as lit from the same direction. 0 (the default) derives the
+	// extent from `sceneBoundRadius * margin`, matching every existing caller's coverage exactly;
+	// set explicitly to cover more than the casting geometry itself -- e.g. a floor/room that
+	// needs to receive shadows well past the model's own bound (ported from
+	// OpenSceneGraph.py's 11-sketchfab.py, which computed this by hand as
+	// `max(bound_radius * margin, floor_size)` before this became a real option).
+	float extent = 0.0f;
 
-	// Multiplies sceneBoundRadius both when placing the shadow camera (further back for a bigger
-	// scene) and when sizing its near/far planes. Ported directly from 09-ibl.py's own
-	// investigation: a shadow camera placed at a FIXED distance from the scene puts near/far
-	// arbitrarily close together for a small scene and arbitrarily far apart for a large one --
-	// Lantern (a ~15-unit-radius glTF model) hit a ~2870:1 near:far ratio this way, collapsing
-	// shadow-map depth precision to nothing (the depth comparison in osgx_ShadowFactor() never
-	// triggers -- looks like "no shadow" but is really "no usable depth precision"). Scaling the
-	// camera's distance by the scene's own bound keeps near:far bounded to a healthy ratio
-	// regardless of scene scale, with no per-scene tuning.
+	// Multiplies sceneBoundRadius both when deriving a default `extent` above and when sizing
+	// near/far planes. Ported directly from 09-ibl.py's own investigation: a shadow camera placed
+	// at a FIXED distance from the scene puts near/far arbitrarily close together for a small
+	// scene and arbitrarily far apart for a large one -- Lantern (a ~15-unit-radius glTF model)
+	// hit a ~2870:1 near:far ratio this way, collapsing shadow-map depth precision to nothing (the
+	// depth comparison in osgx_ShadowFactor() never triggers -- looks like "no shadow" but is
+	// really "no usable depth precision"). Scaling by the scene's own bound keeps near:far bounded
+	// to a healthy ratio regardless of scene scale, with no per-scene tuning.
 	float margin = 1.3f;
 
 	float bias = 0.005f;
@@ -87,11 +93,24 @@ struct ShadowMap {
 	bool valid() const;
 };
 
-// Builds `camera` looking from a point `sceneBoundRadius * options.margin /
-// tan(options.halfFovDegrees)` away from `sceneBoundCenter`, back along `lightDirection`, toward
+// Builds `camera` -- an ORTHOGRAPHIC depth-only camera, the physically-correct frustum shape for a
+// directional (parallel-ray) light -- looking from a point `2 * extent` away from
+// `sceneBoundCenter` (`extent` per ShadowMapOptions::extent), back along `lightDirection`, toward
 // `sceneBoundCenter`. `lightDirection` is the ray TRAVEL direction, matching
 // osgx::pbr::LightSet::setDirectional()'s own convention -- the camera looks the opposite way,
 // toward where the light is coming FROM, same as any physical shadow-casting light would.
+//
+// `camera`'s own StateSet carries a minimal depth-only Program (`ON|OVERRIDE`, vertex-transform
+// only, empty fragment main()) -- ANY subgraph added as `camera`'s child renders through this,
+// not through whatever (potentially expensive: normal-mapped/textured/IBL-lit) Program that
+// subgraph's own StateSet carries for the main render. Every existing pyosg-lighting example
+// previously ran its full PBR/IBL fragment shader during the shadow pass too, computing lighting
+// it then threw away except for gl_FragDepth -- see osgx/TODO.md's Shadow section ("use simpler
+// shadow shaders... do not re-use shaders and then just discard the complicated color values").
+// This does NOT alpha-test glTF MASK materials (no material/texture awareness at all, by design --
+// see ShadowMap's own comment) -- a caller whose casting geometry relies on alpha-cutout shadows
+// needs to override this Program on that geometry's own StateSet with something alpha-aware
+// (no existing pyosg-lighting example needs this yet).
 ShadowMap createDirectionalShadowMap(
 	const osg::Vec3& lightDirection,
 	const osg::Vec3& sceneBoundCenter,
@@ -100,10 +119,28 @@ ShadowMap createDirectionalShadowMap(
 );
 
 // Recomputes `shadowMatrix` from `shadowMap.lightView`/`lightProj` -- call after mutating either
-// directly (e.g. a future moving-light feature); a no-op to call redundantly otherwise. Does NOT
-// reposition `camera` itself or touch its view/projection -- for a genuinely moved light, call
-// createDirectionalShadowMap() again instead.
+// directly; a no-op to call redundantly otherwise. Does NOT reposition `camera` itself or touch
+// its view/projection -- see repositionDirectionalShadowMap() for that.
 void updateShadowMatrix(ShadowMap& shadowMap);
+
+// Repositions an EXISTING ShadowMap for a new light direction/scene bound, in place -- no new
+// camera/FBO/depth-texture allocation, just recomputed view/projection matrices (same math
+// createDirectionalShadowMap() itself uses) plus updateShadowMatrix(). Cheap enough to call every
+// frame, or on every GUI-slider tick, for an interactively-moving light -- createDirectionalShadowMap()
+// itself remains the right call for a light that's fixed at scene-build time (07/08/09/10's
+// pyosg-lighting rig, none of which move their light); this is for the genuinely-live case (a
+// light an operator can drag around, e.g. 11-sketchfab.py's orbiting key light), where rebuilding
+// the whole camera/texture on every drag tick would be wasteful and could visibly stutter.
+// `options` should match whatever was originally passed to createDirectionalShadowMap() -- passing
+// a different `size` here does NOT resize `shadowMap.depthTexture`, only the view/projection
+// matrices are recomputed.
+void repositionDirectionalShadowMap(
+	ShadowMap& shadowMap,
+	const osg::Vec3& lightDirection,
+	const osg::Vec3& sceneBoundCenter,
+	float sceneBoundRadius,
+	const ShadowMapOptions& options={}
+);
 
 // GLSL uniform declarations osgx_ShadowFactor() (SHADOW_FACTOR below) and
 // pbr::DIRECT_LIGHTING_HOOK_SHADOWED both assume are already in scope. `osgx_shadowMap` is

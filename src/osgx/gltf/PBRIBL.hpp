@@ -22,6 +22,7 @@ OSGX_ENABLE_WARNINGS
 
 #include "osgx/LambertianBake.hpp"
 #include "osgx/Shadow.hpp"
+#include "osgx/GBuffer.hpp"
 
 // Forward declaration only -- keeps tinygltf's header out of this public header's include list.
 // Only PBRIBL.cpp, which implements decodeIBLEnvironments(), needs the real definition.
@@ -178,5 +179,105 @@ PBRIBLScene createPBRIBLScene(
 	bool diagnostics=false,
 	const osgx::shadow::ShadowMap* shadowMap=nullptr
 );
+
+// ================================================================================================
+// Deferred split: createPBRIBLGeometryPass() + createPBRIBLLightingPass(), the two-camera
+// counterpart to createPBRIBLScene()'s one-shader-does-everything shape above. Generalizes the
+// G-buffer layout (gAlbedo/gNormal/gMaterial/gEmissive + depth) OpenSceneGraph.py's
+// examples/pyosg-lighting/11-sketchfab.py hand-built and validated pixel-for-pixel against
+// Sketchfab's own renderer for its deferred G-buffer + SSAO/bloom post-fx capstone -- the
+// lighting pass runs the SAME evaluateIBL()/osgx_DirectLighting() logic
+// createPBRIBLScene()'s monolithic shader does, just reading G-buffer textures instead of
+// interpolated varyings. This is an architectural split, not new shader math.
+// ================================================================================================
+
+// Populated deferred G-buffer: `gbuffer.camera` is the PRE_RENDER geometry pass (add it to the
+// scene graph); the typed texture refs below are exactly `gbuffer.colorTextures[0..4]`, broken
+// out by name for readability at the call site. `normalTexture`/`positionTexture` are VIEW-space
+// (matching the main camera whose real view matrix createPBRIBLLightingPass()'s fullscreen quad
+// rotates world-space values from) -- not world-space, unlike createPBRIBLScene()'s
+// eye-space-varyings-then-rotate-in-shader approach; the lighting pass performs that same
+// rotation itself, once per pixel instead of once per vertex. `positionTexture` is real eye-space
+// position written straight from the vertex shader -- NOT reconstructed from depth + an inverse
+// projection matrix in the lighting pass, which turns out to be fundamentally unreliable here
+// (see createPBRIBLLightingPass()'s own comment for why) -- `depthTexture` still exists for real
+// GL depth-testing during the geometry pass (and for a caller's own debug/visualize use), it just
+// isn't what the lighting pass reconstructs position from.
+struct PBRIBLGBuffer {
+	osgx::gbuffer::GBuffer gbuffer;
+	osg::ref_ptr<osg::Texture2D> albedoTexture;   // rgb = albedo, a = ambient occlusion
+	osg::ref_ptr<osg::Texture2D> normalTexture;   // rgb = view-space shading normal (RGB16F)
+	osg::ref_ptr<osg::Texture2D> materialTexture; // r = roughness, g = metallic
+	osg::ref_ptr<osg::Texture2D> emissiveTexture; // rgb = emissive (HDR), a = alpha coverage
+	osg::ref_ptr<osg::Texture2D> positionTexture; // rgb = view-space position (RGBA32F)
+	osg::ref_ptr<osg::Texture2D> depthTexture;
+
+	bool valid() const;
+};
+
+// Writes material only -- no lighting, not even emissive add (that's still stored, just not
+// combined with anything until the lighting pass). `node` becomes the geometry pass's child,
+// same as the `node` a caller would otherwise hand to createPBRIBLScene() directly.
+PBRIBLGBuffer createPBRIBLGeometryPass(osg::Node* node, int width, int height);
+
+// Extra lighting-pass inputs, each an independent, optional seam rather than one monolithic
+// flag blob:
+// - `shadowMap` mirrors createPBRIBLScene()'s own parameter exactly (nullptr = unshadowed).
+// - `aoTexture`, if set, is multiplied into the ambient term. The lighting pass does NOT bake
+//   SSAO itself -- the kernel/sample-count/blur/noise-texture choices are too taste-dependent
+//   to standardize into one osgx call; a caller builds its own SSAO pass (same shape
+//   11-sketchfab.py's own hand-built one already proved out) and feeds the result in here.
+// - `tonemap=false` skips TONEMAP_HOOK_DEFAULT and osgx_Tonemap() entirely, leaving this pass's
+//   output as raw linear HDR (no gamma either) -- for a caller chaining bloom/exposure/etc.
+//   passes after this one instead of ending the pipeline at this call.
+struct PBRIBLLightingPassOptions {
+	bool tonemap = true;
+	const osgx::shadow::ShadowMap* shadowMap = nullptr;
+	osg::Texture2D* aoTexture = nullptr;
+	bool diagnostics = false;
+};
+
+struct PBRIBLLightingScene {
+	osg::ref_ptr<osg::Node> node;
+	osg::ref_ptr<osg::Uniform> iblDiffuseIntensity;
+	osg::ref_ptr<osg::Uniform> iblSpecularIntensity;
+	// Updated by updatePBRIBLLightingPass() -- see createPBRIBLLightingPass()'s own comment for
+	// why the fullscreen quad's own ABSOLUTE_RF camera can't supply these automatically. No
+	// projection-matrix uniform here (a first version had one, for reconstructing position from
+	// depth) -- see PBRIBLGBuffer::positionTexture's comment for why that reconstruction was
+	// dropped entirely rather than fixed.
+	osg::ref_ptr<osg::Uniform> mainViewMatrix;
+	osg::ref_ptr<osg::Uniform> mainViewMatrixInverse;
+
+	bool valid() const;
+};
+
+// A fullscreen-quad lighting pass reading `gbuffer`. `mainCamera` is the real, on-screen viewer
+// camera this pass rotates the G-buffer's view-space normal/position into world space with --
+// the quad itself is necessarily ABSOLUTE_RF (an identity view/projection is what makes it cover
+// the screen in NDC), so OSG's automatic osg_ViewMatrix resolves to identity here, not
+// mainCamera's real matrices (the same PRE_RENDER-breaks-osg_ViewMatrix issue 11-sketchfab.py hit
+// and fixed with a manually-maintained view-matrix uniform). **Call updatePBRIBLLightingPass()
+// from a preDrawCallback on the FIRST PRE_RENDER camera in the scene graph (by render order),
+// NOT from mainCamera's own preDrawCallback and NOT from application code after viewer.frame()
+// returns** -- every PRE_RENDER camera finishes drawing before mainCamera's own preDrawCallback
+// fires (confirmed against OSG 3.6.5's RenderStage::draw()), and a plain post-frame() call is a
+// full frame later than that; either one hands this pass a stale matrix relative to what the
+// geometry pass actually rendered with, which shows up as position/lighting artifacts that get
+// worse while the camera is actively moving. This is exactly the bug class
+// createPBRIBLGeometryPass()'s own `positionTexture` field exists to avoid for the PROJECTION
+// matrix (which nested cameras can silently disagree about); the VIEW matrix genuinely is shared
+// correctly across RELATIVE_RF-nested cameras, so this uniform only needs to be *fresh*, not
+// reconstructed a different way.
+PBRIBLLightingScene createPBRIBLLightingPass(
+	const PBRIBLGBuffer& gbuffer,
+	const PBRIBLEnvironment& environment,
+	osg::Camera* mainCamera,
+	float iblDiffuseIntensity=1.0f,
+	float iblSpecularIntensity=1.0f,
+	const PBRIBLLightingPassOptions& options={}
+);
+
+void updatePBRIBLLightingPass(PBRIBLLightingScene& scene, const osg::Camera* mainCamera);
 
 }
