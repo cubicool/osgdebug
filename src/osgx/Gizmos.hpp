@@ -45,6 +45,9 @@ public:
 	LightMarkers(const LightMarkers& rhs, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
 	osg::Group(rhs, co) {}
 
+	// Contributes nothing to any ancestor's bounding sphere -- see LightGizmos::computeBound().
+	osg::BoundingSphere computeBound() const override { return osg::BoundingSphere(); }
+
 private:
 	class UpdateCallback: public osg::NodeCallback {
 	public:
@@ -95,6 +98,19 @@ public:
 	);
 	LightGizmos(const LightGizmos& rhs, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
 	osg::Group(rhs, co) {}
+
+	// Deliberately contributes NOTHING to any ancestor's bounding sphere. A gizmo annotates a
+	// scene; it must never influence how that scene is framed or clipped. Left to the default
+	// Group::computeBound(), this node actively fights the thing it is annotating: the overlay's
+	// plane/arrow are sized off `scene`'s own bound at construction and are therefore always
+	// LARGER than the scene, so a root bound including them makes TrackballManipulator's home
+	// framing pull back further than the model needs, and pushes CULL's computed near/far out to
+	// cover geometry the viewer does not care about. Worse, the markers track live light
+	// positions, so the root bound would shift every time a light is dragged.
+	//
+	// The tradeoff is explicit: a scene containing ONLY gizmos has no bound to frame. That is the
+	// correct reading -- there would be nothing being annotated.
+	osg::BoundingSphere computeBound() const override { return osg::BoundingSphere(); }
 
 	LightMarkers* getMarkers() const { return _markers.get(); }
 	osg::Camera* getOverlay() const { return _overlay.get(); }

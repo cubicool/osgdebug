@@ -609,6 +609,27 @@ vec3 osgx_Tonemap(vec3 color) {
 }
 )GLSL";
 
+// Pass-through, for a consumer that tonemaps somewhere else entirely (a post-processing chain
+// ending in its own exposure/tonemap pass, e.g. pyosg-lighting/11-sketchfab.py).
+//
+// **Attach this rather than attaching no tonemap hook at all.** A consumer that skips the hook and
+// #ifdef's the osgx_Tonemap() CALL out of its own shader instead has made the function's existence
+// depend on a #define -- and a define is NOT guaranteed to be present at every compile. OSG
+// pre-compiles StateSets at realize time via osgUtil::GLObjectsVisitor, which does not carry the
+// accumulated osg::State define stack that State::apply() builds during real rendering, so that
+// pass sees an EMPTY define string, keeps the call, finds no definition, and fails to link. The
+// later render-time compile (correct define string, call stripped) then succeeds, so the app runs
+// and only a "glLinkProgram FAILED ... undefined function osgx_Tonemap" in the log ever shows it.
+// Cost a full session in 11-sketchfab.py before being tracked down. An identity function is free
+// (every compiler inlines it away) and links under ANY define string.
+inline constexpr const char* TONEMAP_HOOK_IDENTITY = R"GLSL(
+#version 460 core
+
+vec3 osgx_Tonemap(vec3 color) {
+	return color;
+}
+)GLSL";
+
 // Selects the radiance function LIGHT_UNIFORMS' `osgx_lights[i].type` picks in the fragment
 // shader loop (OSGX_LIGHT_TYPE_* above) -- kept as a real C++ enum, not just the raw int a caller
 // would otherwise have to remember, same reasoning as MAX_LIGHTS. Deliberately no `Sphere` member:

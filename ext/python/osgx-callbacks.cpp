@@ -176,6 +176,33 @@ void bind_callbacks(py::module_& m) {
 			detail::DrawableDrawCallbacksStorage::get(g)->template proxy<detail::DrawableDrawCallbacksProxy>().remove(cb);
 		}, "callback"_a)
 	;
+
+	// No keep_alive on the texture argument: WriteTextureCallback holds a real
+	// osg::ref_ptr<osg::Texture>, so the C++ object outlives any Python wrapper on its own, and
+	// py::cast() returns the same PyObject* for the same pointer anyway. Nothing here needs a
+	// SlotCache/proxy either -- it's one fixed constructor argument, not an add()-retained
+	// container.
+	py::class_<
+		osgx::WriteTextureCallback,
+		osg::Camera::DrawCallback,
+		osg::ref_ptr<osgx::WriteTextureCallback>
+	>(m, "WriteTextureCallback")
+		.def(py::init<osg::Texture*>(), "texture"_a)
+		.def(
+			"write", &osgx::WriteTextureCallback::write, "filename"_a,
+			"Request that this callback's texture be written to `filename` the NEXT time the "
+			"callback runs. Does not write immediately and does not block -- the readback needs a "
+			"live GL context, so it happens inside the draw traversal rather than here.\n\n"
+			"Install it on the camera that RENDERS the texture, normally as that camera's "
+			"postDrawCallback, so the readback sees what the camera just drew (use "
+			"CameraDrawCallbacksGroup if the slot is already occupied).\n\n"
+			"Chiefly a diagnostic. It settles questions about a render target that are genuinely "
+			"hard to judge on screen -- 'is this actually flat, or just low-contrast?' becomes "
+			"unambiguous once you count distinct colors in the dump, where a uniform fill stands "
+			"out instantly. Caveat: the readback can be GPU-async-stale; if a result seems to lag "
+			"a frame, prefer live shader hot-swap over trusting the pixels."
+		)
+	;
 }
 
 }

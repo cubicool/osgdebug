@@ -777,9 +777,14 @@ void bind_gltf(py::module_& m_gltf) {
 		"iblSpecularIntensity"_a=1.0f,
 		"diagnostics"_a=false,
 		"shadowMap"_a=nullptr,
+		"tonemapHook"_a=nullptr,
 		"Apply osgx::gltf's optional osgx-powered PBR/IBL renderer using prepared resources. Pass "
 		"an osgx.shadow.ShadowMap to shadow the key/directional light (osgx::pbr::LightSet index "
-		"shadowMap.casterIndex); omit it for today's unshadowed behavior."
+		"shadowMap.casterIndex); omit it for today's unshadowed behavior.\n\n"
+		"tonemapHook: a FRAGMENT osg.Shader defining osgx_Tonemap(vec3), REPLACING the built-in "
+		"PBR Neutral curve. It substitutes rather than adds -- GLSL permits one body per "
+		"function, so attaching a second definition alongside the built-in is a link error, not "
+		"an override."
 	);
 
 	py::class_<osgx::gltf::pbribl::PBRIBLGBuffer>(m_gltf_pbribl, "PBRIBLGBuffer")
@@ -808,9 +813,14 @@ void bind_gltf(py::module_& m_gltf) {
 	py::class_<osgx::gltf::pbribl::PBRIBLLightingPassOptions>(m_gltf_pbribl, "PBRIBLLightingPassOptions")
 		.def(py::init<>())
 		.def_readwrite("tonemap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::tonemap)
+		.def_readwrite("tonemapHook", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::tonemapHook)
 		.def_readwrite("shadowMap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::shadowMap)
 		.def_readwrite("aoTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::aoTexture)
 		.def_readwrite("diagnostics", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::diagnostics)
+		.def_readwrite("colorTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::colorTexture)
+		.def_readwrite(
+			"renderOrderNum", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::renderOrderNum
+		)
 	;
 
 	py::class_<osgx::gltf::pbribl::PBRIBLLightingScene>(m_gltf_pbribl, "PBRIBLLightingScene")

@@ -7,6 +7,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Camera>
 #include <osg/Group>
 #include <osg/Node>
+#include <osg/Shader>
 #include <osg/Texture2D>
 #include <osg/TextureCubeMap>
 #include <osg/Uniform>
@@ -177,7 +178,8 @@ PBRIBLScene createPBRIBLScene(
 	float iblDiffuseIntensity=1.0f,
 	float iblSpecularIntensity=1.0f,
 	bool diagnostics=false,
-	const osgx::shadow::ShadowMap* shadowMap=nullptr
+	const osgx::shadow::ShadowMap* shadowMap=nullptr,
+	osg::Shader* tonemapHook=nullptr
 );
 
 // ================================================================================================
@@ -227,14 +229,64 @@ PBRIBLGBuffer createPBRIBLGeometryPass(osg::Node* node, int width, int height);
 //   SSAO itself -- the kernel/sample-count/blur/noise-texture choices are too taste-dependent
 //   to standardize into one osgx call; a caller builds its own SSAO pass (same shape
 //   11-sketchfab.py's own hand-built one already proved out) and feeds the result in here.
-// - `tonemap=false` skips TONEMAP_HOOK_DEFAULT and osgx_Tonemap() entirely, leaving this pass's
-//   output as raw linear HDR (no gamma either) -- for a caller chaining bloom/exposure/etc.
-//   passes after this one instead of ending the pipeline at this call.
+// - `tonemap=false` leaves this pass's output as raw linear HDR (no tone curve, no gamma) -- for
+//   a caller chaining bloom/exposure/etc. passes after this one instead of ending the pipeline at
+//   this call. It strips the CALL (via OSGX_PBRIBL_NO_TONEMAP) but still attaches a DEFINITION of
+//   osgx_Tonemap() -- the identity one, TONEMAP_HOOK_IDENTITY. Attaching no hook at all would make
+//   the function's existence depend on a #define, and a define is not guaranteed to be present at
+//   every compile: OSG's realize-time GLObjectsVisitor pre-compile pass sees an empty define
+//   string and would link a call with no definition. See TONEMAP_HOOK_IDENTITY's comment in
+//   PBR.hpp for the full mechanism.
+//
+//   Note these are two separate decisions on purpose, not one flag split in two: WHICH tone curve
+//   runs is a hook swap (see `tonemapHook`), while WHETHER this pass emits display-referred or
+//   linear output is a property of the pass's output contract, and gates the gamma encode as well
+//   as the curve. Do not "simplify" by folding the gamma into the hook -- a custom hook author
+//   would then have to remember to apply a transfer function too.
+// - `tonemapHook`, if set, is used as THE definition of osgx_Tonemap() for this pass, in place of
+//   either built-in. This is the seam for a custom tone curve (ACES, a look LUT, a filmic
+//   response); it takes precedence over `tonemap`, since supplying a curve means you want it to
+//   run. Compose it the same way any other osgx shader is composed -- a FRAGMENT osg::Shader whose
+//   source defines osgx_Tonemap(vec3), optionally splicing library snippets in by name:
+//
+//       auto hook = new osg::Shader(osg::Shader::FRAGMENT, osgx::resolveShaderLibs(R"GLSL(
+//           #version 460 core
+//           #pragma osgx::pbr TONEMAP_ACES
+//           vec3 osgx_Tonemap(vec3 color) { return osgx_TonemapACES(color); }
+//       )GLSL"));
+//
+//   Attach a hook rather than adding a second shader that defines osgx_Tonemap() alongside the
+//   built-in: GLSL permits exactly ONE body per function, so a competing definition is a link
+//   error, not an override. This pass ALWAYS attaches exactly one definition (see
+//   createPBRIBLLightingPass()'s own comment for why never-zero matters); `tonemapHook` chooses
+//   WHICH, it does not add another.
 struct PBRIBLLightingPassOptions {
 	bool tonemap = true;
+	// Custom osgx_Tonemap() definition; null uses the built-in `tonemap` selects. See the notes
+	// above -- this REPLACES the built-in hook, it is not attached alongside one.
+	osg::Shader* tonemapHook = nullptr;
 	const osgx::shadow::ShadowMap* shadowMap = nullptr;
 	osg::Texture2D* aoTexture = nullptr;
 	bool diagnostics = false;
+	// Where this pass draws. Left null (the default) it draws to whatever framebuffer the returned
+	// camera ends up under -- POST_RENDER to the backbuffer for a caller that adds it straight to
+	// the viewer, i.e. "the pipeline ends here", matching tonemap's own default of true.
+	//
+	// Set it, and the pass is BUILT as a PRE_RENDER/FBO camera targeting that texture, for callers
+	// chaining further passes (bloom, exposure, a tonemap-comparison composite) that need this
+	// pass's linear HDR result as a sampler input -- normally alongside tonemap=false, so the
+	// chain tonemaps once at its own end rather than here.
+	//
+	// This exists so that re-targeting is a supported, tested option rather than something each
+	// caller re-derives by mutating the returned camera. Hand-retargeting is easy to get subtly
+	// wrong (the clear mask and the implicit depth attachment both matter, and getting them wrong
+	// silently yields a flat, clear-colored texture -- see createPBRIBLLightingPass()'s own
+	// GL_DEPTH_TEST comment), and every caller was reproducing that same guesswork independently.
+	osg::Texture2D* colorTexture = nullptr;
+	// Render order for the PRE_RENDER camera, honored only when colorTexture is set. Needs to sort
+	// AFTER the geometry pass (and any shadow/SSAO pass feeding this one) and BEFORE whatever
+	// consumes colorTexture.
+	int renderOrderNum = 0;
 };
 
 struct PBRIBLLightingScene {

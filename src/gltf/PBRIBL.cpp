@@ -876,7 +876,8 @@ PBRIBLScene createPBRIBLScene(
 	float iblDiffuseIntensity,
 	float iblSpecularIntensity,
 	bool diagnostics,
-	const osgx::shadow::ShadowMap* shadowMap
+	const osgx::shadow::ShadowMap* shadowMap,
+	osg::Shader* tonemapHook
 ) {
 	// osgx::gltf::pbribl::resolveShaderLibs() below idempotently registers the generic osgx catalogs and
 	// this component's glTF catalog before expansion. This keeps the one-call helper independent of
@@ -919,10 +920,18 @@ PBRIBLScene createPBRIBLScene(
 	// blend above is NOT routed through osgx_AmbientLighting() -- that hook's default is
 	// specular-only (no SH-9 diffuse yet), while this scene already has a real baked Lambertian
 	// diffuseEnv cubemap; adding that shader object here would just be dead code.
-	prog->addShader(new osg::Shader(
-		osg::Shader::FRAGMENT,
-		resolveShaderLibs(osgx::pbr::TONEMAP_HOOK_DEFAULT)
-	));
+	// `tonemapHook` SUBSTITUTES this shader object -- it is never attached alongside it. GLSL
+	// permits one body per function, so a caller adding a competing osgx_Tonemap() definition gets
+	// a duplicate-definition link error, not an override. Exactly one definition, always: same
+	// invariant createPBRIBLLightingPass() documents at its own tonemap attach site.
+	if(tonemapHook) prog->addShader(tonemapHook);
+
+	else {
+		prog->addShader(new osg::Shader(
+			osg::Shader::FRAGMENT,
+			resolveShaderLibs(osgx::pbr::TONEMAP_HOOK_DEFAULT)
+		));
+	}
 
 	// resolveShaderLibs() expands the osgx snippet pragmas but preserves OSG's
 	// import_defines pragma. Let OSG assemble/cache the diagnostic shader variant
@@ -1100,10 +1109,25 @@ PBRIBLLightingScene createPBRIBLLightingPass(
 		)
 	));
 
-	if(options.tonemap) {
+	// EXACTLY ONE definition of osgx_Tonemap(), always -- never zero, never two.
+	//
+	// Never zero: OSGX_PBRIBL_NO_TONEMAP strips the CALL at render time, but that define is absent
+	// during OSG's realize-time GLObjectsVisitor pre-compile, which would then link a call with no
+	// definition. See TONEMAP_HOOK_IDENTITY's comment in PBR.hpp for the full mechanism -- the rule
+	// is that a #define may gate a call, but must never be the only thing making a function exist.
+	//
+	// Never two: GLSL allows one body per function, so a caller cannot "override" by adding a
+	// second shader defining osgx_Tonemap() -- that is a duplicate-definition link error. Which is
+	// exactly why options.tonemapHook exists: customization SUBSTITUTES this shader rather than
+	// competing with it.
+	if(options.tonemapHook) prog->addShader(options.tonemapHook);
+
+	else {
 		prog->addShader(new osg::Shader(
 			osg::Shader::FRAGMENT,
-			resolveShaderLibs(osgx::pbr::TONEMAP_HOOK_DEFAULT)
+			resolveShaderLibs(
+				options.tonemap ? osgx::pbr::TONEMAP_HOOK_DEFAULT : osgx::pbr::TONEMAP_HOOK_IDENTITY
+			)
 		));
 	}
 
@@ -1116,22 +1140,64 @@ PBRIBLLightingScene createPBRIBLLightingPass(
 
 	auto cam = osgx::make_ref<osg::Camera>();
 
-	// POST_RENDER, drawing to whatever framebuffer this camera ends up under (the backbuffer,
-	// if added directly to the viewer's scene graph) -- the "pipeline ends here" default that
-	// matches options.tonemap's own default (true). A caller chaining more passes after this
-	// one (bloom, exposure, etc.) with options.tonemap=false still gets a valid camera back;
-	// re-target it to an offscreen texture (attach() + PRE_RENDER) themselves.
 	cam->setName("osgx_gltf_PBRIBLLightingPass");
 	cam->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
-	cam->setRenderOrder(osg::Camera::POST_RENDER);
-	cam->setClearMask(0);
 	cam->setProjectionMatrix(osg::Matrix::identity());
 	cam->setViewMatrix(osg::Matrix::identity());
 	cam->addChild(geode);
 
+	if(options.colorTexture) {
+		// Offscreen: this pass feeds a further chain rather than ending it. See
+		// PBRIBLLightingPassOptions::colorTexture for why this is an option here instead of
+		// something each caller bolts on afterwards.
+		//
+		// clearMask is COLOR only, deliberately: the quad no longer depth-tests at all (see the
+		// GL_DEPTH_TEST comment below), so the implicit depth renderbuffer OSG attaches to this
+		// FBO is irrelevant and needn't be cleared every frame.
+		const int width = options.colorTexture->getTextureWidth();
+		const int height = options.colorTexture->getTextureHeight();
+
+		cam->setRenderOrder(osg::Camera::PRE_RENDER, options.renderOrderNum);
+		cam->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+		cam->setViewport(0, 0, width, height);
+		cam->setClearMask(GL_COLOR_BUFFER_BIT);
+		cam->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+		cam->attach(osg::Camera::COLOR_BUFFER0, options.colorTexture);
+		// Both a render target here and a sampler input in whatever pass consumes it -- without
+		// DYNAMIC, OSG's StateAttribute caching can treat it as unchanging after its first
+		// successful bind. Same fix GBuffer.cpp's own attachments needed.
+		options.colorTexture->setDataVariance(osg::Object::DYNAMIC);
+	}
+
+	else {
+		// POST_RENDER, drawing to whatever framebuffer this camera ends up under (the backbuffer,
+		// if added directly to the viewer's scene graph) -- the "pipeline ends here" default that
+		// matches options.tonemap's own default (true).
+		cam->setRenderOrder(osg::Camera::POST_RENDER);
+		cam->setClearMask(0);
+	}
+
 	auto* ss = cam->getOrCreateStateSet();
 
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON);
+	// This quad covers every pixel unconditionally and resolves the whole frame's shading -- there
+	// is nothing for it to be depth-tested AGAINST, so it has to own its depth state rather than
+	// inherit whatever the surrounding framebuffer happens to be carrying.
+	//
+	// Leaving this to ambient state worked only by accident, and only when this camera drew to the
+	// backbuffer: the main camera clears depth to 1.0 every frame, so the quad passed GL_LESS. The
+	// moment a caller re-targets this camera to an FBO (attach() + PRE_RENDER, the documented way
+	// to chain bloom/exposure after it), OSG attaches an IMPLICIT depth renderbuffer to that FBO
+	// (DisplaySettings::DEFAULT_IMPLICIT_BUFFER_ATTACHMENT includes IMPLICIT_DEPTH_BUFFER_ATTACHMENT;
+	// see RenderStage.cpp's own implicit-attachment block) which nothing ever clears -- undefined
+	// depth, every fragment of this quad discarded, and the attachment left holding nothing but the
+	// clear color. That failure is completely silent: the FBO is valid, the viewport is right, the
+	// draw call is issued, and the output is a single flat color, which reads as a broken shader
+	// rather than a depth-test rejection. Diagnosed exactly that way (osgx-gbuffer --rtt) after it
+	// cost a full session in pyosg-lighting/11-sketchfab.py.
+	//
+	// GL_DEPTH_TEST OFF also disables depth writes, so no osg::Depth attribute is needed alongside.
+	ss->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
 	ss->setTextureAttributeAndModes(0, gbuffer.albedoTexture, osg::StateAttribute::ON);
 	ss->setTextureAttributeAndModes(1, gbuffer.normalTexture, osg::StateAttribute::ON);
 	ss->setTextureAttributeAndModes(2, gbuffer.materialTexture, osg::StateAttribute::ON);
@@ -1171,7 +1237,9 @@ PBRIBLLightingScene createPBRIBLLightingPass(
 	ss->addUniform(result.mainViewMatrix);
 	ss->addUniform(result.mainViewMatrixInverse);
 
-	if(!options.tonemap) ss->setDefine("OSGX_PBRIBL_NO_TONEMAP");
+	// A caller-supplied hook takes precedence over `tonemap`: supplying a curve means wanting it to
+	// run, so the call (and the gamma encode this define also gates) stays in.
+	if(!options.tonemap && !options.tonemapHook) ss->setDefine("OSGX_PBRIBL_NO_TONEMAP");
 	if(options.diagnostics) ss->setDefine("OSGX_PBRIBL_DIAGNOSTICS");
 
 	if(options.aoTexture) {
