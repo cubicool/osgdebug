@@ -136,7 +136,7 @@ uniform/attribute names use the `osgx_gltf_*` prefix (for example, `osgx_gltf_Ma
 mainCamera, ...)` are a two-camera counterpart to `PBRIBLScene::create()`'s one-shader-does-
 everything shape: a geometry pass writing material-only G-buffer textures (built on
 [`osgx::GBuffer`](CORE.md#osgxgbufferhpp)), then a fullscreen-quad lighting pass running the same
-`evaluateIBL()`/`osgx_DirectLighting()` logic against those textures instead of interpolated
+`osgx_EvaluateIBL()`/`osgx_DirectLighting()` logic against those textures instead of interpolated
 varyings. `PBRIBLLightingPassOptions` carries the lighting pass's independent, optional inputs —
 `shadowMap` (same contract as `PBRIBLScene::create()`'s own parameter), `aoTexture` (an externally-
 baked occlusion result, multiplied into the ambient term — this pass does not bake it itself;

@@ -419,7 +419,9 @@ void registerIBLShaderLibs() {
 	static constexpr ShaderLib libs[] = {
 		{"SH_IRRADIANCE", "osgx_SHIrradiance", SH_IRRADIANCE},
 		{"LAMBERTIAN_IRRADIANCE", "osgx_LambertianIrradiance", LAMBERTIAN_IRRADIANCE},
-		{"HEMISPHERE_AMBIENT", "osgx_HemisphereAmbient", HEMISPHERE_AMBIENT}
+		{"HEMISPHERE_AMBIENT", "osgx_HemisphereAmbient", HEMISPHERE_AMBIENT},
+		{"IBL_LIGHTING_INPUTS", "osgx_ibl_LightingInputs", IBL_LIGHTING_INPUTS},
+		{"EVALUATE_IBL", "osgx_EvaluateIBL", EVALUATE_IBL}
 	};
 	::osgx::registerShaderLibs("osgx::ibl", libs);
 }

@@ -861,7 +861,7 @@ void bind_gltf(py::module_& m_gltf) {
 			"options"_a=osgx::gltf::pbribl::PBRIBLLightingPassOptions{},
 			"Deferred-split lighting pass: a fullscreen quad reading `gbuffer` (position included, "
 			"not reconstructed from depth), rotating it into world space via `mainCamera`'s real "
-			"view matrix, running the same evaluateIBL()/osgx_DirectLighting() logic "
+			"view matrix, running the same osgx_EvaluateIBL()/osgx_DirectLighting() logic "
 			"PBRIBLScene.create() does. Call .update() from a preDrawCallback on the "
 			"FIRST PRE_RENDER camera in the scene graph every frame to keep it in sync as mainCamera "
 			"moves -- NOT from mainCamera's own preDrawCallback or from application code after "

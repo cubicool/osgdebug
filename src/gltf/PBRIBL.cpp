@@ -175,7 +175,7 @@ float osgx_gltf_AlphaCoverage(vec2 uv) {
 // function's own comment for why this quad's own osg_ViewMatrix can't be trusted), `vUV`, and the
 // pass's single color output. Deliberately does NOT include the IBL environment uniforms
 // (envMap/brdfLUT/diffuseEnv/iblAxis/iblDiffuseIntensity/iblSpecularIntensity) or `aoTex` --
-// those are specific to callers still wanting the real evaluateIBL() path (like
+// those are specific to callers still wanting the real osgx_EvaluateIBL() path (like
 // LIGHTING_FRAGMENT_SHADER_SRC's own built-in default below), not universal G-buffer boilerplate
 // every override needs; `#pragma osgx::gltf *` still pulls all of it in for a caller that does.
 const char DEFERRED_LIGHTING_INPUTS[] = R"GLSL(
@@ -346,6 +346,7 @@ constexpr const char FULL_PBR_FRAGMENT_SHADER_SRC[] = R"GLSL(
 const float PI = 3.14159265359;
 
 #pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_DECL, DIRECT_LIGHTING_DECL
+#pragma osgx::ibl IBL_LIGHTING_INPUTS, EVALUATE_IBL
 #pragma osgx::gltf MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
 
 in vec3 vNGeom;
@@ -357,21 +358,6 @@ uniform vec3 emissiveFactor;
 uniform mat4 osg_ViewMatrix;
 uniform mat4 osg_ViewMatrixInverse;
 
-uniform samplerCube envMap; // unit 5
-uniform sampler2D brdfLUT; // unit 6
-uniform samplerCube diffuseEnv; // unit 7
-// Independent diffuse-irradiance/specular-reflection intensity, not one shared iblIntensity --
-// ported from OpenSceneGraph.py/examples/pyosg-lighting/11-sketchfab-lambertian.py's own knobs:
-// turning up diffuse SH enough to read as ambient fill also blows out reflections if the two
-// share one scalar, and turning reflections down to a sane brightness crushes ambient back to
-// near-black. Also the pair a caller dials toward zero to make punctual lights (LIGHT_UNIFORMS)
-// read more clearly against IBL -- see PBRIBLScene::create()'s PBRIBLScene::iblDiffuseIntensity/
-// iblSpecularIntensity for the live-tunable Uniform refs.
-uniform float iblDiffuseIntensity;
-uniform float iblSpecularIntensity;
-// KTX/OpenGL cubemap lookup basis. A prepared environment may override this for a legacy or
-// application-specific cube convention.
-uniform vec3 iblAxis[3];
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 // Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
 // handler - lets a caller (see osggltf-viewer.cpp) key-toggle which term is actually
@@ -385,58 +371,15 @@ uniform int disableSpecularAA;
 
 out vec4 fragColor;
 
-struct Lighting {
-	vec3 diffuse;
-	vec3 specular;
-};
-
 vec3 osgx_ZUpToGLTF(vec3 d) { return vec3(d.x, d.z, -d.y); }
 // `iblAxis` is uploaded PRE-FOLDED with osgx_ZUpToGLTF's Z-up -> glTF/Y-up permutation (see
-// osgx::gltf::pbribl::foldZUpToGLTFAxis(), PBRIBL.hpp) -- callers below pass a raw Z-up world
-// vector directly, no separate osgx_ZUpToGLTF() call needed at these two call sites.
-// osgx_ZUpToGLTF() itself stays standalone for the OSGX_PBRIBL_DIAGNOSTICS debug-normal
+// osgx::gltf::pbribl::foldZUpToGLTFAxis(), PBRIBL.hpp), consumed inside osgx_EvaluateIBL()
+// (osgx::ibl EVALUATE_IBL, pulled in by the #pragma above) via its own osgx_OrientIBL() --
+// osgx_ZUpToGLTF() itself stays standalone here for the OSGX_PBRIBL_DIAGNOSTICS debug-normal
 // visualizations further down, which have no iblAxis involved at all.
-vec3 osgx_OrientIBL(vec3 d) {
-	return vec3(dot(d, iblAxis[0]), dot(d, iblAxis[1]), dot(d, iblAxis[2]));
-}
 vec3 osgx_LinearToSRGB(vec3 c) {
 	return mix(12.92 * c, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
 		step(vec3(0.0031308), c));
-}
-
-Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
-	Lighting result;
-	mat3 invView = transpose(mat3(osg_ViewMatrix));
-	vec3 N_world = invView * N;
-	vec3 V_world = invView * V;
-
-	vec3 diffuseIrradiance = texture(diffuseEnv, osgx_OrientIBL(N_world)).rgb;
-
-	// The KTX2 prefilter has a terminal level that is not part of the Khronos GGX chain.
-	// Match the reference viewer: roughness 1 selects the last filtered level, not that
-	// terminal level.
-	float maxMip = float(max(textureQueryLevels(envMap) - 2, 0));
-	vec3 R = reflect(-V_world, N_world);
-	vec3 R_gl = osgx_OrientIBL(R);
-	vec3 prefiltered = textureLod(envMap, R_gl, mat.roughness * maxMip).rgb;
-
-	// Matches pyosg-khronos-viewer.py's fresnel()/fd/fm/mix(...) exactly: two independent
-	// multiscatter-Fresnel evaluations (dielectric F0=0.04, metal F0=albedo), mixed by metallic
-	// AFTER Fresnel - NOT a single Fresnel evaluation of a pre-blended F0=mix(0.04,albedo,metallic).
-	// The two are not equivalent: F_MultiScatter is nonlinear in F0 (see its Favg/(1-roughness)
-	// clamp terms), so mixing F0 first and evaluating Fresnel once diverges from evaluating
-	// Fresnel twice and mixing the result - most visible on partially-metallic materials at
-	// grazing angles/higher roughness. This was the actual source of a real, camera-independent
-	// specular mismatch found comparing BoomBox's handle (non-trivial metallic in its
-	// metallicRoughnessTexture) against the Khronos reference.
-	vec3 Fd = osgx_F_MultiScatter(N_world, V_world, mat.roughness, vec3(0.04), brdfLUT);
-	vec3 Fm = osgx_F_MultiScatter(N_world, V_world, mat.roughness, mat.albedo, brdfLUT);
-	vec3 kD_ibl = (1.0 - Fd) * (1.0 - mat.metallic);
-
-	result.diffuse = diffuseIrradiance * mat.albedo * kD_ibl * mat.ao * iblDiffuseIntensity;
-	result.specular = prefiltered * mix(Fd, Fm, mat.metallic) * mat.ao * iblSpecularIntensity;
-
-	return result;
 }
 
 void main() {
@@ -498,7 +441,17 @@ void main() {
 	mat.roughness = aaRoughness;
 #endif
 
-	Lighting ambient = evaluateIBL(mat, N, V);
+	// World-space N/V, shared by osgx_EvaluateIBL() (osgx::ibl EVALUATE_IBL -- requires
+	// world-space input, see its own comment) and osgx_DirectLighting() below -- both need the
+	// same rotation, so it is computed once here instead of twice (evaluateIBL() used to do this
+	// rotation internally, a second time, before this move). Named distinctly from the
+	// diagnostics block's own invView/Nworld above so both compile together regardless of
+	// OSGX_PBRIBL_DIAGNOSTICS.
+	mat3 invViewRot = transpose(mat3(osg_ViewMatrix));
+	vec3 N_world = invViewRot * N;
+	vec3 V_world = invViewRot * V;
+
+	osgx_Lighting ambient = osgx_EvaluateIBL(mat, N_world, V_world);
 	vec3 surface = ambient.diffuse + ambient.specular;
 	vec3 emissive = osgx_gltf_Emissive(vUV, emissiveFactor);
 
@@ -512,13 +465,9 @@ void main() {
 
 	// Direct/punctual lights: point, directional, and spot, e.g. a torch or a sun -- the
 	// osgx_DirectLighting() CONTRACT (see the comment above this shader) does the per-light dispatch;
-	// this shader only supplies N/V/worldPos/mat. Named distinctly from the diagnostics block's own
-	// invView/Nworld above so both compile together regardless of OSGX_PBRIBL_DIAGNOSTICS.
-	mat3 invViewRot = transpose(mat3(osg_ViewMatrix));
-	vec3 lightN = invViewRot * N;
-	vec3 lightV = invViewRot * V;
+	// this shader only supplies N/V/worldPos/mat. Reuses N_world/V_world computed above.
 	vec3 worldPos = (osg_ViewMatrixInverse * vec4(vPosition, 1.0)).xyz;
-	vec3 direct = osgx_DirectLighting(lightN, lightV, worldPos, mat);
+	vec3 direct = osgx_DirectLighting(N_world, V_world, worldPos, mat);
 
 	vec3 color = surface + direct + emissive;
 
@@ -584,14 +533,19 @@ void main() {
 )GLSL";
 
 // Lighting-pass fragment shader for the deferred split (PBRIBLLightingScene::create() below) --
-// runs the SAME evaluateIBL() as FULL_PBR_FRAGMENT_SHADER_SRC above (kept as an independent
-// copy rather than a shared function: the two read N/V/worldPos from different sources --
-// varyings there, G-buffer textures here -- so sharing would need its own indirection layer for
-// no real benefit at this size) plus osgx_DirectLighting(), reading G-buffer textures (position
-// included -- NOT reconstructed from depth; see PBRIBLGBuffer::positionTexture's comment)
-// instead of interpolated per-vertex varyings. OSGX_PBRIBL_NO_TONEMAP/OSGX_PBRIBL_AO mirror
-// PBRIBLLightingPassOptions::tonemap/aoTexture -- see that struct's comment in PBRIBL.hpp for
-// why each is an independent opt-out/opt-in rather than one flag.
+// runs the SAME osgx_EvaluateIBL() (osgx::ibl EVALUATE_IBL) as FULL_PBR_FRAGMENT_SHADER_SRC above,
+// a real shared function since 2026-08-22 (formerly two independent copies of an unprefixed
+// `evaluateIBL()` -- see TODO.md's "Generic vs. glTF-specific layering" section for why that was
+// worth fixing). The two call sites still look
+// slightly different: this shader's own N/V are already world-space by the time they reach
+// osgx_EvaluateIBL() (rotated below from the G-buffer's view-space channels), while
+// FULL_PBR_FRAGMENT_SHADER_SRC rotates its own varying-derived N/V first, since
+// osgx_EvaluateIBL() requires world-space input unconditionally and does no rotation itself.
+// Plus osgx_DirectLighting(), reading G-buffer textures (position included -- NOT reconstructed
+// from depth; see PBRIBLGBuffer::positionTexture's comment) instead of interpolated per-vertex
+// varyings. OSGX_PBRIBL_NO_TONEMAP/OSGX_PBRIBL_AO mirror PBRIBLLightingPassOptions::tonemap/
+// aoTexture -- see that struct's comment in PBRIBL.hpp for why each is an independent opt-out/
+// opt-in rather than one flag.
 constexpr const char LIGHTING_FRAGMENT_SHADER_SRC[] = R"GLSL(
 #version 460 core
 #pragma import_defines ( OSGX_PBRIBL_DIAGNOSTICS, OSGX_PBRIBL_NO_TONEMAP, OSGX_PBRIBL_AO )
@@ -599,6 +553,7 @@ constexpr const char LIGHTING_FRAGMENT_SHADER_SRC[] = R"GLSL(
 const float PI = 3.14159265359;
 
 #pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_DECL, DIRECT_LIGHTING_DECL
+#pragma osgx::ibl IBL_LIGHTING_INPUTS, EVALUATE_IBL
 // DEFERRED_LIGHTING_INPUTS/GET_GBUFFER: the same osgx_GBuffer/osgx_GetGBuffer() an
 // osgx::Hook::DeferredLighting override uses -- this built-in default is deliberately not a
 // hand-rolled special case, so the two stay provably equivalent decode paths.
@@ -610,44 +565,9 @@ const float PI = 3.14159265359;
 // projection-matrix uniform here -- position comes straight from gPosition, not a depth
 // reconstruction, so only the VIEW matrix (genuinely consistent across nested cameras) is needed.
 
-uniform samplerCube envMap;
-uniform sampler2D brdfLUT;
-uniform samplerCube diffuseEnv;
-uniform float iblDiffuseIntensity;
-uniform float iblSpecularIntensity;
-uniform vec3 iblAxis[3];
-
 #ifdef OSGX_PBRIBL_AO
 uniform sampler2D aoTex;
 #endif
-
-struct Lighting {
-	vec3 diffuse;
-	vec3 specular;
-};
-
-vec3 osgx_OrientIBL(vec3 d) {
-	return vec3(dot(d, iblAxis[0]), dot(d, iblAxis[1]), dot(d, iblAxis[2]));
-}
-
-Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
-	Lighting result;
-
-	vec3 diffuseIrradiance = texture(diffuseEnv, osgx_OrientIBL(N)).rgb;
-	float maxMip = float(max(textureQueryLevels(envMap) - 2, 0));
-	vec3 R = reflect(-V, N);
-	vec3 R_gl = osgx_OrientIBL(R);
-	vec3 prefiltered = textureLod(envMap, R_gl, mat.roughness * maxMip).rgb;
-
-	vec3 Fd = osgx_F_MultiScatter(N, V, mat.roughness, vec3(0.04), brdfLUT);
-	vec3 Fm = osgx_F_MultiScatter(N, V, mat.roughness, mat.albedo, brdfLUT);
-	vec3 kD_ibl = (1.0 - Fd) * (1.0 - mat.metallic);
-
-	result.diffuse = diffuseIrradiance * mat.albedo * kD_ibl * mat.ao * iblDiffuseIntensity;
-	result.specular = prefiltered * mix(Fd, Fm, mat.metallic) * mat.ao * iblSpecularIntensity;
-
-	return result;
-}
 
 void main() {
 	osgx_GBuffer gb = osgx_GetGBuffer(vUV);
@@ -683,7 +603,7 @@ void main() {
 	vec3 V = invView * V_view;
 	vec3 worldPos = (osgx_mainViewMatrixInverse * vec4(gb.position, 1.0)).xyz;
 
-	Lighting ambient = evaluateIBL(mat, N, V);
+	osgx_Lighting ambient = osgx_EvaluateIBL(mat, N, V);
 	vec3 surface = ambient.diffuse + ambient.specular;
 	vec3 direct = osgx_DirectLighting(N, V, worldPos, mat);
 
@@ -986,7 +906,7 @@ PBRIBLScene PBRIBLScene::create(
 	// osgx_gltf_ApplySkin()/osgx_Tonemap() CONTRACTS' default definitions -- each a separately
 	// compiled shader object with no main() of its own. See PBR.hpp's TONEMAP_DECL/
 	// TONEMAP_HOOK_DEFAULT comment and Shader.hpp's SKINNING_HOOK_IDENTITY/SKINNING_HOOK_LINEAR_BLEND
-	// comment for the full rationale. evaluateIBL()'s own diffuse/specular blend above is NOT
+	// comment for the full rationale. osgx_EvaluateIBL()'s own diffuse/specular blend above is NOT
 	// routed through osgx_AmbientLighting() -- that hook's default is specular-only (no SH-9
 	// diffuse yet), while this scene already has a real baked Lambertian diffuseEnv cubemap; there
 	// is no AmbientLighting hook slot here as a result. `hooks` SUBSTITUTES a slot's default shader
@@ -1297,11 +1217,13 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 	ss->addUniform(new osg::Uniform("gEmissive", 3));
 	ss->addUniform(new osg::Uniform("gPosition", 4));
 
-	// `environment` is now OPTIONAL -- a caller whose osgx::Hook::DeferredLighting override never
-	// calls evaluateIBL() (see that Hook's own comment, Shader.hpp) has no use for a baked/loaded
-	// IBL environment at all, and forcing one anyway meant a full HDR bake or KTX2 load purely to
-	// populate textures nothing ever samples. Skip binding envMap/brdfLUT/diffuseEnv/iblAxis
-	// entirely when environment.valid() is false, rather than binding null texture refs.
+	// `environment` is now OPTIONAL -- a caller whose osgx::Hook::DeferredLighting override doesn't
+	// need osgx_EvaluateIBL() (see that Hook's own comment, Shader.hpp -- a custom override CAN
+	// still pull it in via `#pragma osgx::ibl EVALUATE_IBL`, it just isn't required to) has no use
+	// for a baked/loaded IBL environment at all, and forcing one anyway meant a full HDR bake or
+	// KTX2 load purely to populate textures nothing ever samples. Skip binding envMap/brdfLUT/
+	// diffuseEnv/iblAxis entirely when environment.valid() is false, rather than binding null
+	// texture refs.
 	if(environment.valid()) {
 		ss->setTextureAttributeAndModes(5, environment.envMap, osg::StateAttribute::ON);
 		ss->setTextureAttributeAndModes(6, environment.brdfLUT, osg::StateAttribute::ON);

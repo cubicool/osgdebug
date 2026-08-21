@@ -160,10 +160,10 @@ struct PBRIBLScene {
 	osg::ref_ptr<osg::Uniform> disableRoughnessMap;
 	osg::ref_ptr<osg::Uniform> disableSpecularAA;
 	// Independent diffuse-irradiance/specular-reflection intensity knobs (not one shared
-	// iblIntensity -- see evaluateIBL()'s own comment in PBRIBL.cpp for why they need to move
-	// independently). Exposed as live osg::Uniform refs, same pattern as debugMode etc. above, so
-	// a caller can tune -- or dial toward zero, e.g. to make punctual lights read more clearly --
-	// after scene creation instead of only at construction time.
+	// iblIntensity -- see osgx_EvaluateIBL's IBL_LIGHTING_INPUTS comment, IBL.hpp, for why they
+	// need to move independently). Exposed as live osg::Uniform refs, same pattern as debugMode
+	// etc. above, so a caller can tune -- or dial toward zero, e.g. to make punctual lights read
+	// more clearly -- after scene creation instead of only at construction time.
 	osg::ref_ptr<osg::Uniform> iblDiffuseIntensity;
 	osg::ref_ptr<osg::Uniform> iblSpecularIntensity;
 
@@ -204,7 +204,7 @@ struct PBRIBLScene {
 // G-buffer layout (gAlbedo/gNormal/gMaterial/gEmissive + depth) OpenSceneGraph.py's
 // examples/pyosg-lighting/11-sketchfab.py hand-built and validated pixel-for-pixel against
 // Sketchfab's own renderer for its deferred G-buffer + SSAO/bloom post-fx capstone -- the
-// lighting pass runs the SAME evaluateIBL()/osgx_DirectLighting() logic
+// lighting pass runs the SAME osgx_EvaluateIBL()/osgx_DirectLighting() logic
 // PBRIBLScene::create()'s monolithic shader does, just reading G-buffer textures instead of
 // interpolated varyings. This is an architectural split, not new shader math.
 // ================================================================================================
@@ -353,11 +353,13 @@ struct PBRIBLLightingScene {
 
 	// A fullscreen-quad lighting pass reading `gbuffer`. `environment` is OPTIONAL -- pass a
 	// default-constructed (invalid) `PBRIBLEnvironment{}` for a caller whose
-	// `options.hooks[osgx::Hook::DeferredLighting]` override never calls `evaluateIBL()` (see that
-	// Hook's own comment, Shader.hpp); envMap/brdfLUT/diffuseEnv/iblAxis simply go unbound in that
-	// case rather than forcing an HDR bake or KTX2 load purely to populate textures nothing
-	// samples. `mainCamera` is the real, on-screen viewer camera this pass rotates the G-buffer's
-	// view-space normal/position into world space with -- the quad itself is necessarily
+	// `options.hooks[osgx::Hook::DeferredLighting]` override doesn't need `osgx_EvaluateIBL()`
+	// (see that Hook's own comment, Shader.hpp -- a custom override CAN still pull it in via
+	// `#pragma osgx::ibl EVALUATE_IBL`, it just isn't required to); envMap/brdfLUT/diffuseEnv/
+	// iblAxis simply go unbound in that case rather than forcing an HDR bake or KTX2 load purely
+	// to populate textures nothing samples. `mainCamera` is the real, on-screen viewer camera this
+	// pass rotates the G-buffer's view-space normal/position into world space with -- the quad
+	// itself is necessarily
 	// ABSOLUTE_RF (an identity view/projection is what
 	// makes it cover the screen in NDC), so OSG's automatic osg_ViewMatrix resolves to identity
 	// here, not mainCamera's real matrices (the same PRE_RENDER-breaks-osg_ViewMatrix issue

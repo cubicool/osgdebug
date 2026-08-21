@@ -506,9 +506,10 @@ vec3 osgx_IBLSpecular(
 // call site (`color += osgx_AmbientLighting(N, V, mat, envMap, brdfLUT, envMaxMip, iblIntensity);`);
 // it never touches osgx_IBLSpecular/osgx_F_MultiScatter directly. The DEFINITION lives in
 // AMBIENT_LIGHTING_HOOK_DEFAULT below -- specular-only (no SH-9 diffuse irradiance yet, see
-// osgx::ibl TODO.md) -- a consumer wanting real diffuse IBL (PBRIBL.cpp's own evaluateIBL(), which
-// bakes a Lambertian irradiance cubemap and blends diffuse/specular against two independent
-// intensities) supplies its own shader object defining osgx_AmbientLighting() instead of adding
+// osgx::ibl TODO.md) -- a consumer wanting real diffuse IBL (osgx_EvaluateIBL(), IBL.hpp's own
+// EVALUATE_IBL -- osgx::gltf::pbribl's PBRIBL.cpp is its own real consumer, bakes a Lambertian
+// irradiance cubemap and blends diffuse/specular against two independent intensities) supplies
+// its own shader object defining osgx_AmbientLighting() instead of adding
 // AMBIENT_LIGHTING_HOOK_DEFAULT -- same override mechanism, and why PBRIBL.cpp does not (yet) route
 // through this hook itself.
 inline constexpr const char* AMBIENT_LIGHTING_DECL = R"GLSL(

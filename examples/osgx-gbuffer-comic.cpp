@@ -6,7 +6,7 @@
 // hatch described in Shader.hpp's own Hook::DeferredLighting comment and
 // PBRIBLLightingPassOptions' own comment (PBRIBL.hpp).
 //
-// The custom shader below never calls osgx_DirectLighting()/evaluateIBL() at all -- it reads the
+// The custom shader below never calls osgx_DirectLighting()/osgx_EvaluateIBL() at all -- it reads the
 // G-buffer via osgx_GetGBuffer() (#pragma osgx::gltf DEFERRED_LIGHTING_INPUTS, GET_GBUFFER --
 // the same structured decode PBRIBLLightingScene::create()'s own built-in default uses internally)
 // and renders: quantized diffuse bands with a warm-lit/cool-shadow color-graded tint; procedural
@@ -261,7 +261,7 @@ void main() {
 	vec3 N = invView * N_view_n;
 	vec3 V = normalize(invView * normalize(-gb.position));
 
-	// Quantized "toon" diffuse band -- no osgx_DirectLighting(), no evaluateIBL(), no
+	// Quantized "toon" diffuse band -- no osgx_DirectLighting(), no osgx_EvaluateIBL(), no
 	// osgx_Tonemap() anywhere in this file. Proves the override really does replace the whole
 	// pass rather than layering onto the built-in.
 	float NdotL = max(dot(N, sunDirection), 0.0);
