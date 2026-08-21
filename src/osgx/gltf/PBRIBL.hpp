@@ -242,9 +242,12 @@ struct PBRIBLGBuffer {
 // flag blob:
 // - `shadowMap` mirrors PBRIBLScene::create()'s own parameter exactly (nullptr = unshadowed).
 // - `aoTexture`, if set, is multiplied into the ambient term. The lighting pass does NOT bake
-//   SSAO itself -- the kernel/sample-count/blur/noise-texture choices are too taste-dependent
-//   to standardize into one osgx call; a caller builds its own SSAO pass (same shape
-//   11-sketchfab.py's own hand-built one already proved out) and feeds the result in here.
+//   SSAO itself -- this stays a seam, not a parameter, since a caller may want a different
+//   occlusion source entirely (a baked lightmap, a compute-shader technique, none at all).
+//   `osgx::SSAO::create()` (GBuffer.hpp) is the standard hemisphere-kernel implementation, built
+//   for exactly this seam and ported from 11-sketchfab.py's own hand-built one; feed its
+//   `aoTexture` straight in here. A caller wanting different kernel/blur tradeoffs is still free
+//   to build its own pass instead -- this is a texture seam, not a required call.
 // - `tonemap=false` leaves this pass's output as raw linear HDR (no tone curve, no gamma) -- for
 //   a caller chaining bloom/exposure/etc. passes after this one instead of ending the pipeline at
 //   this call. It strips the CALL (via OSGX_PBRIBL_NO_TONEMAP) but still attaches a DEFINITION of
@@ -259,24 +262,49 @@ struct PBRIBLGBuffer {
 //   linear output is a property of the pass's output contract, and gates the gamma encode as well
 //   as the curve. Do not "simplify" by folding the gamma into the hook -- a custom hook author
 //   would then have to remember to apply a transfer function too.
-// - `hooks` (osgx::HookList, Shader.hpp) -- an entry for osgx::Hook::Tonemap is used as THE
-//   definition of osgx_Tonemap() for this pass, in place of either built-in. This is the seam for
-//   a custom tone curve (ACES, a look LUT, a filmic response); it takes precedence over `tonemap`,
-//   since supplying a curve means you want it to run. Compose it the same way any other osgx
-//   shader is composed -- a FRAGMENT osg::Shader whose source defines osgx_Tonemap(vec3),
-//   optionally splicing library snippets in by name:
+// - `hooks` (osgx::HookList, Shader.hpp) -- this pass supports two slots:
+//   - `osgx::Hook::Tonemap` is used as THE definition of osgx_Tonemap(), in place of either
+//     built-in. This is the seam for a custom tone curve (ACES, a look LUT, a filmic response);
+//     it takes precedence over `tonemap`, since supplying a curve means you want it to run.
+//     Compose it the same way any other osgx shader is composed -- a FRAGMENT osg::Shader whose
+//     source defines osgx_Tonemap(vec3), optionally splicing library snippets in by name:
 //
-//       auto hook = new osg::Shader(osg::Shader::FRAGMENT, osgx::resolveShaderLibs(R"GLSL(
-//           #version 460 core
-//           #pragma osgx::pbr TONEMAP_ACES
-//           vec3 osgx_Tonemap(vec3 color) { return osgx_TonemapACES(color); }
-//       )GLSL"));
+//         auto hook = new osg::Shader(osg::Shader::FRAGMENT, osgx::resolveShaderLibs(R"GLSL(
+//             #version 460 core
+//             #pragma osgx::pbr TONEMAP_ACES
+//             vec3 osgx_Tonemap(vec3 color) { return osgx_TonemapACES(color); }
+//         )GLSL"));
 //
-//       options.hooks = {{osgx::Hook::Tonemap, hook}};
+//         options.hooks = {{osgx::Hook::Tonemap, hook}};
 //
-//   A hook SUBSTITUTES rather than adding a second shader that defines osgx_Tonemap() alongside
-//   the built-in: GLSL permits exactly ONE body per function, so a competing definition is a link
-//   error, not an override. This pass ALWAYS attaches exactly one definition (see
+//   - `osgx::Hook::DeferredLighting` REPLACES this pass's entire fragment `main()` -- the "I know
+//     what I'm doing, rewrite the whole pipeline" escape hatch, not a leaf-function swap. A custom
+//     shader still gets `#pragma osgx::gltf DEFERRED_LIGHTING_INPUTS, GET_GBUFFER` for the
+//     G-buffer sampler uniforms and the structured `osgx_GBuffer`/`osgx_GetGBuffer(uv)`
+//     decode the built-in default itself uses, plus whatever other `#pragma`-registered snippets
+//     it wants (`osgx::pbr`/`osgx::ibl`/`osgx::shadow`/`osgx::gltf`) -- it's free to ignore
+//     `osgx_DirectLighting()`/`osgx_Tonemap()` entirely (still harmlessly attached; GLSL doesn't
+//     error on a defined-but-unused function). As with `Tonemap` above, the source MUST be passed
+//     through `osgx::gltf::pbribl::resolveShaderLibs()` (not the generic `osgx::resolveShaderLibs()`
+//     -- this catalog is registered under the pbribl-specific one) before wrapping it in
+//     `osg::Shader()`, or the `#pragma osgx::gltf ...` line is left un-expanded in the literal
+//     source and the driver fails to compile it (confirmed live: every symbol the pragma was
+//     supposed to declare -- G-buffer samplers, `osgx_mainViewMatrix`, `fragColor` -- comes back
+//     "undefined variable", plus a syntax error on the un-expanded `#pragma` line itself):
+//
+//         auto hook = new osg::Shader(osg::Shader::FRAGMENT, resolveShaderLibs(R"GLSL(
+//             #version 460 core
+//             #pragma osgx::gltf DEFERRED_LIGHTING_INPUTS, GET_GBUFFER
+//             void main() { ... }
+//         )GLSL"));
+//
+//         options.hooks = {{osgx::Hook::DeferredLighting, hook}};
+//
+//     See `examples/osgx-gbuffer-custom.cpp` for a complete worked example.
+//
+//   Both are SUBSTITUTIONS, not additions alongside the built-in: GLSL permits exactly ONE body
+//   per function (and exactly one `main()`), so a competing definition is a link error, not an
+//   override. This pass ALWAYS attaches exactly one definition per slot (see
 //   PBRIBLLightingScene::create()'s own comment for why never-zero matters); `hooks` chooses
 //   WHICH, it does not add another.
 struct PBRIBLLightingPassOptions {
@@ -323,9 +351,14 @@ struct PBRIBLLightingScene {
 
 	bool valid() const;
 
-	// A fullscreen-quad lighting pass reading `gbuffer`. `mainCamera` is the real, on-screen
-	// viewer camera this pass rotates the G-buffer's view-space normal/position into world space
-	// with -- the quad itself is necessarily ABSOLUTE_RF (an identity view/projection is what
+	// A fullscreen-quad lighting pass reading `gbuffer`. `environment` is OPTIONAL -- pass a
+	// default-constructed (invalid) `PBRIBLEnvironment{}` for a caller whose
+	// `options.hooks[osgx::Hook::DeferredLighting]` override never calls `evaluateIBL()` (see that
+	// Hook's own comment, Shader.hpp); envMap/brdfLUT/diffuseEnv/iblAxis simply go unbound in that
+	// case rather than forcing an HDR bake or KTX2 load purely to populate textures nothing
+	// samples. `mainCamera` is the real, on-screen viewer camera this pass rotates the G-buffer's
+	// view-space normal/position into world space with -- the quad itself is necessarily
+	// ABSOLUTE_RF (an identity view/projection is what
 	// makes it cover the screen in NDC), so OSG's automatic osg_ViewMatrix resolves to identity
 	// here, not mainCamera's real matrices (the same PRE_RENDER-breaks-osg_ViewMatrix issue
 	// 11-sketchfab.py hit and fixed with a manually-maintained view-matrix uniform). **Call

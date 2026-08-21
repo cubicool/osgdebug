@@ -44,6 +44,34 @@ void bind_gbuffer(py::module_& m_gbuffer) {
 			"scene subgraph) as its child."
 		)
 	;
+
+	py::class_<osgx::SSAO>(m_gbuffer, "SSAO")
+		.def(py::init<>())
+		.def_readwrite("rawCamera", &osgx::SSAO::rawCamera)
+		.def_readwrite("blurCamera", &osgx::SSAO::blurCamera)
+		.def_readwrite("aoTexture", &osgx::SSAO::aoTexture)
+		.def_readwrite("radius", &osgx::SSAO::radius)
+		.def_readwrite("bias", &osgx::SSAO::bias)
+		.def("valid", &osgx::SSAO::valid)
+		.def_static(
+			"create",
+			&osgx::SSAO::create,
+			"normalTexture"_a,
+			"positionTexture"_a,
+			"projectionMatrix"_a,
+			"width"_a,
+			"height"_a,
+			"radius"_a=0.5f,
+			"bias"_a=0.02f,
+			"Generic hemisphere-kernel SSAO: reads any G-buffer's view-space normal+position "
+			"textures directly, needs nothing else. `projectionMatrix` is a caller-owned "
+			"osg.Uniform this pass reads every draw -- keep it refreshed from the same per-frame "
+			"callback that updates PBRIBLLightingScene's own view-matrix uniforms (see that type's "
+			"own doc comment for why it must be a PRE_RENDER preDrawCallback). `radius`/`bias` seed "
+			"the returned live osg.Uniform-backed `radius`/`bias` attributes -- set() them at any "
+			"time, no pass rebuild needed."
+		)
+	;
 }
 
 }

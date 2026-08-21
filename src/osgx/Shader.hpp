@@ -52,9 +52,20 @@ std::string resolveShaderLibs(std::string src);
 // new enumerator once a real call site wires it up -- see TODO.md's HookList entry for slots
 // that are still discussed but not yet real parameters anywhere (e.g. direct/ambient lighting);
 // don't pre-populate this for hypothetical future hooks.
+//
+// Tonemap/Skinning substitute one leaf function's body while the rest of a Program stays fixed --
+// genuinely reusable across whichever Program-building call sites happen to need that exact
+// concept (Tonemap already is, across both osgx::gltf::pbribl's forward and deferred paths).
+// DeferredLighting is different in kind: it substitutes the WHOLE shader that defines main() for
+// osgx::gltf::pbribl::PBRIBLLightingScene::create()'s fullscreen lighting pass -- an "I know what
+// I'm doing, replace the entire pipeline" escape hatch, not a leaf-function swap, and NOT
+// interchangeable with an equivalent hook on a differently-shaped Program (e.g. the forward path's
+// own main() reads vertex-interpolated PBR inputs, not G-buffer textures) -- hence the
+// pass-specific name instead of a generic one. See docs/CORE.md and docs/GLTF.md.
 enum class Hook {
 	Tonemap,
 	Skinning,
+	DeferredLighting,
 };
 
 // One hook-slot override: which slot, and the shader object substituting the call site's own

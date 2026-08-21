@@ -139,7 +139,8 @@ everything shape: a geometry pass writing material-only G-buffer textures (built
 `evaluateIBL()`/`osgx_DirectLighting()` logic against those textures instead of interpolated
 varyings. `PBRIBLLightingPassOptions` carries the lighting pass's independent, optional inputs —
 `shadowMap` (same contract as `PBRIBLScene::create()`'s own parameter), `aoTexture` (an externally-
-baked SSAO result, multiplied into the ambient term — this pass does not bake SSAO itself),
+baked occlusion result, multiplied into the ambient term — this pass does not bake it itself;
+[`osgx::SSAO::create()`](CORE.md#osgxgbufferhpp) is the standard implementation to feed this seam),
 `tonemap`/`hooks` (whether/how this pass tone-maps its own output, vs. leaving it linear HDR for a
 caller chaining further passes — `hooks` supports only `osgx::Hook::Tonemap` here, no vertex stage
 to skin), and `colorTexture`/`renderOrderNum` (retarget the pass to an offscreen texture instead of

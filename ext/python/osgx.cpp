@@ -29,7 +29,7 @@ PYBIND11_MODULE(osgx, m) {
 
 	auto m_gbuffer = m.def_submodule(
 		"gbuffer",
-		"osgx::gbuffer - generic deferred G-buffer camera setup"
+		"osgx::gbuffer - generic deferred G-buffer camera setup and SSAO"
 	);
 
 	osgx_python::bind_gbuffer(m_gbuffer);

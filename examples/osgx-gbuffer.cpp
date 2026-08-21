@@ -8,10 +8,15 @@
 // into the lighting pass via the exact same PBRIBLLightingPassOptions::shadowMap seam
 // PBRIBLScene::create()'s own shadowMap parameter uses.
 //
-// Press 0-5 to inspect the raw G-buffer channels (0=lit composite, 1=albedo, 2=normal,
-// 3=material(roughness/metallic), 4=emissive, 5=depth) -- the same diagnostic shape
+// Press 0-6 to inspect the raw G-buffer channels (0=lit composite, 1=albedo, 2=normal,
+// 3=material(roughness/metallic), 4=emissive, 5=depth, 6=SSAO) -- the same diagnostic shape
 // pyosg-mrt.py's own visualizeMode toggle uses, confirming each channel independently instead
 // of only ever looking at the final composite.
+//
+// Also the first live consumer of osgx::SSAO (GBuffer.hpp) -- the generic hemisphere-kernel
+// screen-space AO pass ported from OpenSceneGraph.py/examples/pyosg-lighting/11-sketchfab.py's
+// hand-rolled one. Feeds PBRIBLLightingPassOptions::aoTexture, the same seam a caller's own
+// hand-built SSAO (or a baked lightmap, or nothing) would use instead.
 //
 // Also proves osgx::shadow's 3 correctness fixes (same as osgx-shadow.cpp -- see that file's own
 // header comment for the full writeup) inside the deferred G-buffer pipeline specifically: the
@@ -23,6 +28,7 @@
 
 #include "osgx/Callbacks.hpp"
 #include "osgx/Core.hpp"
+#include "osgx/GBuffer.hpp"
 #include "osgx/Gizmos.hpp"
 #include "osgx/IBL.hpp"
 #include "osgx/ImGui.hpp"
@@ -51,6 +57,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -91,18 +98,31 @@ std::filesystem::path findEnvironmentManifest(std::string_view filename) {
 // code after viewer.frame() returns (the previous, buggy version of this example) hands the
 // lighting pass a one-frame-stale matrix instead, which showed up live as a shadow/position
 // artifact that visibly worsened while the camera was actively orbiting/zooming.
+// `ssaoProjection` is optional (nullptr when SSAO wasn't built) -- refreshed here alongside the
+// lighting pass's own view-matrix uniforms for the same reason: SSAO's forward re-projection
+// needs the CURRENT frame's projection matrix, not a stale one from application code running
+// after viewer.frame() returns. See osgx::SSAO::create()'s own doc comment (GBuffer.hpp).
 class UpdateLightingPassCallback: public osg::Camera::DrawCallback {
 public:
-	UpdateLightingPassCallback(osgx::gltf::pbribl::PBRIBLLightingScene* scene, osg::Camera* mainCamera):
-		_scene(scene), _mainCamera(mainCamera) {}
+	UpdateLightingPassCallback(
+		osgx::gltf::pbribl::PBRIBLLightingScene* scene,
+		osg::Camera* mainCamera,
+		osg::Uniform* ssaoProjection=nullptr
+	):
+		_scene(scene), _mainCamera(mainCamera), _ssaoProjection(ssaoProjection) {}
 
 	void operator()(osg::RenderInfo&) const override {
 		_scene->update(_mainCamera.get());
+
+		if(_ssaoProjection.valid()) {
+			_ssaoProjection->set(osg::Matrixf(_mainCamera->getProjectionMatrix()));
+		}
 	}
 
 private:
 	osgx::gltf::pbribl::PBRIBLLightingScene* _scene;
 	osg::observer_ptr<osg::Camera> _mainCamera;
+	osg::observer_ptr<osg::Uniform> _ssaoProjection;
 };
 
 // Debug blit: samples any one texture into a fullscreen quad, with a small per-channel remap
@@ -144,12 +164,14 @@ public:
 		osg::Camera* lightingCamera,
 		osg::Camera* debugCamera,
 		osg::Uniform* channelModeUniform,
-		const osgx::gltf::pbribl::PBRIBLGBuffer& gbuffer
+		const osgx::gltf::pbribl::PBRIBLGBuffer& gbuffer,
+		osg::Texture2D* aoTexture=nullptr
 	):
 		_lightingCamera(lightingCamera),
 		_debugCamera(debugCamera),
 		_channelModeUniform(channelModeUniform),
-		_gbuffer(gbuffer) {}
+		_gbuffer(gbuffer),
+		_aoTexture(aoTexture) {}
 
 	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override {
 		if(ea.getEventType() != osgGA::GUIEventAdapter::KEYDOWN) return false;
@@ -161,6 +183,7 @@ public:
 			case '3': select(2, 0, "material (r=roughness, g=metallic)"); return true;
 			case '4': select(3, 0, "emissive"); return true;
 			case '5': select(4, 2, "depth"); return true;
+			case '6': if(_aoTexture.valid()) { select(5, 2, "SSAO"); } return true;
 			default: return false;
 		}
 	}
@@ -181,6 +204,7 @@ private:
 				case 2: tex = _gbuffer.materialTexture; break;
 				case 3: tex = _gbuffer.emissiveTexture; break;
 				case 4: tex = _gbuffer.depthTexture; break;
+				case 5: tex = _aoTexture.get(); break;
 				default: break;
 			}
 
@@ -197,6 +221,7 @@ private:
 	osg::observer_ptr<osg::Camera> _debugCamera;
 	osg::observer_ptr<osg::Uniform> _channelModeUniform;
 	osgx::gltf::pbribl::PBRIBLGBuffer _gbuffer;
+	osg::observer_ptr<osg::Texture2D> _aoTexture;
 };
 
 // Floor: a plain procedural quad, deliberately NOT sharing the model's G-buffer Program
@@ -488,9 +513,34 @@ int main(int argc, char** argv) {
 	// Receiver, not caster -- added to the geometry pass, never the shadow camera.
 	gbuffer.gbuffer.camera->addChild(floor);
 
+	// SSAO: reads gbuffer's normal/position directly (both already exist -- the geometry pass
+	// wrote them, no new attachment needed), so it's built here, after the geometry pass and
+	// before the lighting pass whose aoTexture seam consumes its output below. `ssaoProjection`
+	// is a separate uniform from the lighting pass's own view-matrix ones -- SSAO needs a forward
+	// PROJECTION matrix, refreshed the same way and for the same reason (see
+	// UpdateLightingPassCallback's own comment). Radius scaled off the model's own bound rather
+	// than a fixed constant -- same "derive from the model's own bounds" precedent
+	// osgx-gbuffer-comic.cpp's hatchFrequency uses; a fixed radius tuned for one model looks wrong
+	// at a very different scale.
+	auto ssaoProjection = osgx::make_ref<osg::Uniform>(
+		"projectionMatrix", osg::Matrixf::identity()
+	);
+	const float ssaoRadius = std::max(0.05f, boundRadius * 0.15f);
+
+	auto ssao = osgx::SSAO::create(
+		gbuffer.normalTexture, gbuffer.positionTexture, ssaoProjection.get(), WIDTH, HEIGHT, ssaoRadius
+	);
+
+	if(!ssao.valid()) {
+		std::cerr << "Failed to build the SSAO pass" << std::endl;
+
+		return 1;
+	}
+
 	osgx::gltf::pbribl::PBRIBLLightingPassOptions lightingOptions;
 
 	lightingOptions.shadowMap = &shadowMap;
+	lightingOptions.aoTexture = ssao.aoTexture.get();
 
 	// Back to 1.0/1.0 -- 11-sketchfab.py's --ibl-diffuse-intensity/--ibl-specular-intensity
 	// default of 0.1 turned out to be a red herring here (user: "0.1 is a bug, I always
@@ -536,11 +586,18 @@ int main(int argc, char** argv) {
 	// for why it has to be the first PRE_RENDER camera in the scene graph, not a post-frame()
 	// call in the loop below (the previous, buggy version of this example).
 	shadowMap.camera->setPreDrawCallback(
-		new UpdateLightingPassCallback(&lighting, viewer.getCamera())
+		new UpdateLightingPassCallback(&lighting, viewer.getCamera(), ssaoProjection.get())
 	);
 
+	// Add order matters: all four of these are PRE_RENDER at the same default order number (0),
+	// so OSG breaks the tie by scene-graph add order, not anything declared on the cameras
+	// themselves. ssao.rawCamera/blurCamera MUST come after gbuffer.gbuffer.camera (they read its
+	// normal/position output) and before lighting.node (which reads ssao.aoTexture back via
+	// PBRIBLLightingPassOptions::aoTexture).
 	root->addChild(shadowMap.camera);
 	root->addChild(gbuffer.gbuffer.camera);
+	root->addChild(ssao.rawCamera);
+	root->addChild(ssao.blurCamera);
 	root->addChild(lighting.node);
 	root->addChild(gizmos);
 
@@ -556,7 +613,8 @@ int main(int argc, char** argv) {
 		dynamic_cast<osg::Camera*>(lighting.node.get()),
 		debugCamera,
 		debugChannelMode,
-		gbuffer
+		gbuffer,
+		ssao.aoTexture.get()
 	));
 	viewer.getCamera()->setClearColor(osg::Vec4f(48.0f / 255.0f, 53.0f / 255.0f, 66.0f / 255.0f, 1.0f));
 
@@ -579,7 +637,7 @@ int main(int argc, char** argv) {
 
 	std::cout
 		<< "osgx-gbuffer: deferred PBRIBLGBuffer::create() + PBRIBLLightingScene::create()" << std::endl
-		<< " 0=lit composite (default) 1=albedo 2=normal 3=material 4=emissive 5=depth" << std::endl
+		<< " 0=lit composite (default) 1=albedo 2=normal 3=material 4=emissive 5=depth 6=SSAO" << std::endl
 		<< " w=dump the shadow camera's own depth texture to osgx-gbuffer-shadow-depth.png" << std::endl
 	;
 
@@ -620,6 +678,27 @@ int main(int argc, char** argv) {
 			else {
 				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
 			}
+		}
+	}, osgx::imgui::SectionOptions::create(false, true));
+
+	// Live radius/bias tuning -- reads the CURRENT uniform value each frame rather than tracking
+	// a separate local float, since osgx::SSAO::create() already returns these as real
+	// osg::Uniform*s meant to be set at any time (no pass rebuild), not one-shot constructor
+	// arguments. Press '6' to actually see the effect while dragging these.
+	gui->addSection("SSAO", [ssao](osg::RenderInfo&) {
+		float radius = 0.0f, bias = 0.0f;
+
+		ssao.radius->get(radius);
+		ssao.bias->get(bias);
+
+		bool changed = false;
+
+		changed |= ImGui::SliderFloat("Radius", &radius, 0.01f, 2.0f);
+		changed |= ImGui::SliderFloat("Bias", &bias, 0.0f, 0.1f);
+
+		if(changed) {
+			ssao.radius->set(radius);
+			ssao.bias->set(bias);
 		}
 	}, osgx::imgui::SectionOptions::create(false, true));
 #endif
