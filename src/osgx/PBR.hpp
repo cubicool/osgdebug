@@ -22,23 +22,21 @@ namespace osgx {
 // ================================================================================================
 // PBR / IBL
 //
-// Two namespaces, kept deliberately separate:
-//
-// osgx::pbr -- the BRDF math itself (GGX distribution, Schlick Fresnel, Smith geometry term).
-// Independent of where the incoming light comes from: the same terms feed a direct point-light
-// loop or an IBL environment term. Plain GLSL snippet constants, not full shaders or hooked
-// shader objects -- see the namespace-level comment below for why.
-//
-// osgx::ibl -- the environment-as-light-source pipeline: a prefiltered specular cubemap plus a
-// split-sum BRDF LUT (Karis 2013), and eventually SH-9 diffuse irradiance. Calls into osgx::pbr
-// for its Fresnel term.
+// This file (the BRDF math itself -- GGX distribution, Schlick Fresnel, Smith geometry term,
+// independent of where the incoming light comes from: the same terms feed a direct point-light
+// loop or an IBL environment term) and IBL.hpp (the environment-as-light-source pipeline: a
+// prefiltered specular cubemap plus a split-sum BRDF LUT (Karis 2013), and eventually SH-9
+// diffuse irradiance, calling back into this file for its Fresnel term) both live directly under
+// `osgx::` -- neither is a separate opt-in subsystem (its own #include outside the umbrella, its
+// own CMake link target) the way osgx::debug/imgui/platform/gltf/ktx2 are, so neither earns its
+// own namespace; see TODO.md's namespace-boundary decision. The `"osgx::pbr"`/`"osgx::ibl"`
+// strings passed to registerPBRShaderLibs()/registerIBLShaderLibs() below are just the shader-lib
+// registry's conventional catalog tags, unrelated to the (now-flat) C++ namespace.
 //
 // Ported from the STATIC path of OpenSceneGraph.py/examples/pyosg-lighting/09-ibl.py: a
 // pre-baked .ktx2 prefiltered cubemap loaded once, plus a one-shot BRDF LUT bake. Deliberately
 // does NOT include 10-dynamicprobes.py's live GPU re-bake -- out of scope here.
 // ================================================================================================
-
-namespace pbr {
 
 // GLSL function-body snippets, not full shaders -- concatenate the ones you need into a
 // consuming fragment shader (same mechanism osgSlug's SHADER_LIB_FRAGMENT uses: paste the
@@ -51,7 +49,7 @@ namespace pbr {
 //
 // Kept as `inline constexpr` header definitions (not moved to PBR.cpp): most are bound directly
 // by name in ext/osgx-python.cpp (needs real external linkage), AND all eleven are referenced
-// inside registerShaderLibs()'s `static constexpr ShaderLib` array below, which needs a genuine
+// inside registerPBRShaderLibs()'s `static constexpr ShaderLib` array below, which needs a genuine
 // constant expression -- `inline constexpr` in a header is the one form satisfying both, same
 // reasoning as osgx::ibl's shader-string constants.
 
@@ -175,13 +173,13 @@ inline constexpr std::size_t LIGHT_STRUCT_FLOATS = 16;
 
 // Binding point for LIGHT_UNIFORMS' osgx_LightBuffer below. It deliberately differs from
 // osgx::gltf::shader::JOINT_MATRICES_BINDING (2), so a skinned glTF asset lit via
-// osgx::pbr::LightSet can bind both at once.
+// osgx::LightSet can bind both at once.
 inline constexpr unsigned int LIGHT_BINDING = 3;
 
 // Punctual point-light radiance (glTF punctual-light convention: inverse-square falloff, no
 // artificial radius cutoff) plus the resulting light direction `L`, both needed by DIRECT_LIGHT
 // below. `posIntensity` is world-space position in .xyz and intensity in .w -- the exact packing
-// osgx::pbr::OrbitLightRig writes via LightSet::setPosition() into each osgx_Light's own
+// osgx::OrbitLightRig writes via LightSet::setPosition() into each osgx_Light's own
 // posIntensity field (LIGHT_UNIFORMS' buffer struct below), so a caller wiring a static (e.g.
 // torch-style) light just calls LightSet::setPoint() once instead of installing a NodeCallback.
 inline constexpr const char* POINT_LIGHT_RADIANCE = R"GLSL(
@@ -196,7 +194,7 @@ vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out v
 )GLSL";
 
 // Declarations shared by every consumer of DIRECT_LIGHT/POINT_LIGHT_RADIANCE below -- one
-// contract, so a caller can populate one osgx::pbr::LightSet on an ancestor StateSet and have it
+// contract, so a caller can populate one osgx::LightSet on an ancestor StateSet and have it
 // inherited by every lit subgraph (dice, backdrop, whatever else) instead of wiring the same
 // uniforms into each shader by hand. OSGX_MAX_LIGHTS is a compile-time array bound, not a runtime
 // one -- osgx_lightCount (set at runtime, <= OSGX_MAX_LIGHTS) is what actually gates the loop a
@@ -258,7 +256,7 @@ uniform int osgx_lightCount;
 )GLSL";
 
 // Combines osgx_DirectDiffuse + osgx_DirectSpecular into one per-light contribution against an
-// osgx_Material (MATERIAL_STRUCT) -- the "modular hook" createPBRIBLScene's own comment has been
+// osgx_Material (MATERIAL_STRUCT) -- the "modular hook" PBRIBLScene::create()'s own comment has been
 // waiting on: a caller loops `osgx_lightCount` times, calling osgx_PointLightRadiance for
 // L/radiance then this for the shaded result, and accumulates (or just calls osgx_DirectLighting(),
 // see DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT below, which already does exactly that). Requires
@@ -395,11 +393,11 @@ vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat);
 // osg::Shader object regardless of what the consumer's own fragment shader happens to have in
 // scope. Add via:
 //   program->addShader(new osg::Shader(
-//     osg::Shader::FRAGMENT, osgx::resolveShaderLibs(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT)
+//     osg::Shader::FRAGMENT, osgx::resolveShaderLibs(osgx::DIRECT_LIGHTING_HOOK_DEFAULT)
 //   ));
 // as an EXTRA shader object on the same Program that already has the consumer's own fragment
 // shader (which only needs DIRECT_LIGHTING_DECL + a call site, see above) -- not spliced by name via
-// #pragma osgx::pbr, so it is deliberately NOT in registerShaderLibs()'s catalog.
+// #pragma osgx::pbr, so it is deliberately NOT in registerPBRShaderLibs()'s catalog.
 inline constexpr const char* DIRECT_LIGHTING_HOOK_DEFAULT = R"GLSL(
 #version 460 core
 
@@ -523,7 +521,7 @@ vec3 osgx_AmbientLighting(
 // osg::Shader object regardless of what the consumer's own fragment shader happens to have in
 // scope. Add alongside DIRECT_LIGHTING_HOOK_DEFAULT (if also used) as another EXTRA shader object
 // on the same Program -- not spliced by name via #pragma osgx::pbr, so it is deliberately NOT in
-// registerShaderLibs()'s catalog.
+// registerPBRShaderLibs()'s catalog.
 inline constexpr const char* AMBIENT_LIGHTING_HOOK_DEFAULT = R"GLSL(
 #version 460 core
 
@@ -598,7 +596,7 @@ vec3 osgx_Tonemap(vec3 color);
 )GLSL";
 
 // Self-contained, same shape as DIRECT_LIGHTING_HOOK_DEFAULT/AMBIENT_LIGHTING_HOOK_DEFAULT above --
-// not spliced by name via #pragma osgx::pbr, so deliberately NOT in registerShaderLibs()'s catalog.
+// not spliced by name via #pragma osgx::pbr, so deliberately NOT in registerPBRShaderLibs()'s catalog.
 inline constexpr const char* TONEMAP_HOOK_DEFAULT = R"GLSL(
 #version 460 core
 
@@ -735,7 +733,7 @@ private:
 // orbits.size() lights configured via setPoint/setSpot (for their color/type/etc. -- this callback
 // only ever touches position/intensity).
 //
-// Reusable across any osgx::pbr-lit scene -- configure `center`/`orbits`/`intensity` per use
+// Reusable across any PBR-lit scene -- configure `center`/`orbits`/`intensity` per use
 // instead of copying this callback into each consumer.
 struct OrbitLightRig: public osg::NodeCallback {
 	struct Orbit {
@@ -757,12 +755,6 @@ struct OrbitLightRig: public osg::NodeCallback {
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 };
 
-}
-
-namespace pbr {
-
-void registerShaderLibs();
-
-}
+void registerPBRShaderLibs();
 
 }

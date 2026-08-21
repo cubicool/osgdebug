@@ -22,7 +22,7 @@ PYBIND11_MODULE(osgx, m) {
 
 	auto m_shadow = m.def_submodule(
 		"shadow",
-		"osgx::shadow - directional shadow mapping for osgx::pbr::LightSet-lit scenes"
+		"osgx::shadow - directional shadow mapping for osgx::LightSet-lit scenes"
 	);
 
 	osgx_python::bind_shadow(m_shadow);

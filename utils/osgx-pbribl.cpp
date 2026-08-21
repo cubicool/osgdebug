@@ -111,8 +111,8 @@ int main(int argc, char* argv[]) {
 
 	const std::string inputPath = argv[1];
 	const OutputPaths outputs = makeOutputPaths(argv[2]);
-	osgx::ibl::GGXPrefilterOptions specularOptions;
-	osgx::ibl::LambertianBakeOptions diffuseOptions;
+	osgx::GGXPrefilterOptions specularOptions;
+	osgx::LambertianBakeOptions diffuseOptions;
 	int lutSize = 1024;
 
 	for(int i = 3; i < argc; ++i) {
@@ -147,8 +147,8 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	auto specular = osgx::ibl::createGGXPrefilterScene(image, specularOptions);
-	auto diffuse = osgx::ibl::createLambertianBakeScene(image, diffuseOptions);
+	auto specular = osgx::GGXPrefilterScene::create(image, specularOptions);
+	auto diffuse = osgx::LambertianBakeScene::create(image, diffuseOptions);
 
 	if(!specular.root || !diffuse.root) {
 		OSG_WARN << "osgx-pbribl: failed to create cubemap bake passes" << std::endl;
@@ -156,7 +156,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	auto diffuseReadback = new osgx::ibl::LambertianCubeReadback(
+	auto diffuseReadback = new osgx::LambertianCubeReadback(
 		diffuse.diffuseTexture,
 		diffuse.completion
 	);
@@ -187,8 +187,8 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	auto specularResult = osgx::ibl::finishGGXPrefilter(specular.readback);
-	auto diffuseResult = osgx::ibl::finishLambertianCubeReadback(diffuseReadback);
+	auto specularResult = specular.readback->finish();
+	auto diffuseResult = diffuseReadback->finish();
 
 	if(!specularResult || !osgDB::writeObjectFile(*specularResult, outputs.specular.string())) {
 		OSG_WARN << "osgx-pbribl: failed to write " << outputs.specular << std::endl;

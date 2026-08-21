@@ -43,6 +43,15 @@ struct Skin: public osg::Referenced {
 	bool updatePalette(osg::Node* skinnedNode);
 };
 
+// Reflects, not drives: every update traversal this reads whatever the CURRENT world matrices of
+// the skin's joint nodes happen to be (Skin::computeJointWorld()) and rewrites the joint-matrix
+// SSBO the vertex shader deforms the mesh against. It has no play/pause state and no idea what (if
+// anything) is moving those joints -- installSkinPaletteCallbacks() attaches this unconditionally
+// on every skinned mesh node, independent of AnimationCallback (Animation.hpp) or SimplePlayer.
+// A joint that has its own animation channels visibly deforms the mesh purely because
+// AnimationCallback moves the joint transform and this callback picks up whatever that transform
+// currently is; a joint with no animation just has this recompute the same bind-pose matrix every
+// frame, harmlessly. The two callbacks never call into each other.
 class SkinPaletteCallback: public osg::NodeCallback {
 public:
 	explicit SkinPaletteCallback(Skin* skin);

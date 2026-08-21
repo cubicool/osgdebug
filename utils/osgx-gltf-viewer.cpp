@@ -408,7 +408,7 @@ int main(int argc, char** argv) {
 
 		const std::filesystem::path directory(officialIBLPath);
 
-		environment.envMap = osgx::ibl::loadPrefilterCubemap((directory / "khronos-ggx.ktx2").string());
+		environment.envMap = osgx::loadPrefilterCubemap((directory / "khronos-ggx.ktx2").string());
 		environment.brdfLUT = officialIBL.lut;
 		environment.diffuseEnv = officialIBL.diffuse;
 		// iblAxis already defaults to this same basis; PBRIBLEnvironment's aggregate init
@@ -425,11 +425,11 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		environment = osgx::gltf::pbribl::loadPBRIBLEnvironment(manifest.string());
+		environment = osgx::gltf::pbribl::PBRIBLEnvironment::load(manifest.string());
 	}
 
 	else {
-		environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(hdrEnvironment.string(), 1024);
+		environment = osgx::gltf::pbribl::PBRIBLEnvironment::prepare(hdrEnvironment.string(), 1024);
 	}
 
 	if(!environment.valid()) {
@@ -438,7 +438,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	auto pis = osgx::gltf::pbribl::createPBRIBLScene(model, environment, 1.0f, 1.0f, diagnostics);
+	auto pis = osgx::gltf::pbribl::PBRIBLScene::create(model, environment, 1.0f, 1.0f, diagnostics);
 
 	if(!pis.valid()) return 1;
 

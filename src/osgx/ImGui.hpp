@@ -54,11 +54,11 @@ struct SectionOptions {
 	// true: CollapsingHeader starts open. Sections start collapsed unless the
 	// caller explicitly requests otherwise.
 	bool defaultOpen = false;
-};
 
-inline SectionOptions makeSectionOptions(bool expand=false, bool defaultOpen=false) {
-	return {.expand = expand, .defaultOpen = defaultOpen};
-}
+	static SectionOptions create(bool expand=false, bool defaultOpen=false) {
+		return {.expand = expand, .defaultOpen = defaultOpen};
+	}
+};
 
 // Small value-oriented Dear ImGui adapters. They are deliberately useful from
 // both C++ and Python: C++ callers get a (changed, value) result instead of an

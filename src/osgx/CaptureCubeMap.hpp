@@ -16,7 +16,7 @@ OSGX_ENABLE_WARNINGS
 
 #include <array>
 
-namespace osgx::ibl {
+namespace osgx {
 
 // Generic radiance-cubemap capture settings. Filtering, file formats, and lighting semantics are
 // deliberately outside this layer: it only renders a scene through six ordinary perspective views.
@@ -38,16 +38,16 @@ struct CaptureCubeMapScene {
 	std::array<osg::ref_ptr<osg::Camera>, 6> cameras;
 
 	bool ready() const;
+
+	static CaptureCubeMapScene create(
+		osg::Node* capturedNode,
+		const osg::Vec3d& position,
+		const CaptureCubeMapOptions& options={}
+	);
+
+	// Reuses the existing six cameras and output texture from a new capture position. The captured
+	// node itself remains unchanged; mutate that scene normally before requesting another capture.
+	bool recapture(const osg::Vec3d& position);
 };
-
-CaptureCubeMapScene captureCubeMapScene(
-	osg::Node* capturedNode,
-	const osg::Vec3d& position,
-	const CaptureCubeMapOptions& options={}
-);
-
-// Reuses the existing six cameras and output texture from a new capture position. The captured
-// node itself remains unchanged; mutate that scene normally before requesting another capture.
-bool recaptureCubeMapScene(CaptureCubeMapScene& scene, const osg::Vec3d& position);
 
 }

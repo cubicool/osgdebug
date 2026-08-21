@@ -697,6 +697,10 @@ void bind_gltf(py::module_& m_gltf) {
 	m_gltf_shader.attr("ALPHA_MODE_MASK") = osgx::gltf::shader::ALPHA_MODE_MASK;
 	m_gltf_shader.attr("ALPHA_MODE_BLEND") = osgx::gltf::shader::ALPHA_MODE_BLEND;
 	m_gltf_shader.attr("MATERIAL_INPUTS") = py::str(osgx::gltf::shader::MATERIAL_INPUTS);
+	m_gltf_shader.attr("SKINNING_HOOK_IDENTITY") =
+		py::str(osgx::gltf::shader::SKINNING_HOOK_IDENTITY);
+	m_gltf_shader.attr("SKINNING_HOOK_LINEAR_BLEND") =
+		py::str(osgx::gltf::shader::SKINNING_HOOK_LINEAR_BLEND);
 
 	m_gltf_shader
 		.def("configureProgram", &osgx::gltf::shader::configureProgram, "program"_a)
@@ -725,6 +729,23 @@ void bind_gltf(py::module_& m_gltf) {
 		.def_readwrite("diffuseEnv", &osgx::gltf::pbribl::PBRIBLEnvironment::diffuseEnv)
 		.def_readwrite("iblAxis", &osgx::gltf::pbribl::PBRIBLEnvironment::iblAxis)
 		.def("valid", &osgx::gltf::pbribl::PBRIBLEnvironment::valid)
+		.def_static(
+			"prepare",
+			py::overload_cast<const std::string&, int>(
+				&osgx::gltf::pbribl::PBRIBLEnvironment::prepare
+			),
+			"hdrPath"_a,
+			"lutSize"_a=1024,
+			"Bake diffuse irradiance, the BRDF LUT, and GGX-prefiltered specular all live from hdrPath "
+			"alone -- no pre-baked KTX2 required. Add root to the rendered scene graph so its "
+			"PRE_RENDER passes can populate the generated textures."
+		)
+		.def_static(
+			"load",
+			py::overload_cast<const std::string&>(&osgx::gltf::pbribl::PBRIBLEnvironment::load),
+			"manifestPath"_a,
+			"Load a fully pre-baked osgx_pbribl environment manifest."
+		)
 	;
 
 	py::class_<osgx::gltf::pbribl::PBRIBLScene>(m_gltf_pbribl, "PBRIBLScene")
@@ -749,43 +770,31 @@ void bind_gltf(py::module_& m_gltf) {
 			&osgx::gltf::pbribl::PBRIBLScene::iblSpecularIntensity
 		)
 		.def("valid", &osgx::gltf::pbribl::PBRIBLScene::valid)
+		.def_static(
+			"create",
+			&osgx::gltf::pbribl::PBRIBLScene::create,
+			"node"_a,
+			"environment"_a,
+			"iblDiffuseIntensity"_a=1.0f,
+			"iblSpecularIntensity"_a=1.0f,
+			"diagnostics"_a=false,
+			"shadowMap"_a=nullptr,
+			"tonemapHook"_a=nullptr,
+			"skinningHook"_a=nullptr,
+			"Apply osgx::gltf's optional osgx-powered PBR/IBL renderer using prepared resources. Pass "
+			"an osgx.shadow.ShadowMap to shadow the key/directional light (osgx::LightSet index "
+			"shadowMap.casterIndex); omit it for today's unshadowed behavior.\n\n"
+			"skinningHook: a VERTEX osg.Shader defining osgx_gltf_ApplySkin(vec4, vec3, vec3), "
+			"REPLACING the default identity passthrough -- pass "
+			"osgx.gltf.shader.SKINNING_HOOK_LINEAR_BLEND (wrapped in "
+			"osgx.gltf.pbribl.resolveShaderLibs()) to enable standard glTF joint-matrix skinning. "
+			"Same substitutes-rather-than-adds contract as tonemapHook.\n\n"
+			"tonemapHook: a FRAGMENT osg.Shader defining osgx_Tonemap(vec3), REPLACING the built-in "
+			"PBR Neutral curve. It substitutes rather than adds -- GLSL permits one body per "
+			"function, so attaching a second definition alongside the built-in is a link error, not "
+			"an override."
+		)
 	;
-
-	m_gltf_pbribl.def(
-		"preparePBRIBLEnvironment",
-		py::overload_cast<const std::string&, int>(
-			&osgx::gltf::pbribl::preparePBRIBLEnvironment
-		),
-		"hdrPath"_a,
-		"lutSize"_a=1024,
-		"Bake diffuse irradiance, the BRDF LUT, and GGX-prefiltered specular all live from hdrPath "
-		"alone -- no pre-baked KTX2 required. Add root to the rendered scene graph so its "
-		"PRE_RENDER passes can populate the generated textures."
-	);
-	m_gltf_pbribl.def(
-		"loadPBRIBLEnvironment",
-		py::overload_cast<const std::string&>(&osgx::gltf::pbribl::loadPBRIBLEnvironment),
-		"manifestPath"_a,
-		"Load a fully pre-baked osgx_pbribl environment manifest."
-	);
-	m_gltf_pbribl.def(
-		"createPBRIBLScene",
-		&osgx::gltf::pbribl::createPBRIBLScene,
-		"node"_a,
-		"environment"_a,
-		"iblDiffuseIntensity"_a=1.0f,
-		"iblSpecularIntensity"_a=1.0f,
-		"diagnostics"_a=false,
-		"shadowMap"_a=nullptr,
-		"tonemapHook"_a=nullptr,
-		"Apply osgx::gltf's optional osgx-powered PBR/IBL renderer using prepared resources. Pass "
-		"an osgx.shadow.ShadowMap to shadow the key/directional light (osgx::pbr::LightSet index "
-		"shadowMap.casterIndex); omit it for today's unshadowed behavior.\n\n"
-		"tonemapHook: a FRAGMENT osg.Shader defining osgx_Tonemap(vec3), REPLACING the built-in "
-		"PBR Neutral curve. It substitutes rather than adds -- GLSL permits one body per "
-		"function, so attaching a second definition alongside the built-in is a link error, not "
-		"an override."
-	);
 
 	py::class_<osgx::gltf::pbribl::PBRIBLGBuffer>(m_gltf_pbribl, "PBRIBLGBuffer")
 		.def(py::init<>())
@@ -797,18 +806,17 @@ void bind_gltf(py::module_& m_gltf) {
 		.def_readwrite("positionTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::positionTexture)
 		.def_readwrite("depthTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::depthTexture)
 		.def("valid", &osgx::gltf::pbribl::PBRIBLGBuffer::valid)
+		.def_static(
+			"create",
+			&osgx::gltf::pbribl::PBRIBLGBuffer::create,
+			"node"_a,
+			"width"_a,
+			"height"_a,
+			"Deferred-split geometry pass: writes material only (albedo/view-space normal/ORM/"
+			"emissive + depth) to a PBRIBLGBuffer, no lighting. Feed the result to "
+			"PBRIBLLightingScene.create()."
+		)
 	;
-
-	m_gltf_pbribl.def(
-		"createPBRIBLGeometryPass",
-		&osgx::gltf::pbribl::createPBRIBLGeometryPass,
-		"node"_a,
-		"width"_a,
-		"height"_a,
-		"Deferred-split geometry pass: writes material only (albedo/view-space normal/ORM/"
-		"emissive + depth) to a PBRIBLGBuffer, no lighting. Feed the result to "
-		"createPBRIBLLightingPass()."
-	);
 
 	py::class_<osgx::gltf::pbribl::PBRIBLLightingPassOptions>(m_gltf_pbribl, "PBRIBLLightingPassOptions")
 		.def(py::init<>())
@@ -843,38 +851,36 @@ void bind_gltf(py::module_& m_gltf) {
 			&osgx::gltf::pbribl::PBRIBLLightingScene::mainViewMatrixInverse
 		)
 		.def("valid", &osgx::gltf::pbribl::PBRIBLLightingScene::valid)
+		.def_static(
+			"create",
+			&osgx::gltf::pbribl::PBRIBLLightingScene::create,
+			"gbuffer"_a,
+			"environment"_a,
+			"mainCamera"_a,
+			"iblDiffuseIntensity"_a=1.0f,
+			"iblSpecularIntensity"_a=1.0f,
+			"options"_a=osgx::gltf::pbribl::PBRIBLLightingPassOptions{},
+			"Deferred-split lighting pass: a fullscreen quad reading `gbuffer` (position included, "
+			"not reconstructed from depth), rotating it into world space via `mainCamera`'s real "
+			"view matrix, running the same evaluateIBL()/osgx_DirectLighting() logic "
+			"PBRIBLScene.create() does. Call .update() from a preDrawCallback on the "
+			"FIRST PRE_RENDER camera in the scene graph every frame to keep it in sync as mainCamera "
+			"moves -- NOT from mainCamera's own preDrawCallback or from application code after "
+			"frame() returns, both of which hand this pass a stale matrix."
+		)
+		.def(
+			"update",
+			&osgx::gltf::pbribl::PBRIBLLightingScene::update,
+			"mainCamera"_a,
+			"Refreshes this scene's manually-maintained view-matrix uniforms from mainCamera's "
+			"current matrices. Call from a preDrawCallback on the FIRST PRE_RENDER camera in the "
+			"scene graph (by render order) every frame -- every PRE_RENDER camera finishes drawing "
+			"before mainCamera's own preDrawCallback fires, so calling this from mainCamera's "
+			"callback (or from application code after viewer.frame() returns) hands the lighting "
+			"pass a one-frame-stale matrix relative to what the geometry pass just rendered with, "
+			"which shows up as artifacts that worsen while the camera is moving."
+		)
 	;
-
-	m_gltf_pbribl.def(
-		"createPBRIBLLightingPass",
-		&osgx::gltf::pbribl::createPBRIBLLightingPass,
-		"gbuffer"_a,
-		"environment"_a,
-		"mainCamera"_a,
-		"iblDiffuseIntensity"_a=1.0f,
-		"iblSpecularIntensity"_a=1.0f,
-		"options"_a=osgx::gltf::pbribl::PBRIBLLightingPassOptions{},
-		"Deferred-split lighting pass: a fullscreen quad reading `gbuffer` (position included, "
-		"not reconstructed from depth), rotating it into world space via `mainCamera`'s real "
-		"view matrix, running the same evaluateIBL()/osgx_DirectLighting() logic "
-		"createPBRIBLScene() does. Call updatePBRIBLLightingPass() from a preDrawCallback on the "
-		"FIRST PRE_RENDER camera in the scene graph every frame to keep it in sync as mainCamera "
-		"moves -- NOT from mainCamera's own preDrawCallback or from application code after "
-		"frame() returns, both of which hand this pass a stale matrix."
-	);
-	m_gltf_pbribl.def(
-		"updatePBRIBLLightingPass",
-		&osgx::gltf::pbribl::updatePBRIBLLightingPass,
-		"scene"_a,
-		"mainCamera"_a,
-		"Refreshes a PBRIBLLightingScene's manually-maintained view-matrix uniforms from "
-		"mainCamera's current matrices. Call from a preDrawCallback on the FIRST PRE_RENDER "
-		"camera in the scene graph (by render order) every frame -- every PRE_RENDER camera "
-		"finishes drawing before mainCamera's own preDrawCallback fires, so calling this from "
-		"mainCamera's callback (or from application code after viewer.frame() returns) hands the "
-		"lighting pass a one-frame-stale matrix relative to what the geometry pass just rendered "
-		"with, which shows up as artifacts that worsen while the camera is moving."
-	);
 
 	py::class_<osgx::gltf::SimplePlayer>(m_gltf, "SimplePlayer")
 		.def(py::init<osg::Node*>(), "model"_a)

@@ -6,7 +6,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-namespace osgx::gbuffer {
+namespace osgx {
 
 namespace {
 
@@ -27,7 +27,7 @@ bool GBuffer::valid() const {
 	return camera.valid() && !colorTextures.empty() && depthTexture.valid();
 }
 
-GBuffer createGBufferCamera(
+GBuffer GBuffer::create(
 	osg::Node* node,
 	int width,
 	int height,

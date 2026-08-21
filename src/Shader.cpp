@@ -18,7 +18,7 @@ struct ShaderLibCatalog {
 
 // Process-wide registry of shader-library catalogs, populated by registerShaderLibs() and read
 // by resolveShaderLibs(). Defined exactly once here, compiled into libosgx -- the same fix as
-// osgx::ibl::sharedBRDFLUT()'s cache: a function-local static inside a header-defined `inline`
+// osgx::SharedBRDFLUT::create()'s cache: a function-local static inside a header-defined `inline`
 // function only merges into one instance within a single link unit, not across separately
 // dlopen()'d modules.
 std::vector<ShaderLibCatalog>& shaderLibCatalogs() {

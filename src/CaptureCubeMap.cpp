@@ -19,7 +19,7 @@ OSGX_ENABLE_WARNINGS
 #  define GL_DEPTH_BUFFER_BIT 0x00000100
 #endif
 
-namespace osgx::ibl {
+namespace osgx {
 
 namespace {
 
@@ -51,7 +51,7 @@ bool CaptureCubeMapScene::ready() const {
 	return completion && completion->done();
 }
 
-CaptureCubeMapScene captureCubeMapScene(
+CaptureCubeMapScene CaptureCubeMapScene::create(
 	osg::Node* capturedNode,
 	const osg::Vec3d& position,
 	const CaptureCubeMapOptions& options
@@ -107,17 +107,17 @@ CaptureCubeMapScene captureCubeMapScene(
 	return scene;
 }
 
-bool recaptureCubeMapScene(CaptureCubeMapScene& scene, const osg::Vec3d& position) {
-	if(!scene.root || !scene.completion) return false;
+bool CaptureCubeMapScene::recapture(const osg::Vec3d& position) {
+	if(!root || !completion) return false;
 
-	for(unsigned int face = 0; face < scene.cameras.size(); face++) {
-		if(!scene.cameras[face]) return false;
+	for(unsigned int face = 0; face < cameras.size(); face++) {
+		if(!cameras[face]) return false;
 
-		setCaptureView(*scene.cameras[face], position, face);
+		setCaptureView(*cameras[face], position, face);
 	}
 
-	scene.completion->reset();
-	rearmRunOnceCallbacks(scene.root);
+	completion->reset();
+	rearmRunOnceCallbacks(root);
 
 	return true;
 }

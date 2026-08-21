@@ -1,8 +1,8 @@
 // vimrun! ./examples/osgx-shadow
 //
-// A standalone proof that osgx::shadow::DIRECT_LIGHTING_HOOK_SHADOWED actually shadows: three
+// A standalone proof that osgx::DIRECT_LIGHTING_HOOK_SHADOWED actually shadows: three
 // osgx::Cube shapes of different sizes/colors sitting on a flat floor quad, lit by one directional
-// osgx::pbr::LightSet light, its shadow cast via osgx::shadow::createDirectionalShadowMap().
+// osgx::LightSet light, its shadow cast via osgx::ShadowMap::create().
 //
 // Deliberately NOT osgx::gltf::pbribl -- no glTF asset, no IBL environment, nothing but the
 // generic osgx::pbr direct-lighting hook contract plus the new shadow one, mirroring
@@ -24,16 +24,16 @@
 // Also exercises three fixes made to osgx::shadow itself (see osgx/TODO.md's old Shadow section,
 // and OpenSceneGraph.py's 11-sketchfab.py pivot, which is what surfaced all three):
 //
-// 1. createDirectionalShadowMap() now builds an ORTHOGRAPHIC frustum, not a perspective one -- the
+// 1. ShadowMap::create() now builds an ORTHOGRAPHIC frustum, not a perspective one -- the
 //    physically-correct shape for a directional (parallel-ray) light. This file used to get away
 //    with perspective because its floor is small/close; nothing here changed to accommodate it.
-// 2. createDirectionalShadowMap() now installs its OWN minimal depth-only Program on the shadow
+// 2. ShadowMap::create() now installs its OWN minimal depth-only Program on the shadow
 //    camera (ON|OVERRIDE) -- this file's own hand-rolled makeDepthOnlyProgram()/casters-StateSet
 //    workaround is GONE below; the library now does this for every caller, for free.
 // 3. The light direction is live-draggable (ImGui section below, OSGX_IMGUI builds only) via
-//    osgx::shadow::repositionDirectionalShadowMap() -- an in-place camera reposition, not a full
-//    createDirectionalShadowMap() rebuild, cheap enough to call on every slider tick. The light
-//    gizmo (osgx::LightGizmos) reads the same live osgx::pbr::LightSet, so it and the shadow
+//    ShadowMap::reposition() -- an in-place camera reposition, not a full
+//    ShadowMap::create() rebuild, cheap enough to call on every slider tick. The light
+//    gizmo (osgx::LightGizmos) reads the same live osgx::LightSet, so it and the shadow
 //    track the dragged direction together with no manual sync code.
 
 #include "osgx/osgx.hpp"
@@ -138,13 +138,13 @@ void main() {
 // 's'-key toggle in main() rebuilds the Program via this same function, swapping only that one
 // shader object.
 osg::ref_ptr<osg::Program> makeProgram(bool shadowed) {
-	osgx::pbr::registerShaderLibs();
-	osgx::shadow::registerShaderLibs();
+	osgx::registerPBRShaderLibs();
+	osgx::registerShadowShaderLibs();
 
 	auto program = osgx::make_ref<osg::Program>();
 	auto fragmentSrc = osgx::resolveShaderLibs(std::string(FRAGMENT_SHADER));
 	auto hookSrc = osgx::resolveShaderLibs(std::string(
-		shadowed ? osgx::shadow::DIRECT_LIGHTING_HOOK_SHADOWED : osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT
+		shadowed ? osgx::DIRECT_LIGHTING_HOOK_SHADOWED : osgx::DIRECT_LIGHTING_HOOK_DEFAULT
 	));
 
 	program->setName(shadowed ? "osgx_shadow_demo_shadowed" : "osgx_shadow_demo_unshadowed");
@@ -220,7 +220,7 @@ int main() {
 	// Directional light travel direction (down and across) -- steep enough that all three cubes
 	// cast a clearly visible shadow onto the floor without one cube's shadow completely burying
 	// another's. Not const: the ImGui "Directional Light" section below drags this live (see
-	// repositionDirectionalShadowMap() further down).
+	// ShadowMap::reposition() further down).
 	osg::Vec3 lightDir = osg::Vec3(0.5f, 0.35f, -1.0f);
 	osg::Vec3 lightColor = osg::Vec3(1.0f, 0.96f, 0.88f);
 	float lightIntensity = 3.0f;
@@ -254,18 +254,18 @@ int main() {
 	// gray-stone default so it reads clearly against the shadow it receives.
 	floor->getOrCreateStateSet()->addUniform(new osg::Uniform("albedo", osg::Vec3(0.72f, 0.68f, 0.60f)));
 
-	auto lights = osgx::pbr::LightSet::create(mainSS);
+	auto lights = osgx::LightSet::create(mainSS);
 
 	lights.setCount(1);
 	lights.setDirectional(0, lightDir, lightColor, lightIntensity);
 
-	osgx::shadow::ShadowMapOptions shadowOptions;
+	osgx::ShadowMapOptions shadowOptions;
 
-	auto shadowMap = osgx::shadow::createDirectionalShadowMap(
+	auto shadowMap = osgx::ShadowMap::create(
 		lightDir, sceneBoundCenter, sceneBoundRadius, shadowOptions
 	);
 
-	// No depth-only Program set here anymore -- createDirectionalShadowMap() now installs one
+	// No depth-only Program set here anymore -- ShadowMap::create() now installs one
 	// directly on shadowMap.camera's own StateSet (ON|OVERRIDE), which applies automatically to
 	// any subgraph added as its child. `casters` used to need its own explicit workaround; it
 	// doesn't anymore, and neither does any other osgx::shadow caller.
@@ -326,7 +326,7 @@ int main() {
 	viewer.addEventHandler(new osgViewer::StatsHandler());
 
 #ifdef OSGX_IMGUI
-	// Proves osgx::shadow::repositionDirectionalShadowMap(): dragging the light live reshapes the
+	// Proves ShadowMap::reposition(): dragging the light live reshapes the
 	// shadow (and moves osgx::LightGizmos' overlay, reading the same LightSet) without ever
 	// rebuilding shadowMap's camera/FBO/depth texture.
 	//
@@ -348,19 +348,17 @@ int main() {
 
 		if(changed) {
 			// A dragged slider can pass through (0,0,0) -- lookAt() (inside
-			// repositionDirectionalShadowMap()) is degenerate for a zero-length direction, so
+			// ShadowMap::reposition()) is degenerate for a zero-length direction, so
 			// hold the last valid direction instead of feeding it one.
 			if(lightDir.length2() > 1e-8f) {
 				lights.setDirectional(0, lightDir, lightColor, lightIntensity);
 
-				osgx::shadow::repositionDirectionalShadowMap(
-					shadowMap, lightDir, sceneBoundCenter, sceneBoundRadius, shadowOptions
-				);
+				shadowMap.reposition(lightDir, sceneBoundCenter, sceneBoundRadius, shadowOptions);
 			} else {
 				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
 			}
 		}
-	}, osgx::imgui::makeSectionOptions(false, true));
+	}, osgx::imgui::SectionOptions::create(false, true));
 #endif
 
 	return viewer.run();

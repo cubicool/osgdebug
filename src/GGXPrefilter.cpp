@@ -28,7 +28,7 @@ OSGX_ENABLE_WARNINGS
 #  define GL_COLOR_BUFFER_BIT 0x00004000
 #endif
 
-namespace osgx::ibl {
+namespace osgx {
 
 namespace {
 
@@ -320,7 +320,7 @@ void GGXPrefilterReadback::operator()(osg::RenderInfo& ri) const {
 	done = true;
 }
 
-GGXPrefilterScene createGGXPrefilterScene(
+GGXPrefilterScene GGXPrefilterScene::create(
 	osg::Image* equirectImage,
 	const GGXPrefilterOptions& options
 ) {
@@ -363,33 +363,33 @@ GGXPrefilterScene createGGXPrefilterScene(
 	return scene;
 }
 
-bool rebakeGGXPrefilterScene(GGXPrefilterScene& scene, osg::Image* equirectImage) {
-	if(!scene.root || !scene.sourceTexture || !scene.readback || !equirectImage) {
+bool GGXPrefilterScene::rebake(osg::Image* equirectImage) {
+	if(!root || !sourceTexture || !readback || !equirectImage) {
 		return false;
 	}
 
-	scene.sourceTexture->setImage(equirectImage);
+	sourceTexture->setImage(equirectImage);
 
-	updateBakeSourceUniforms(scene.root, equirectImage->s(), equirectImage->t());
-	rearmRunOnceCallbacks(scene.root);
+	updateBakeSourceUniforms(root, equirectImage->s(), equirectImage->t());
+	rearmRunOnceCallbacks(root);
 
-	scene.readback->reset();
+	readback->reset();
 
 	return true;
 }
 
-osg::ref_ptr<osg::TextureCubeMap> finishGGXPrefilter(GGXPrefilterReadback* readback) {
-	if(!readback || !readback->isDone()) return nullptr;
+osg::ref_ptr<osg::TextureCubeMap> GGXPrefilterReadback::finish() const {
+	if(!isDone()) return nullptr;
 
-	osg::TextureCubeMap* result = readback->getResult();
+	osg::TextureCubeMap* finished = getResult();
 
-	result->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-	result->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-	result->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
-	result->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
-	result->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+	finished->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+	finished->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	finished->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	finished->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+	finished->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
 
-	return result;
+	return finished;
 }
 
 }

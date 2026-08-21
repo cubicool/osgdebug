@@ -32,7 +32,7 @@ OSGX_ENABLE_WARNINGS
 // ================================================================================================
 // osgx::gltf::pbribl - the glue between the glTF loader material interface
 // and osgx::pbr's material-agnostic BRDF math: reads the material-buffer/texture-unit interface the C++ loader
-// populates per primitive into an osgx_Material (see osgx::pbr::MATERIAL_STRUCT), plus a couple
+// populates per primitive into an osgx_Material (see osgx::MATERIAL_STRUCT), plus a couple
 // of small glTF-specific fragment helpers (shading normal, emissive, alpha coverage) that need
 // the same texture interface.
 //
@@ -46,7 +46,7 @@ OSGX_ENABLE_WARNINGS
 
 namespace osgx::gltf::pbribl {
 
-// Reads MATERIAL_INPUTS into an osgx_Material (osgx::pbr::MATERIAL_STRUCT). Requires
+// Reads MATERIAL_INPUTS into an osgx_Material (osgx::MATERIAL_STRUCT). Requires
 // MATERIAL_INPUTS and MATERIAL_STRUCT already in scope.
 //
 // Every texture read here is conditioned on the matching `has*Map` flag rather than sampled
@@ -183,9 +183,9 @@ void registerShaderLibs() {
 }
 
 std::string resolveShaderLibs(std::string_view source) {
-	osgx::pbr::registerShaderLibs();
-	osgx::ibl::registerShaderLibs();
-	osgx::shadow::registerShaderLibs();
+	osgx::registerPBRShaderLibs();
+	osgx::registerIBLShaderLibs();
+	osgx::registerShadowShaderLibs();
 
 	registerShaderLibs();
 
@@ -197,7 +197,7 @@ std::string resolveShaderLibs(std::string_view source) {
 namespace osgx::gltf::pbribl {
 
 // ================================================================================================
-// createPBRIBLScene - the one-call convenience helper requested after proving out, live, that
+// PBRIBLScene::create() - the one-call convenience helper requested after proving out, live, that
 // glTF material glue + osgx::pbr's F_MULTISCATTER + osgx::ibl's LAMBERTIAN_IRRADIANCE
 // compose correctly against a real osgDB::readNodeFile()'d glTF model (confirmed against Batman +
 // papermill.ktx2/papermill.hdr from OpenSceneGraph.py's pyosg-lighting/data, 2026-07-22). That
@@ -212,14 +212,14 @@ namespace osgx::gltf::pbribl {
 //
 // IBL plus an optional handful of direct/punctual lights, via the osgx_DirectLighting() CONTRACT
 // (DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT in PBR.hpp) -- one call
-// (`osgx_DirectLighting(N, V, worldPos, mat)`) against osgx::pbr::LightSet's buffer-backed light array
-// (up to osgx::pbr::MAX_LIGHTS), instead of this shader hand-copying the per-light dispatch loop
+// (`osgx_DirectLighting(N, V, worldPos, mat)`) against osgx::LightSet's buffer-backed light array
+// (up to osgx::MAX_LIGHTS), instead of this shader hand-copying the per-light dispatch loop
 // itself (a prior revision did exactly that, and drifted out of sync with OpenSceneGraph.py's
 // pyosg_dice.py copy -- see TODO.md; both now share the one hook definition,
 // DIRECT_LIGHTING_HOOK_DEFAULT, added as a second FRAGMENT osg::Shader object in
-// createPBRIBLScene() below). A LightSet's osgx_lightCount defaults to 0 (LightSet::create()
+// PBRIBLScene::create() below). A LightSet's osgx_lightCount defaults to 0 (LightSet::create()
 // zero-initializes it), so a caller that only wants IBL sees no change; one that wants direct
-// lights just populates osgx::pbr::LightSet, here or on an ancestor StateSet shared with whatever
+// lights just populates osgx::LightSet, here or on an ancestor StateSet shared with whatever
 // else should light identically (e.g. dice sharing a scene's --scene backdrop, see
 // OpenSceneGraph.py/examples/pyosg_dice.py's FRAGMENT_SHADER_IBL).
 // ================================================================================================
@@ -228,7 +228,7 @@ namespace detail {
 
 // Full vertex/fragment shader pair, NOT registered as pragma-includable ShaderLib snippets (these
 // are complete shaders with their own main(), not function-body fragments meant to be concatenated
-// into a caller's shader) - resolved via resolveShaderLibs() at setup time inside createPBRIBLScene()
+// into a caller's shader) - resolved via resolveShaderLibs() at setup time inside PBRIBLScene::create()
 // below, same mechanism a caller assembling their own shader by hand would use.
 constexpr const char FULL_PBR_VERTEX_SHADER[] = R"GLSL(
 #version 460 core
@@ -247,14 +247,28 @@ out vec3 vPosition;
 out vec4 vTangent;
 out vec2 vUV;
 
+// osgx_gltf_ApplySkin() CONTRACT -- forward-declared here, DEFINED in a separate, separately
+// compiled VERTEX shader object (shader::SKINNING_HOOK_IDENTITY by default, or a caller-supplied
+// `skinningHook`, e.g. shader::SKINNING_HOOK_LINEAR_BLEND) attached alongside this one. See
+// Shader.hpp's own comment on those constants for the full mechanism -- same "forward-declare +
+// call site here, definition elsewhere" hook pattern PBR.hpp's DIRECT_LIGHTING_DECL uses.
+struct osgx_gltf_SkinnedVertex {
+	vec4 position;
+	vec3 normal;
+	vec3 tangent;
+};
+
+osgx_gltf_SkinnedVertex osgx_gltf_ApplySkin(vec4 position, vec3 normal, vec3 tangent);
+
 void main() {
-	vec4 eyePos = osg_ModelViewMatrix * osg_Vertex;
+	osgx_gltf_SkinnedVertex skinned = osgx_gltf_ApplySkin(osg_Vertex, osg_Normal, osg_Tangent.xyz);
+	vec4 eyePos = osg_ModelViewMatrix * skinned.position;
 	vPosition = eyePos.xyz;
 	vUV = osg_MultiTexCoord0;
-	vNGeom = normalize(osg_NormalMatrix * osg_Normal);
-	vTangent = vec4(osg_NormalMatrix * osg_Tangent.xyz, osg_Tangent.w);
+	vNGeom = normalize(osg_NormalMatrix * skinned.normal);
+	vTangent = vec4(osg_NormalMatrix * skinned.tangent, osg_Tangent.w);
 
-	gl_Position = osg_ModelViewProjectionMatrix * osg_Vertex;
+	gl_Position = osg_ModelViewProjectionMatrix * skinned.position;
 }
 )GLSL";
 
@@ -284,7 +298,7 @@ uniform samplerCube diffuseEnv; // unit 7
 // turning up diffuse SH enough to read as ambient fill also blows out reflections if the two
 // share one scalar, and turning reflections down to a sane brightness crushes ambient back to
 // near-black. Also the pair a caller dials toward zero to make punctual lights (LIGHT_UNIFORMS)
-// read more clearly against IBL -- see createPBRIBLScene()'s PBRIBLScene::iblDiffuseIntensity/
+// read more clearly against IBL -- see PBRIBLScene::create()'s PBRIBLScene::iblDiffuseIntensity/
 // iblSpecularIntensity for the live-tunable Uniform refs.
 uniform float iblDiffuseIntensity;
 uniform float iblSpecularIntensity;
@@ -458,12 +472,12 @@ void main() {
 }
 )GLSL";
 
-// Geometry-pass fragment shader for the deferred split (createPBRIBLGeometryPass() below) --
+// Geometry-pass fragment shader for the deferred split (PBRIBLGBuffer::create() below) --
 // material only, no lighting at all, not even emissive combine (emissive is stored, not added
 // yet). Reuses FULL_PBR_VERTEX_SHADER above unchanged: vNGeom/vPosition/vTangent/vUV are already
 // exactly what osgx_gltf_ShadingNormal()/osgx_gltf_GetMaterial() need, and are already VIEW
 // space, which is exactly the convention gNormal below stores (matching the main camera whose
-// real matrices createPBRIBLLightingPass()'s fullscreen quad reconstructs world-space values
+// real matrices PBRIBLLightingScene::create()'s fullscreen quad reconstructs world-space values
 // from).
 constexpr const char GBUFFER_FRAGMENT_SHADER_SRC[] = R"GLSL(
 #version 460 core
@@ -502,7 +516,7 @@ void main() {
 }
 )GLSL";
 
-// Lighting-pass fragment shader for the deferred split (createPBRIBLLightingPass() below) --
+// Lighting-pass fragment shader for the deferred split (PBRIBLLightingScene::create() below) --
 // runs the SAME evaluateIBL() as FULL_PBR_FRAGMENT_SHADER_SRC above (kept as an independent
 // copy rather than a shared function: the two read N/V/worldPos from different sources --
 // varyings there, G-buffer textures here -- so sharing would need its own indirection layer for
@@ -527,8 +541,8 @@ uniform sampler2D gMaterial;
 uniform sampler2D gEmissive;
 uniform sampler2D gPosition;
 
-// Manually maintained every frame by updatePBRIBLLightingPass() -- see that function's comment
-// (and createPBRIBLLightingPass()'s) for why this quad's own osg_ViewMatrix/osg_ViewMatrixInverse
+// Manually maintained every frame by PBRIBLLightingScene::update() -- see that function's comment
+// (and PBRIBLLightingScene::create()'s) for why this quad's own osg_ViewMatrix/osg_ViewMatrixInverse
 // can't be trusted the way FULL_PBR_FRAGMENT_SHADER_SRC's forward-pass equivalents can. No
 // projection-matrix uniform here -- position comes straight from gPosition, not a depth
 // reconstruction, so only the VIEW matrix (genuinely consistent across nested cameras) is needed.
@@ -650,7 +664,7 @@ bool PBRIBLScene::valid() const { return node.valid(); }
 // uniform pointers are null in production.
 //
 // Fully dynamic overload: bakes the GGX-prefiltered specular cubemap live instead of loading one
-// from a KTX2 file, calling the exact same osgx::ibl::createGGXPrefilterScene() workflow
+// from a KTX2 file, calling the exact same osgx::GGXPrefilterScene::create() workflow
 // osggltf-iblbake-gpu already wraps to write that KTX2 to disk in the first place -- no readback,
 // no CPU round-trip, no temporary file. GGXPrefilterScene::prefilterTexture is the live render-
 // target cubemap the bake's PRE_RENDER passes write into; it is immediately valid to bind (same
@@ -664,28 +678,28 @@ bool PBRIBLScene::valid() const { return node.valid(); }
 // once the mip-count/roughness-convention options from TODO.md's "Generic osgx and IBL later work"
 // land; and see that same TODO entry for what is deliberately NOT yet handled here (a not-ready-
 // yet texture read is undefined driver contents, not a defined placeholder value).
-PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& hdrPath, int lutSize) {
+PBRIBLEnvironment PBRIBLEnvironment::prepare(const std::string& hdrPath, int lutSize) {
 	PBRIBLEnvironment environment;
 
 	auto hdrImage = osgDB::readRefImageFile(hdrPath);
 
 	if(!hdrImage) return environment;
 
-	auto lut = osgx::ibl::sharedBRDFLUT(lutSize);
+	auto lut = osgx::SharedBRDFLUT::create(lutSize);
 
 	environment.brdfLUT = lut.texture;
 	environment.lutCamera = lut.camera; // null once another environment already baked this size
 
-	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
+	auto diffuseBake = osgx::LambertianBakeScene::create(hdrImage);
 
 	environment.diffuseBakeRoot = diffuseBake.root;
 	environment.diffuseEnv = diffuseBake.diffuseTexture;
 
-	osgx::ibl::GGXPrefilterOptions specularOptions;
+	osgx::GGXPrefilterOptions specularOptions;
 
 	specularOptions.prefilterSize = 256;
 
-	auto specularBake = osgx::ibl::createGGXPrefilterScene(hdrImage, specularOptions);
+	auto specularBake = osgx::GGXPrefilterScene::create(hdrImage, specularOptions);
 
 	environment.specularBakeRoot = specularBake.root;
 	environment.envMap = specularBake.prefilterTexture;
@@ -759,11 +773,11 @@ std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tinygltf::Value&
 	return result;
 }
 
-PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, const std::string& baseDir) {
+PBRIBLEnvironment PBRIBLEnvironment::load(const IBLEnvironmentManifest& manifest, const std::string& baseDir) {
 	PBRIBLEnvironment environment;
 
 	if(!manifest.specular.valid() || !manifest.diffuse.valid() || !manifest.brdfLUT.valid()) {
-		OSG_WARN << "osgx::gltf::pbribl::loadPBRIBLEnvironment: manifest is missing a required resource" << std::endl;
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: manifest is missing a required resource" << std::endl;
 
 		return environment;
 	}
@@ -772,25 +786,25 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, 
 
 	// loadPrefilterCubemap() is content-agnostic despite its name -- it just loads a KTX2 as a
 	// TextureCubeMap, which is equally correct for the Lambertian diffuse cube as for GGX specular.
-	environment.envMap = osgx::ibl::loadPrefilterCubemap((base / manifest.specular.uri).string());
+	environment.envMap = osgx::loadPrefilterCubemap((base / manifest.specular.uri).string());
 
 	if(!environment.envMap) return environment;
 
-	environment.diffuseEnv = osgx::ibl::loadPrefilterCubemap((base / manifest.diffuse.uri).string());
+	environment.diffuseEnv = osgx::loadPrefilterCubemap((base / manifest.diffuse.uri).string());
 
 	if(!environment.diffuseEnv) return environment;
 
 	if(!manifest.brdfLUT.builtin.empty()) {
 		if(manifest.brdfLUT.builtin != "osgx:split-sum-ggx-v1" || manifest.brdfLUT.size < 1) {
 			OSG_WARN
-				<< "osgx::gltf::pbribl::loadPBRIBLEnvironment: unsupported built-in BRDF LUT "
+				<< "osgx::gltf::pbribl::PBRIBLEnvironment::load: unsupported built-in BRDF LUT "
 				<< manifest.brdfLUT.builtin << std::endl
 			;
 
 			return environment;
 		}
 
-		auto lut = osgx::ibl::sharedBRDFLUT(manifest.brdfLUT.size);
+		auto lut = osgx::SharedBRDFLUT::create(manifest.brdfLUT.size);
 
 		environment.brdfLUT = lut.texture;
 		environment.lutCamera = lut.camera;
@@ -806,7 +820,7 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, 
 	auto lutImage = osgDB::readRefImageFile((base / manifest.brdfLUT.uri).string());
 
 	if(!lutImage) {
-		OSG_WARN << "osgx::gltf::pbribl::loadPBRIBLEnvironment: failed to load " << manifest.brdfLUT.uri << std::endl;
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: failed to load " << manifest.brdfLUT.uri << std::endl;
 
 		return environment;
 	}
@@ -821,25 +835,25 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, 
 	return environment;
 }
 
-PBRIBLEnvironment loadPBRIBLEnvironment(const std::string& manifestPath) {
+PBRIBLEnvironment PBRIBLEnvironment::load(const std::string& manifestPath) {
 	tinygltf::TinyGLTF loader;
 	tinygltf::Model document;
 	std::string error, warning;
 
 	if(!loader.LoadASCIIFromFile(&document, &error, &warning, manifestPath)) {
-		OSG_WARN << "osgx::gltf::pbribl::loadPBRIBLEnvironment: failed to load " << manifestPath << ": " << error << std::endl;
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: failed to load " << manifestPath << ": " << error << std::endl;
 
 		return {};
 	}
 
 	if(!warning.empty()) {
-		OSG_WARN << "osgx::gltf::pbribl::loadPBRIBLEnvironment: " << manifestPath << ": " << warning << std::endl;
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: " << manifestPath << ": " << warning << std::endl;
 	}
 
 	const auto it = document.extensions.find("osgx_pbribl");
 
 	if(it == document.extensions.end()) {
-		OSG_WARN << "osgx::gltf::pbribl::loadPBRIBLEnvironment: " << manifestPath << " has no osgx_pbribl extension" << std::endl;
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: " << manifestPath << " has no osgx_pbribl extension" << std::endl;
 
 		return {};
 	}
@@ -847,14 +861,14 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const std::string& manifestPath) {
 	auto environments = decodeIBLEnvironments(it->second);
 
 	if(environments.empty()) {
-		OSG_WARN << "osgx::gltf::pbribl::loadPBRIBLEnvironment: " << manifestPath << " declares no environments" << std::endl;
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: " << manifestPath << " declares no environments" << std::endl;
 
 		return {};
 	}
 
 	const std::string baseDir = std::filesystem::path(manifestPath).parent_path().string();
 	const auto& manifest = environments.front();
-	auto environment = loadPBRIBLEnvironment(manifest, baseDir);
+	auto environment = PBRIBLEnvironment::load(manifest, baseDir);
 	const std::string brdfLUT = !manifest.brdfLUT.uri.empty() ? manifest.brdfLUT.uri : manifest.brdfLUT.builtin;
 
 	if(environment.valid()) {
@@ -870,14 +884,15 @@ PBRIBLEnvironment loadPBRIBLEnvironment(const std::string& manifestPath) {
 	return environment;
 }
 
-PBRIBLScene createPBRIBLScene(
+PBRIBLScene PBRIBLScene::create(
 	osg::Node* node,
 	const PBRIBLEnvironment& environment,
 	float iblDiffuseIntensity,
 	float iblSpecularIntensity,
 	bool diagnostics,
-	const osgx::shadow::ShadowMap* shadowMap,
-	osg::Shader* tonemapHook
+	const osgx::ShadowMap* shadowMap,
+	osg::Shader* tonemapHook,
+	osg::Shader* skinningHook
 ) {
 	// osgx::gltf::pbribl::resolveShaderLibs() below idempotently registers the generic osgx catalogs and
 	// this component's glTF catalog before expansion. This keeps the one-call helper independent of
@@ -898,6 +913,19 @@ PBRIBLScene createPBRIBLScene(
 
 	prog->setName("osgx_gltf_PBRIBLScene");
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
+	// osgx_gltf_ApplySkin() CONTRACT's definition -- a second, separately compiled VERTEX shader
+	// object with no main() of its own, same "exactly one definition, substitutes rather than adds"
+	// mechanism as tonemapHook below. See Shader.hpp's SKINNING_HOOK_IDENTITY/
+	// SKINNING_HOOK_LINEAR_BLEND comment for the full rationale.
+	if(skinningHook) prog->addShader(skinningHook);
+
+	else {
+		prog->addShader(new osg::Shader(
+			osg::Shader::VERTEX,
+			resolveShaderLibs(shader::SKINNING_HOOK_IDENTITY)
+		));
+	}
+
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::FULL_PBR_FRAGMENT_SHADER_SRC)
@@ -911,7 +939,7 @@ PBRIBLScene createPBRIBLScene(
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(
-			shadowMap ? osgx::shadow::DIRECT_LIGHTING_HOOK_SHADOWED : osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT
+			shadowMap ? osgx::DIRECT_LIGHTING_HOOK_SHADOWED : osgx::DIRECT_LIGHTING_HOOK_DEFAULT
 		)
 	));
 	// osgx_Tonemap() CONTRACT's default definition -- same pattern as DIRECT_LIGHTING_HOOK_DEFAULT
@@ -923,13 +951,13 @@ PBRIBLScene createPBRIBLScene(
 	// `tonemapHook` SUBSTITUTES this shader object -- it is never attached alongside it. GLSL
 	// permits one body per function, so a caller adding a competing osgx_Tonemap() definition gets
 	// a duplicate-definition link error, not an override. Exactly one definition, always: same
-	// invariant createPBRIBLLightingPass() documents at its own tonemap attach site.
+	// invariant PBRIBLLightingScene::create() documents at its own tonemap attach site.
 	if(tonemapHook) prog->addShader(tonemapHook);
 
 	else {
 		prog->addShader(new osg::Shader(
 			osg::Shader::FRAGMENT,
-			resolveShaderLibs(osgx::pbr::TONEMAP_HOOK_DEFAULT)
+			resolveShaderLibs(osgx::TONEMAP_HOOK_DEFAULT)
 		));
 	}
 
@@ -1014,7 +1042,7 @@ bool PBRIBLGBuffer::valid() const {
 	;
 }
 
-PBRIBLGBuffer createPBRIBLGeometryPass(osg::Node* node, int width, int height) {
+PBRIBLGBuffer PBRIBLGBuffer::create(osg::Node* node, int width, int height) {
 	PBRIBLGBuffer result;
 
 	if(!node) return result;
@@ -1025,6 +1053,15 @@ PBRIBLGBuffer createPBRIBLGeometryPass(osg::Node* node, int width, int height) {
 
 	prog->setName("osgx_gltf_PBRIBLGeometryPass");
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
+	// osgx_gltf_ApplySkin() CONTRACT's default (identity) definition -- FULL_PBR_VERTEX_SHADER
+	// always calls this hook now (see PBRIBLScene::create()'s own comment for the full mechanism).
+	// This geometry pass doesn't expose a `skinningHook` parameter of its own yet (see TODO.md), so
+	// it always gets the passthrough -- a skinned model through the deferred split still animates
+	// its joint transforms/gizmos correctly, it just won't deform the G-buffer mesh yet.
+	prog->addShader(new osg::Shader(
+		osg::Shader::VERTEX,
+		resolveShaderLibs(shader::SKINNING_HOOK_IDENTITY)
+	));
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::GBUFFER_FRAGMENT_SHADER_SRC)
@@ -1035,19 +1072,19 @@ PBRIBLGBuffer createPBRIBLGeometryPass(osg::Node* node, int width, int height) {
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 
-	// Same texture-unit-labeling fix createPBRIBLScene() needs -- the loader binds the actual
+	// Same texture-unit-labeling fix PBRIBLScene::create() needs -- the loader binds the actual
 	// Texture2Ds per geometry but never sets the sampler uniforms naming which unit is which.
 	shader::configureStateSet(*ss);
 
-	static constexpr osgx::gbuffer::AttachmentFormat formats[] = {
-		osgx::gbuffer::AttachmentFormat::RGBA8,   // gAlbedo
-		osgx::gbuffer::AttachmentFormat::RGB16F,  // gNormal (signed, view-space)
-		osgx::gbuffer::AttachmentFormat::RGBA8,   // gMaterial
-		osgx::gbuffer::AttachmentFormat::RGBA16F, // gEmissive (HDR)
-		osgx::gbuffer::AttachmentFormat::RGBA32F  // gPosition (view-space, real precision needed)
+	static constexpr osgx::AttachmentFormat formats[] = {
+		osgx::AttachmentFormat::RGBA8,   // gAlbedo
+		osgx::AttachmentFormat::RGB16F,  // gNormal (signed, view-space)
+		osgx::AttachmentFormat::RGBA8,   // gMaterial
+		osgx::AttachmentFormat::RGBA16F, // gEmissive (HDR)
+		osgx::AttachmentFormat::RGBA32F  // gPosition (view-space, real precision needed)
 	};
 
-	result.gbuffer = osgx::gbuffer::createGBufferCamera(node, width, height, formats);
+	result.gbuffer = osgx::GBuffer::create(node, width, height, formats);
 
 	if(!result.gbuffer.valid()) return result;
 
@@ -1066,9 +1103,9 @@ bool PBRIBLLightingScene::valid() const { return node.valid(); }
 // The fullscreen quad's own camera is necessarily ABSOLUTE_RF/identity-view/identity-projection
 // (that's what makes an NDC quad cover the screen) -- OSG's automatic osg_ViewMatrix therefore
 // resolves to identity on it, not `mainCamera`'s real matrices. Rather than fight that (as
-// createPBRIBLScene()'s forward-pass shader can, by simply living on real scene geometry under
+// PBRIBLScene::create()'s forward-pass shader can, by simply living on real scene geometry under
 // the real camera), this pass carries its own osgx_mainViewMatrix/osgx_mainViewMatrixInverse
-// uniforms, populated once here and kept current by updatePBRIBLLightingPass() every frame --
+// uniforms, populated once here and kept current by PBRIBLLightingScene::update() every frame --
 // the same fix 11-sketchfab.py's own Increment 1 needed for exactly this reason. There is
 // deliberately NO projection-matrix uniform: an earlier version reconstructed view-space
 // position from gDepth + an inverse projection matrix here, which turned out to be unreliable
@@ -1080,7 +1117,7 @@ bool PBRIBLLightingScene::valid() const { return node.valid(); }
 // orbiting the camera. `gPosition` (PBRIBLGBuffer) sidesteps the problem entirely by writing
 // real position straight from the vertex shader instead; only the VIEW matrix is reconstructed
 // here now, and that one genuinely is shared correctly across RELATIVE_RF-nested cameras.
-PBRIBLLightingScene createPBRIBLLightingPass(
+PBRIBLLightingScene PBRIBLLightingScene::create(
 	const PBRIBLGBuffer& gbuffer,
 	const PBRIBLEnvironment& environment,
 	osg::Camera* mainCamera,
@@ -1095,7 +1132,7 @@ PBRIBLLightingScene createPBRIBLLightingPass(
 	auto prog = osgx::make_ref<osg::Program>();
 
 	prog->setName("osgx_gltf_PBRIBLLightingPass");
-	prog->addShader(new osg::Shader(osg::Shader::VERTEX, osgx::ibl::FULLSCREEN_VERT));
+	prog->addShader(new osg::Shader(osg::Shader::VERTEX, osgx::FULLSCREEN_VERT));
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::LIGHTING_FRAGMENT_SHADER_SRC)
@@ -1104,8 +1141,8 @@ PBRIBLLightingScene createPBRIBLLightingPass(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(
 			options.shadowMap
-				? osgx::shadow::DIRECT_LIGHTING_HOOK_SHADOWED
-				: osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT
+				? osgx::DIRECT_LIGHTING_HOOK_SHADOWED
+				: osgx::DIRECT_LIGHTING_HOOK_DEFAULT
 		)
 	));
 
@@ -1126,7 +1163,7 @@ PBRIBLLightingScene createPBRIBLLightingPass(
 		prog->addShader(new osg::Shader(
 			osg::Shader::FRAGMENT,
 			resolveShaderLibs(
-				options.tonemap ? osgx::pbr::TONEMAP_HOOK_DEFAULT : osgx::pbr::TONEMAP_HOOK_IDENTITY
+				options.tonemap ? osgx::TONEMAP_HOOK_DEFAULT : osgx::TONEMAP_HOOK_IDENTITY
 			)
 		));
 	}
@@ -1261,20 +1298,20 @@ PBRIBLLightingScene createPBRIBLLightingPass(
 
 	result.node = cam;
 
-	updatePBRIBLLightingPass(result, mainCamera);
+	result.update(mainCamera);
 
 	return result;
 }
 
-void updatePBRIBLLightingPass(PBRIBLLightingScene& scene, const osg::Camera* mainCamera) {
-	if(!scene.valid() || !mainCamera) return;
+void PBRIBLLightingScene::update(const osg::Camera* mainCamera) {
+	if(!valid() || !mainCamera) return;
 
-	if(scene.mainViewMatrix) {
-		scene.mainViewMatrix->set(osg::Matrixf(mainCamera->getViewMatrix()));
+	if(mainViewMatrix) {
+		mainViewMatrix->set(osg::Matrixf(mainCamera->getViewMatrix()));
 	}
 
-	if(scene.mainViewMatrixInverse) {
-		scene.mainViewMatrixInverse->set(osg::Matrixf(mainCamera->getInverseViewMatrix()));
+	if(mainViewMatrixInverse) {
+		mainViewMatrixInverse->set(osg::Matrixf(mainCamera->getInverseViewMatrix()));
 	}
 }
 

@@ -17,12 +17,12 @@ OSGX_ENABLE_WARNINGS
 
 namespace osgx {
 
-// Debug visualization for osgx::pbr::LightSet lights -- deliberately not part of osgx::debug, which is
+// Debug visualization for osgx::LightSet lights -- deliberately not part of osgx::debug, which is
 // specifically GL_KHR_debug integration, not visual scene gizmos. Two mechanisms, since a
 // directional light and a point/spot/sphere light are genuinely different visualization problems
 // (see LightGizmos below): only the latter has a real position to place depth-tested geometry at.
 
-// Depth-tested, real scene-space markers for point/sphere/spot lights (up to osgx::pbr::MAX_LIGHTS),
+// Depth-tested, real scene-space markers for point/sphere/spot lights (up to osgx::MAX_LIGHTS),
 // added as an ordinary child of the lit scene. One osg::Geometry, rebuilt in place every update
 // traversal from the live LightSet uniforms (an osg::NodeCallback installed on this Group) --
 // combines Shapes.hpp's Polyhedron::rebuild() "mutate the existing arrays, don't replace them"
@@ -38,9 +38,9 @@ public:
 	OSGX_META_Object(osgx_gizmo, LightMarkers)
 
 	LightMarkers() = default;
-	// `lights` is the live osgx::pbr::LightSet this marker set visualizes.
+	// `lights` is the live osgx::LightSet this marker set visualizes.
 	explicit LightMarkers(
-		const osgx::pbr::LightSet& lights, float minMarkerRadius=0.05f, float spotConeLength=1.0f
+		const osgx::LightSet& lights, float minMarkerRadius=0.05f, float spotConeLength=1.0f
 	);
 	LightMarkers(const LightMarkers& rhs, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
 	osg::Group(rhs, co) {}
@@ -51,7 +51,7 @@ public:
 private:
 	class UpdateCallback: public osg::NodeCallback {
 	public:
-		UpdateCallback(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength):
+		UpdateCallback(const osgx::LightSet& lights, float minMarkerRadius, float spotConeLength):
 		_lights(lights),
 		_minMarkerRadius(minMarkerRadius),
 		_spotConeLength(spotConeLength) {}
@@ -59,12 +59,12 @@ private:
 		void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 
 	private:
-		osgx::pbr::LightSet _lights;
+		osgx::LightSet _lights;
 		float _minMarkerRadius;
 		float _spotConeLength;
 	};
 
-	void rebuild(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength);
+	void rebuild(const osgx::LightSet& lights, float minMarkerRadius, float spotConeLength);
 
 	osg::ref_ptr<osg::Geometry> _geometry;
 };
@@ -91,7 +91,7 @@ public:
 
 	LightGizmos() = default;
 	explicit LightGizmos(
-		const osgx::pbr::LightSet& lights,
+		const osgx::LightSet& lights,
 		osg::Node* scene,
 		float minMarkerRadius=0.05f,
 		float spotConeLength=1.0f

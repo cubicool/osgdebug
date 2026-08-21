@@ -193,7 +193,7 @@ void buildSpotMarker(
 
 // Builds the non-depth-tested POST_RENDER overlay camera for directional lights -- see
 // LightGizmos' doc comment in Gizmos.hpp for the full rationale.
-osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::pbr::LightSet& lights, osg::Node* scene) {
+osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::LightSet& lights, osg::Node* scene) {
 	osg::BoundingSphere bound = scene ? scene->getBound() : osg::BoundingSphere(osg::Vec3(), 1.0f);
 	float boundRadius = bound.radius() > 0.0f ? bound.radius() : 1.0f;
 	osg::Vec3 boundCenter = bound.center();
@@ -209,7 +209,7 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::pbr::LightSet& lig
 	// 10 vertices per directional slot: 4 (plane LINE_LOOP) + 2 (direction stub, LINES) + 4
 	// (arrowhead, two LINES segments) -- exactly mirrors the Python original's per-light layout.
 	constexpr std::size_t VERTS_PER_LIGHT = 10;
-	auto capacity = static_cast<std::size_t>(osgx::pbr::MAX_LIGHTS) * VERTS_PER_LIGHT;
+	auto capacity = static_cast<std::size_t>(osgx::MAX_LIGHTS) * VERTS_PER_LIGHT;
 	auto verts = osgx::make_ref<osgx::Vec3Array>(capacity);
 	auto colors = osgx::make_ref<osgx::Vec3Array>(capacity);
 
@@ -239,7 +239,7 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::pbr::LightSet& lig
 	geode->addDrawable(geom);
 
 	struct DirectionalOverlayCallback: public osg::NodeCallback {
-		DirectionalOverlayCallback(const osgx::pbr::LightSet& lights, osg::Vec3 center, float planeHalf, float normalLen, float back, float wide):
+		DirectionalOverlayCallback(const osgx::LightSet& lights, osg::Vec3 center, float planeHalf, float normalLen, float back, float wide):
 		_lights(lights), _center(center), _planeHalf(planeHalf), _normalLen(normalLen), _arrowBack(back), _arrowWidth(wide) {}
 
 		void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
@@ -257,13 +257,13 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::pbr::LightSet& lig
 
 			geom2->removePrimitiveSet(0, geom2->getNumPrimitiveSets());
 
-			int count = std::clamp(_lights.getCount(), 0, osgx::pbr::MAX_LIGHTS);
+			int count = std::clamp(_lights.getCount(), 0, osgx::MAX_LIGHTS);
 
 			for(int i = 0; i < count; i++) {
 				auto index = static_cast<std::size_t>(i);
-				osgx::pbr::LightType type = _lights.getType(index);
+				osgx::LightType type = _lights.getType(index);
 
-				if(type != osgx::pbr::LightType::Directional) continue;
+				if(type != osgx::LightType::Directional) continue;
 
 				osg::Vec3 direction = _lights.getDirection(index);
 				osg::Vec3 lightColorValue = _lights.getColor(index);
@@ -320,7 +320,7 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::pbr::LightSet& lig
 			traverse(node, nv);
 		}
 
-		osgx::pbr::LightSet _lights;
+		osgx::LightSet _lights;
 		osg::Vec3 _center;
 		float _planeHalf, _normalLen, _arrowBack, _arrowWidth;
 	};
@@ -342,7 +342,7 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::pbr::LightSet& lig
 
 }
 
-LightMarkers::LightMarkers(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
+LightMarkers::LightMarkers(const osgx::LightSet& lights, float minMarkerRadius, float spotConeLength) {
 	setUpdateCallback(new UpdateCallback(lights, minMarkerRadius, spotConeLength));
 	setCullingActive(false);
 }
@@ -354,11 +354,11 @@ void LightMarkers::UpdateCallback::operator()(osg::Node* node, osg::NodeVisitor*
 	traverse(node, nv);
 }
 
-void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRadius, float spotConeLength) {
+void LightMarkers::rebuild(const osgx::LightSet& lights, float minMarkerRadius, float spotConeLength) {
 	if(!lights.valid()) return;
 
 	if(!_geometry) {
-		auto capacity = static_cast<std::size_t>(osgx::pbr::MAX_LIGHTS) * static_cast<std::size_t>(detail::MAX_VERTS_PER_LIGHT);
+		auto capacity = static_cast<std::size_t>(osgx::MAX_LIGHTS) * static_cast<std::size_t>(detail::MAX_VERTS_PER_LIGHT);
 		auto verts = osgx::make_ref<osgx::Vec3Array>(capacity);
 		auto colors = osgx::make_ref<osgx::Vec3Array>(capacity);
 
@@ -385,7 +385,7 @@ void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRad
 		addChild(geode);
 	}
 
-	int count = std::clamp(lights.getCount(), 0, osgx::pbr::MAX_LIGHTS);
+	int count = std::clamp(lights.getCount(), 0, osgx::MAX_LIGHTS);
 
 	_geometry->removePrimitiveSet(0, _geometry->getNumPrimitiveSets());
 
@@ -394,7 +394,7 @@ void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRad
 
 	for(int i = 0; i < count; i++) {
 		auto index = static_cast<std::size_t>(i);
-		osgx::pbr::LightType type = lights.getType(index);
+		osgx::LightType type = lights.getType(index);
 		osg::Vec4 posIntensity = lights.getPosIntensity(index);
 		osg::Vec3 color = lights.getColor(index);
 		float sourceRadius = lights.getSourceRadius(index);
@@ -403,7 +403,7 @@ void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRad
 		osg::Vec3 c = detail::gizmoColor(color);
 		osg::Vec3 position(posIntensity.x(), posIntensity.y(), posIntensity.z());
 
-		if(type == osgx::pbr::LightType::Spot) {
+		if(type == osgx::LightType::Spot) {
 			osg::Vec3 direction = lights.getDirection(index);
 			osg::Vec2 coneAngles = lights.getSpotAngles(index);
 			float outerAngle = std::acos(std::clamp(coneAngles.y(), -1.0f, 1.0f));
@@ -411,7 +411,7 @@ void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRad
 			detail::buildSpotMarker(verts, colors, _geometry, slotStart, position, direction, outerAngle, spotConeLength, c);
 		}
 
-		else if(type != osgx::pbr::LightType::Directional) {
+		else if(type != osgx::LightType::Directional) {
 			float radius = std::max(sourceRadius, minMarkerRadius);
 
 			detail::buildPointMarker(verts, colors, _geometry, slotStart, position, radius, c);
@@ -424,7 +424,7 @@ void LightMarkers::rebuild(const osgx::pbr::LightSet& lights, float minMarkerRad
 }
 
 LightGizmos::LightGizmos(
-	const osgx::pbr::LightSet& lights,
+	const osgx::LightSet& lights,
 	osg::Node* scene,
 	float minMarkerRadius,
 	float spotConeLength

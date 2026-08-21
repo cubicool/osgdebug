@@ -32,8 +32,6 @@ OSGX_ENABLE_WARNINGS
 
 namespace osgx {
 
-namespace ibl {
-
 // Disables a node after its update callback has fired exactly once -- e.g. a PRE_RENDER bake
 // camera that should render one frame at startup and then go idle. Call rebake() to re-arm it
 // (render one more frame -- e.g. after swapping the bake's source data).
@@ -78,8 +76,8 @@ private:
 // bakes that need a rasterized pass can reuse it too).
 //
 // Kept as an `inline constexpr` header definition (not moved to IBL.cpp like the rest of this
-// file): it's bound directly by name in ext/osgx-python.cpp (osgx::ibl::FULLSCREEN_VERT), which
-// needs real external linkage, AND referenced inside registerShaderLibs()'s `static constexpr
+// file): it's bound directly by name in ext/osgx-python.cpp (osgx::FULLSCREEN_VERT), which
+// needs real external linkage, AND referenced inside registerIBLShaderLibs()'s `static constexpr
 // ShaderLib` array below, which needs a genuine constant expression -- `inline constexpr` in a
 // header is the one form that satisfies both at once.
 inline constexpr const char* FULLSCREEN_VERT = R"GLSL(
@@ -184,29 +182,31 @@ osg::ref_ptr<osg::TextureCubeMap> loadPrefilterCubemap(const std::string& path);
 //   rebake() on the camera's RunOnceCallback (via getUpdateCallback()) if that ever changes.
 osg::ref_ptr<osg::Camera> makeBRDFLUTCamera(int lutSize, osg::Texture2D* lut);
 
-// One `sharedBRDFLUT(lutSize)` call's worth of result: `texture` is always the shared LUT for that
-// size. `camera` is only non-null the FIRST time a given `lutSize` is requested in this process --
-// that caller is responsible for adding it to a rendered scene graph so the one-time bake actually
-// runs. Every later call at the same `lutSize` gets the same `texture` back with `camera` left
-// null, because there is nothing left to bake.
+// One `SharedBRDFLUT::create(lutSize)` call's worth of result: `texture` is always the shared LUT
+// for that size. `camera` is only non-null the FIRST time a given `lutSize` is requested in this
+// process -- that caller is responsible for adding it to a rendered scene graph so the one-time
+// bake actually runs. Every later call at the same `lutSize` gets the same `texture` back with
+// `camera` left null, because there is nothing left to bake.
 struct SharedBRDFLUT {
 	osg::ref_ptr<osg::Texture2D> texture;
 	osg::ref_ptr<osg::Camera> camera;
+
+	// The split-sum BRDF LUT is a property of THIS CODE -- this GGX distribution, this Smith
+	// visibility term, this sample count -- not of any HDR image, environment, or probe (see the
+	// derivation note above makeBRDFLUTCamera()). Every environment requesting the same `lutSize`
+	// bakes to byte-identical output, so this bakes it once per size, process-wide, and hands the
+	// same GPU texture to every caller after that -- never re-derive it per HDR/environment/probe,
+	// and never key this cache by anything but `lutSize`. NOTE: unlike every other `::create()`
+	// factory in osgx, this one may hand back an ALREADY-EXISTING shared texture rather than a
+	// fresh bake -- see the comment above for the exact contract.
+	static SharedBRDFLUT create(int lutSize);
 };
 
-// The split-sum BRDF LUT is a property of THIS CODE -- this GGX distribution, this Smith
-// visibility term, this sample count -- not of any HDR image, environment, or probe (see the
-// derivation note above makeBRDFLUTCamera()). Every environment requesting the same `lutSize`
-// bakes to byte-identical output, so this bakes it once per size, process-wide, and hands the same
-// GPU texture to every caller after that -- never re-derive it per HDR/environment/probe, and
-// never key this cache by anything but `lutSize`.
-SharedBRDFLUT sharedBRDFLUT(int lutSize);
-
-// A CPU-readback companion for makeBRDFLUTCamera()/sharedBRDFLUT(), exactly like
+// A CPU-readback companion for makeBRDFLUTCamera()/SharedBRDFLUT::create(), exactly like
 // GGXPrefilterReadback/LambertianCubeReadback but simpler: the LUT bakes in exactly one PRE_RENDER
 // pass (gated by its own RunOnceCallback), so this only needs a frame-count trigger, not an
 // external completion signal. Exists purely for the offline serialize-to-KTX2 use case --
-// sharedBRDFLUT()'s live consumers never construct one of these.
+// SharedBRDFLUT::create()'s live consumers never construct one of these.
 //
 // The result is a bare osg::Image, not a Texture2D: the KTX2 writer plugin has no Texture2D
 // support at all (only TextureCubeMap and osg::Image -- see plugins/ktx2/ReaderWriterKTX2.cpp), so
@@ -347,8 +347,6 @@ vec3 osgx_HemisphereAmbient(vec3 N, vec3 up, vec3 albedo, float ao, vec3 skyColo
 }
 )GLSL";
 
-void registerShaderLibs();
-
-}
+void registerIBLShaderLibs();
 
 }

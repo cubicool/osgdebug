@@ -1,12 +1,12 @@
 // vimrun! ./examples/osgx-gbuffer model.gltf --env env/papermill.gltf
 //
-// Proves osgx::gltf::pbribl's deferred split (createPBRIBLGeometryPass() + createPBRIBLLightingPass())
-// renders identically to createPBRIBLScene()'s monolithic forward shader -- same model, same
+// Proves osgx::gltf::pbribl's deferred split (PBRIBLGBuffer::create() + PBRIBLLightingScene::create())
+// renders identically to PBRIBLScene::create()'s monolithic forward shader -- same model, same
 // --hdr/--env environment loading osgx-gltf-viewer.cpp/osgx-turntable.cpp already use, plus a
 // THIRD camera proving osgx::shadow fits into the split too: shadow-casting only needs depth,
 // not material data, so it sits alongside the geometry pass rather than inside it, and plugs
 // into the lighting pass via the exact same PBRIBLLightingPassOptions::shadowMap seam
-// createPBRIBLScene()'s own shadowMap parameter uses.
+// PBRIBLScene::create()'s own shadowMap parameter uses.
 //
 // Press 0-5 to inspect the raw G-buffer channels (0=lit composite, 1=albedo, 2=normal,
 // 3=material(roughness/metallic), 4=emissive, 5=depth) -- the same diagnostic shape
@@ -16,8 +16,8 @@
 // Also proves osgx::shadow's 3 correctness fixes (same as osgx-shadow.cpp -- see that file's own
 // header comment for the full writeup) inside the deferred G-buffer pipeline specifically: the
 // shadow camera below is orthographic (not perspective), never sets its own depth-only Program
-// (createDirectionalShadowMap() does that internally now), and its "Directional Light" ImGui
-// section drags the key light live via osgx::shadow::repositionDirectionalShadowMap() -- watch
+// (ShadowMap::create() does that internally now), and its "Directional Light" ImGui
+// section drags the key light live via ShadowMap::reposition() -- watch
 // the floor's shadow track the drag with no camera/FBO rebuild, while osgx::LightGizmos (reading
 // the same LightSet) shows the plane/arrow moving in sync.
 
@@ -87,7 +87,7 @@ std::filesystem::path findEnvironmentManifest(std::string_view filename) {
 // same as the geometry pass, but added to `root` before it). Every PRE_RENDER camera finishes
 // drawing before the main viewer camera's own preDrawCallback fires (confirmed against OSG
 // 3.6.5's RenderStage::draw()), so this is the earliest point in the frame that still sees the
-// CURRENT frame's fresh camera matrices -- calling updatePBRIBLLightingPass() from application
+// CURRENT frame's fresh camera matrices -- calling PBRIBLLightingScene::update() from application
 // code after viewer.frame() returns (the previous, buggy version of this example) hands the
 // lighting pass a one-frame-stale matrix instead, which showed up live as a shadow/position
 // artifact that visibly worsened while the camera was actively orbiting/zooming.
@@ -97,7 +97,7 @@ public:
 		_scene(scene), _mainCamera(mainCamera) {}
 
 	void operator()(osg::RenderInfo&) const override {
-		osgx::gltf::pbribl::updatePBRIBLLightingPass(*_scene, _mainCamera.get());
+		_scene->update(_mainCamera.get());
 	}
 
 private:
@@ -200,7 +200,7 @@ private:
 };
 
 // Floor: a plain procedural quad, deliberately NOT sharing the model's G-buffer Program
-// (createPBRIBLGeometryPass()'s shader reads a structured osgx_gltf_Material buffer only the
+// (PBRIBLGBuffer::create()'s shader reads a structured osgx_gltf_Material buffer only the
 // glTF loader ever populates -- a quad built by hand has none of that data, so reading it
 // unbound would be garbage, not a harmless default). Writes flat albedo/normal/roughness-
 // metallic/zero-emissive/position straight into all 5 G-buffer attachments with its own trivial
@@ -311,7 +311,7 @@ osg::ref_ptr<osg::Camera> makeDebugBlitCamera(osg::Uniform*& channelModeOut) {
 	auto prog = osgx::make_ref<osg::Program>();
 
 	prog->setName("osgx_gbuffer_DebugBlit");
-	prog->addShader(new osg::Shader(osg::Shader::VERTEX, osgx::ibl::FULLSCREEN_VERT));
+	prog->addShader(new osg::Shader(osg::Shader::VERTEX, osgx::FULLSCREEN_VERT));
 	prog->addShader(new osg::Shader(osg::Shader::FRAGMENT, DEBUG_BLIT_FRAGMENT_SHADER));
 
 	auto cam = osgx::make_ref<osg::Camera>();
@@ -415,7 +415,7 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		environment = osgx::gltf::pbribl::loadPBRIBLEnvironment(manifest.string());
+		environment = osgx::gltf::pbribl::PBRIBLEnvironment::load(manifest.string());
 	}
 
 	else {
@@ -427,7 +427,7 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		environment = osgx::gltf::pbribl::preparePBRIBLEnvironment(hdrEnvironment.string(), 1024);
+		environment = osgx::gltf::pbribl::PBRIBLEnvironment::prepare(hdrEnvironment.string(), 1024);
 	}
 
 	if(!environment.valid()) {
@@ -436,7 +436,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	auto gbuffer = osgx::gltf::pbribl::createPBRIBLGeometryPass(model, WIDTH, HEIGHT);
+	auto gbuffer = osgx::gltf::pbribl::PBRIBLGBuffer::create(model, WIDTH, HEIGHT);
 
 	if(!gbuffer.valid()) {
 		std::cerr << "Failed to build the G-buffer geometry pass" << std::endl;
@@ -449,7 +449,7 @@ int main(int argc, char** argv) {
 	// unaware shadows exist). `model` is multi-parented under it exactly as under gbuffer's own
 	// camera; unlike 08-shadows.py's original hand-rolled version, this does NOT re-run the
 	// model's own (expensive: normal-mapped/textured) G-buffer-writing fragment shader during the
-	// depth-only pass -- createDirectionalShadowMap() now installs its own minimal depth-only
+	// depth-only pass -- ShadowMap::create() now installs its own minimal depth-only
 	// Program directly on shadowMap.camera (ON|OVERRIDE), which wins over whatever Program `model`
 	// carries for its real render. See osgx/TODO.md's old Shadow section.
 	osg::ComputeBoundsVisitor boundsVisitor;
@@ -462,14 +462,14 @@ int main(int argc, char** argv) {
 	// Moderate ~45 degree angle -- offset enough to cast a clearly visible shadow without the
 	// extreme grazing angles that stress-test the shadow frustum's tight, model-sized coverage.
 	// Not const: the ImGui "Directional Light" section below drags this live (see
-	// repositionDirectionalShadowMap() further down).
+	// ShadowMap::reposition() further down).
 	osg::Vec3 lightDir = osg::Vec3(0.6f, 0.4f, -0.6f);
 	osg::Vec3 lightColor = osg::Vec3(1.0f, 0.95f, 0.85f);
 	float lightIntensity = 3.0f;
 
-	osgx::shadow::ShadowMapOptions shadowOptions;
+	osgx::ShadowMapOptions shadowOptions;
 
-	auto shadowMap = osgx::shadow::createDirectionalShadowMap(
+	auto shadowMap = osgx::ShadowMap::create(
 		lightDir, boundCenter, boundRadius, shadowOptions
 	);
 
@@ -497,7 +497,7 @@ int main(int argc, char** argv) {
 	// override it by hand"), and reverting to 0.1 made no visible difference anyway, ruling out
 	// the IBL/direct-light balance theory entirely -- the shadow is invisible for some other
 	// reason.
-	auto lighting = osgx::gltf::pbribl::createPBRIBLLightingPass(
+	auto lighting = osgx::gltf::pbribl::PBRIBLLightingScene::create(
 		gbuffer, environment, viewer.getCamera(), 1.0f, 1.0f, lightingOptions
 	);
 
@@ -511,7 +511,7 @@ int main(int argc, char** argv) {
 	// lighting pass camera's own StateSet, since that's where osgx_DirectLighting() actually
 	// runs; the geometry pass has no lighting math to feed it to.
 	auto* lightingSS = dynamic_cast<osg::Camera*>(lighting.node.get())->getOrCreateStateSet();
-	auto lights = osgx::pbr::LightSet::create(lightingSS);
+	auto lights = osgx::LightSet::create(lightingSS);
 
 	// Intensity ~3.0 (not 2.0) -- also matching 11-sketchfab.py's own tuned key-light magnitude.
 	lights.setCount(1);
@@ -578,13 +578,13 @@ int main(int argc, char** argv) {
 	));
 
 	std::cout
-		<< "osgx-gbuffer: deferred createPBRIBLGeometryPass() + createPBRIBLLightingPass()" << std::endl
+		<< "osgx-gbuffer: deferred PBRIBLGBuffer::create() + PBRIBLLightingScene::create()" << std::endl
 		<< " 0=lit composite (default) 1=albedo 2=normal 3=material 4=emissive 5=depth" << std::endl
 		<< " w=dump the shadow camera's own depth texture to osgx-gbuffer-shadow-depth.png" << std::endl
 	;
 
 #ifdef OSGX_IMGUI
-	// Proves osgx::shadow::repositionDirectionalShadowMap() inside the deferred pipeline
+	// Proves ShadowMap::reposition() inside the deferred pipeline
 	// specifically: dragging the light live reshapes the floor's shadow (and moves
 	// osgx::LightGizmos' overlay, reading the same LightSet) without ever rebuilding shadowMap's
 	// camera/FBO/depth texture -- same mechanism osgx-shadow.cpp already proved standalone.
@@ -609,19 +609,17 @@ int main(int argc, char** argv) {
 
 		if(changed) {
 			// A dragged slider can pass through (0,0,0) -- lookAt() (inside
-			// repositionDirectionalShadowMap()) is degenerate for a zero-length direction, so
+			// ShadowMap::reposition()) is degenerate for a zero-length direction, so
 			// hold the last valid direction instead of feeding it one.
 			if(lightDir.length2() > 1e-8f) {
 				lights.setDirectional(0, lightDir, lightColor, lightIntensity);
 
-				osgx::shadow::repositionDirectionalShadowMap(
-					shadowMap, lightDir, boundCenter, boundRadius, shadowOptions
-				);
+				shadowMap.reposition(lightDir, boundCenter, boundRadius, shadowOptions);
 			} else {
 				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
 			}
 		}
-	}, osgx::imgui::makeSectionOptions(false, true));
+	}, osgx::imgui::SectionOptions::create(false, true));
 #endif
 
 	return viewer.run();

@@ -423,7 +423,7 @@ int main(int argc, char** argv) {
 	osg::ref_ptr<osg::TextureCubeMap> skybox;
 
 	if(!environmentPath.empty()) {
-		environment = osgx::gltf::pbribl::loadPBRIBLEnvironment(environmentPath);
+		environment = osgx::gltf::pbribl::PBRIBLEnvironment::load(environmentPath);
 
 		if(!environment.valid()) {
 			std::cerr << "Unable to load PBR/IBL environment manifest: " << environmentPath << std::endl;
@@ -437,7 +437,7 @@ int main(int argc, char** argv) {
 	}
 
 	if(!skyboxPath.empty()) {
-		skybox = osgx::ibl::loadPrefilterCubemap(skyboxPath);
+		skybox = osgx::loadPrefilterCubemap(skyboxPath);
 
 		if(!skybox) {
 			std::cerr << "Unable to load raw skybox cubemap: " << skyboxPath << std::endl;
@@ -466,7 +466,7 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		if(!osgx::gltf::pbribl::createPBRIBLScene(subject, environment).valid()) return 1;
+		if(!osgx::gltf::pbribl::PBRIBLScene::create(subject, environment).valid()) return 1;
 	}
 
 	else subject = makePlaceholders();

@@ -35,7 +35,7 @@ void bind_imgui(py::module_& m_imgui) {
 	// from Python rather than adding more positional args to addSection itself.
 	py::class_<osgx::imgui::SectionOptions>(m_imgui, "SectionOptions")
 		.def(
-			py::init(&osgx::imgui::makeSectionOptions),
+			py::init(&osgx::imgui::SectionOptions::create),
 			"expand"_a=false,
 			"default_open"_a=false
 		)

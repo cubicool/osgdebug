@@ -16,12 +16,12 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <cmath>
 
-namespace osgx::shadow {
+namespace osgx {
 
 namespace {
 
 // Vertex-transform-only, empty-fragment Program installed on every directional shadow camera's
-// own StateSet (ON|OVERRIDE) -- see createDirectionalShadowMap()'s own comment for why. Uses OSG's
+// own StateSet (ON|OVERRIDE) -- see ShadowMap::create()'s own comment for why. Uses OSG's
 // standard osg_Vertex/osg_ModelViewProjectionMatrix names (auto-bound by OSG, same as every other
 // osgx/pyosg-lighting shader -- no explicit addBindAttribLocation() needed) so it works unmodified
 // against any subgraph, not just a specific vertex-attribute convention.
@@ -54,7 +54,7 @@ osg::ref_ptr<osg::Program> makeDepthOnlyProgram() {
 	return program;
 }
 
-// Shared by createDirectionalShadowMap()/repositionDirectionalShadowMap() -- the only difference
+// Shared by ShadowMap::create()/ShadowMap::reposition() -- the only difference
 // between "create" and "reposition" is whether a new camera/texture gets allocated around this
 // math, not the math itself.
 void computeDirectionalShadowMatrices(
@@ -95,7 +95,7 @@ bool ShadowMap::valid() const {
 	return camera.valid() && depthTexture.valid() && shadowMatrix.valid();
 }
 
-ShadowMap createDirectionalShadowMap(
+ShadowMap ShadowMap::create(
 	const osg::Vec3& lightDirection,
 	const osg::Vec3& sceneBoundCenter,
 	float sceneBoundRadius,
@@ -150,40 +150,39 @@ ShadowMap createDirectionalShadowMap(
 	result.strength = new osg::Uniform("osgx_shadowStrength", options.strength);
 	result.casterIndex = new osg::Uniform("osgx_shadowCasterIndex", 0);
 
-	updateShadowMatrix(result);
+	result.updateMatrix();
 
 	return result;
 }
 
-void updateShadowMatrix(ShadowMap& shadowMap) {
-	if(!shadowMap.shadowMatrix) return;
+void ShadowMap::updateMatrix() {
+	if(!shadowMatrix) return;
 
 	// OSG row-vector convention: worldPos * (lightView * lightProj) is the same composition GLSL's
 	// osgx_shadowMatrix * vec4(worldPos, 1.0) performs once uploaded -- see Shadow.hpp's file-level
 	// comment for why this needs no main-camera term (unlike the eye-space hand-rolled examples).
-	shadowMap.shadowMatrix->set(osg::Matrixf(shadowMap.lightView * shadowMap.lightProj));
+	shadowMatrix->set(osg::Matrixf(lightView * lightProj));
 }
 
-void repositionDirectionalShadowMap(
-	ShadowMap& shadowMap,
+void ShadowMap::reposition(
 	const osg::Vec3& lightDirection,
 	const osg::Vec3& sceneBoundCenter,
 	float sceneBoundRadius,
 	const ShadowMapOptions& options
 ) {
-	if(!shadowMap.camera) return;
+	if(!camera) return;
 
 	computeDirectionalShadowMatrices(
-		lightDirection, sceneBoundCenter, sceneBoundRadius, options, shadowMap.lightView, shadowMap.lightProj
+		lightDirection, sceneBoundCenter, sceneBoundRadius, options, lightView, lightProj
 	);
 
-	shadowMap.camera->setViewMatrix(shadowMap.lightView);
-	shadowMap.camera->setProjectionMatrix(shadowMap.lightProj);
+	camera->setViewMatrix(lightView);
+	camera->setProjectionMatrix(lightProj);
 
-	updateShadowMatrix(shadowMap);
+	updateMatrix();
 }
 
-void registerShaderLibs() {
+void registerShadowShaderLibs() {
 	static const osgx::ShaderLib libs[] = {
 		{"SHADOW_UNIFORMS", "osgx_shadowMap", SHADOW_UNIFORMS},
 		{"SHADOW_FACTOR", "osgx_ShadowFactor", SHADOW_FACTOR},

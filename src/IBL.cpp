@@ -1,6 +1,6 @@
 #include "osgx/IBL.hpp"
 
-namespace osgx::ibl {
+namespace osgx {
 
 void RunOnceCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 	if(_done) node->setNodeMask(0);
@@ -38,7 +38,7 @@ osg::ref_ptr<osg::TextureCubeMap> loadPrefilterCubemap(const std::string& path) 
 
 	if(!cube) {
 		OSG_WARN <<
-			"osgx::ibl::loadPrefilterCubemap: " << path <<
+			"osgx::loadPrefilterCubemap: " << path <<
 			" did not load as a TextureCubeMap" << std::endl
 		;
 
@@ -93,11 +93,11 @@ osg::ref_ptr<osg::Camera> makeBRDFLUTCamera(int lutSize, osg::Texture2D* lut) {
 // This function-local static cache is exactly the same DSO-duplication risk class that made
 // osgx::debug::detail::_accumulators a real bug (see Debug.hpp/Debug.cpp): a function-local
 // static inside a header-defined `inline` function only merges into one instance within a single
-// link unit, not across separately dlopen()'d modules. Defining sharedBRDFLUT() exactly once
-// here, compiled into libosgx, means `cache` is genuinely process-wide singleton state for every
-// consumer that links osgx::osgx -- the same fix, applied preemptively rather than in response to
-// an observed bug this time.
-SharedBRDFLUT sharedBRDFLUT(int lutSize) {
+// link unit, not across separately dlopen()'d modules. Defining SharedBRDFLUT::create() exactly
+// once here, compiled into libosgx, means `cache` is genuinely process-wide singleton state for
+// every consumer that links osgx::osgx -- the same fix, applied preemptively rather than in
+// response to an observed bug this time.
+SharedBRDFLUT SharedBRDFLUT::create(int lutSize) {
 	static std::map<int, osg::ref_ptr<osg::Texture2D>> cache;
 
 	if(auto it = cache.find(lutSize); it != cache.end()) return {it->second, nullptr};
@@ -415,11 +415,11 @@ osg::ref_ptr<osg::TextureCubeMap> computeLambertianCubeMap(
 	return cube;
 }
 
-void registerShaderLibs() {
+void registerIBLShaderLibs() {
 	static constexpr ShaderLib libs[] = {
-		{"SH_IRRADIANCE", "osgx_SHIrradiance", ibl::SH_IRRADIANCE},
-		{"LAMBERTIAN_IRRADIANCE", "osgx_LambertianIrradiance", ibl::LAMBERTIAN_IRRADIANCE},
-		{"HEMISPHERE_AMBIENT", "osgx_HemisphereAmbient", ibl::HEMISPHERE_AMBIENT}
+		{"SH_IRRADIANCE", "osgx_SHIrradiance", SH_IRRADIANCE},
+		{"LAMBERTIAN_IRRADIANCE", "osgx_LambertianIrradiance", LAMBERTIAN_IRRADIANCE},
+		{"HEMISPHERE_AMBIENT", "osgx_HemisphereAmbient", HEMISPHERE_AMBIENT}
 	};
 	::osgx::registerShaderLibs("osgx::ibl", libs);
 }

@@ -13,7 +13,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-namespace osgx::ibl {
+namespace osgx {
 
 // Requested quality for a GPU cosine-convolution of an equirectangular HDR. The resulting cube
 // stores diffuse irradiance divided by pi, matching the existing CPU Lambertian cube convention.
@@ -30,7 +30,7 @@ struct LambertianBakeOptions {
 };
 
 // A frame-driven GPU bake. Add root to a viewer scene, advance frames, then use diffuseTexture
-// once completion reports done. `rebakeLambertianBakeScene()` re-arms the same passes for a new
+// once completion reports done. `rebake()` re-arms the same passes for a new
 // HDR image without recreating their cameras or output texture.
 struct LambertianBakeScene {
 	osg::ref_ptr<osg::Group> root;
@@ -39,23 +39,22 @@ struct LambertianBakeScene {
 	osg::ref_ptr<BakeCompletion> completion;
 
 	bool ready() const;
+
+	static LambertianBakeScene create(
+		osg::Image* equirectangularHDR,
+		const LambertianBakeOptions& options={}
+	);
+
+	// Re-arms this bake scene's existing passes for a new HDR image without recreating their
+	// cameras or output texture.
+	bool rebake(osg::Image* equirectangularHDR);
 };
-
-LambertianBakeScene createLambertianBakeScene(
-	osg::Image* equirectangularHDR,
-	const LambertianBakeOptions& options={}
-);
-
-bool rebakeLambertianBakeScene(
-	LambertianBakeScene& scene,
-	osg::Image* equirectangularHDR
-);
 
 // A CPU-readback companion for LambertianBakeScene, mirroring GGXPrefilterReadback (see
 // GGXPrefilter.hpp) -- exists purely for the offline serialize-to-KTX2 use case. Attach to a
 // viewer's OUTER camera (not any of the six face cameras inside LambertianBakeScene::root), the
 // same way osggltf-iblbake-gpu attaches GGXPrefilterReadback to viewer.getCamera(). Interactive/
-// dynamic-probe consumers of createLambertianBakeScene() never construct one of these, so they
+// dynamic-probe consumers of LambertianBakeScene::create() never construct one of these, so they
 // never pay for the glFinish-gated readback below -- LambertianBakeScene::completion alone is
 // enough for them. Triggers off that exact completion signal rather than a frame-count heuristic,
 // since one is already available here (GGX has no equivalent, hence its own trigger style).
@@ -68,6 +67,11 @@ public:
 	bool isDone() const { return _done; }
 	osg::TextureCubeMap* getResult() const { return _result; }
 
+	// Returns the finished, CPU-readable cubemap once isDone() reports true (nullptr otherwise),
+	// with filter/wrap state set for normal sampling -- mirrors GGXPrefilterReadback::finish()'s
+	// contract.
+	osg::ref_ptr<osg::TextureCubeMap> finish() const;
+
 private:
 	osg::ref_ptr<osg::TextureCubeMap> _srcTex;
 	osg::ref_ptr<BakeCompletion> _completion;
@@ -75,9 +79,5 @@ private:
 	mutable osg::ref_ptr<osg::TextureCubeMap> _result;
 	mutable bool _done = false;
 };
-
-// Returns the finished, CPU-readable cubemap once `readback` reports done (nullptr otherwise),
-// with filter/wrap state set for normal sampling -- mirrors finishGGXPrefilter()'s contract.
-osg::ref_ptr<osg::TextureCubeMap> finishLambertianCubeReadback(LambertianCubeReadback* readback);
 
 }

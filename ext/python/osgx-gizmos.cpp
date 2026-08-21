@@ -11,7 +11,7 @@ void bind_gizmos(py::module_& m) {
 		osg::ref_ptr<osgx::LightMarkers>
 	>(m, "LightMarkers")
 		.def(
-			py::init<const osgx::pbr::LightSet&, float, float>(),
+			py::init<const osgx::LightSet&, float, float>(),
 			"lights"_a,
 			"minMarkerRadius"_a=0.05f,
 			"spotConeLength"_a=1.0f
@@ -24,7 +24,7 @@ void bind_gizmos(py::module_& m) {
 		osg::ref_ptr<osgx::LightGizmos>
 	>(m, "LightGizmos")
 		.def(
-			py::init<const osgx::pbr::LightSet&, osg::Node*, float, float>(),
+			py::init<const osgx::LightSet&, osg::Node*, float, float>(),
 			"lights"_a,
 			"scene"_a,
 			"minMarkerRadius"_a=0.05f,

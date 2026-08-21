@@ -11,7 +11,7 @@ OSGX_ENABLE_WARNINGS
 #include <bit>
 #include <stdexcept>
 
-namespace osgx::pbr {
+namespace osgx {
 
 std::string snippets() {
 	return std::string(D_GGX) + G_SCHLICK + G_SMITH + F_SCHLICK + F_SCHLICK_ROUGHNESS;
@@ -250,30 +250,30 @@ float LightSet::getSourceRadius(std::size_t index) const {
 	return f[0];
 }
 
-void registerShaderLibs() {
+void registerPBRShaderLibs() {
 	static constexpr ShaderLib libs[] = {
-		{"D_GGX", "osgx_D_GGX", pbr::D_GGX},
-		{"G_SCHLICK", "osgx_G_Schlick", pbr::G_SCHLICK},
-		{"G_SMITH", "osgx_G_Smith", pbr::G_SMITH},
-		{"F_SCHLICK", "osgx_F_Schlick", pbr::F_SCHLICK},
-		{"F_SCHLICK_ROUGHNESS", "osgx_F_Schlick_roughness", pbr::F_SCHLICK_ROUGHNESS},
-		{"MATERIAL_STRUCT", "osgx_Material", pbr::MATERIAL_STRUCT},
-		{"DIRECT_SPECULAR", "osgx_DirectSpecular", pbr::DIRECT_SPECULAR},
-		{"DIRECT_DIFFUSE", "osgx_DirectDiffuse", pbr::DIRECT_DIFFUSE},
-		{"POINT_LIGHT_RADIANCE", "osgx_PointLightRadiance", pbr::POINT_LIGHT_RADIANCE},
-		{"LIGHT_UNIFORMS", "osgx_LightUniforms", pbr::LIGHT_UNIFORMS},
-		{"DIRECT_LIGHT", "osgx_DirectLight", pbr::DIRECT_LIGHT},
-		{"DIRECTIONAL_LIGHT_RADIANCE", "osgx_DirectionalLightRadiance", pbr::DIRECTIONAL_LIGHT_RADIANCE},
-		{"SPOT_LIGHT_RADIANCE", "osgx_SpotLightRadiance", pbr::SPOT_LIGHT_RADIANCE},
-		{"SPHERE_LIGHT_SPECULAR", "osgx_SphereLightDir", pbr::SPHERE_LIGHT_SPECULAR},
-		{"DIRECT_LIGHT_SPHERE", "osgx_DirectLightSphere", pbr::DIRECT_LIGHT_SPHERE},
-		{"DIRECT_LIGHTING_DECL", "osgx_DirectLighting", pbr::DIRECT_LIGHTING_DECL},
-		{"F_MULTISCATTER", "osgx_F_MultiScatter", pbr::F_MULTISCATTER},
-		{"IBL_SPECULAR", "osgx_IBLSpecular", pbr::IBL_SPECULAR},
-		{"AMBIENT_LIGHTING_DECL", "osgx_AmbientLighting", pbr::AMBIENT_LIGHTING_DECL},
-		{"SPECULAR_AA", "osgx_SpecularAA", pbr::SPECULAR_AA},
-		{"TONEMAP_PBR_NEUTRAL", "osgx_TonemapPBRNeutral", pbr::TONEMAP_PBR_NEUTRAL},
-		{"TONEMAP_DECL", "osgx_Tonemap", pbr::TONEMAP_DECL}
+		{"D_GGX", "osgx_D_GGX", D_GGX},
+		{"G_SCHLICK", "osgx_G_Schlick", G_SCHLICK},
+		{"G_SMITH", "osgx_G_Smith", G_SMITH},
+		{"F_SCHLICK", "osgx_F_Schlick", F_SCHLICK},
+		{"F_SCHLICK_ROUGHNESS", "osgx_F_Schlick_roughness", F_SCHLICK_ROUGHNESS},
+		{"MATERIAL_STRUCT", "osgx_Material", MATERIAL_STRUCT},
+		{"DIRECT_SPECULAR", "osgx_DirectSpecular", DIRECT_SPECULAR},
+		{"DIRECT_DIFFUSE", "osgx_DirectDiffuse", DIRECT_DIFFUSE},
+		{"POINT_LIGHT_RADIANCE", "osgx_PointLightRadiance", POINT_LIGHT_RADIANCE},
+		{"LIGHT_UNIFORMS", "osgx_LightUniforms", LIGHT_UNIFORMS},
+		{"DIRECT_LIGHT", "osgx_DirectLight", DIRECT_LIGHT},
+		{"DIRECTIONAL_LIGHT_RADIANCE", "osgx_DirectionalLightRadiance", DIRECTIONAL_LIGHT_RADIANCE},
+		{"SPOT_LIGHT_RADIANCE", "osgx_SpotLightRadiance", SPOT_LIGHT_RADIANCE},
+		{"SPHERE_LIGHT_SPECULAR", "osgx_SphereLightDir", SPHERE_LIGHT_SPECULAR},
+		{"DIRECT_LIGHT_SPHERE", "osgx_DirectLightSphere", DIRECT_LIGHT_SPHERE},
+		{"DIRECT_LIGHTING_DECL", "osgx_DirectLighting", DIRECT_LIGHTING_DECL},
+		{"F_MULTISCATTER", "osgx_F_MultiScatter", F_MULTISCATTER},
+		{"IBL_SPECULAR", "osgx_IBLSpecular", IBL_SPECULAR},
+		{"AMBIENT_LIGHTING_DECL", "osgx_AmbientLighting", AMBIENT_LIGHTING_DECL},
+		{"SPECULAR_AA", "osgx_SpecularAA", SPECULAR_AA},
+		{"TONEMAP_PBR_NEUTRAL", "osgx_TonemapPBRNeutral", TONEMAP_PBR_NEUTRAL},
+		{"TONEMAP_DECL", "osgx_Tonemap", TONEMAP_DECL}
 	};
 	::osgx::registerShaderLibs("osgx::pbr", libs);
 }

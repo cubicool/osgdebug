@@ -10,35 +10,35 @@ OSGX_ENABLE_WARNINGS
 namespace osgx_python {
 
 void bind_pbr(py::module_& m_pbr) {
-	osgx::pbr::registerShaderLibs();
+	osgx::registerPBRShaderLibs();
 
-	m_pbr.attr("D_GGX") = osgx::pbr::D_GGX;
-	m_pbr.attr("G_SCHLICK") = osgx::pbr::G_SCHLICK;
-	m_pbr.attr("G_SMITH") = osgx::pbr::G_SMITH;
-	m_pbr.attr("F_SCHLICK") = osgx::pbr::F_SCHLICK;
-	m_pbr.attr("F_SCHLICK_ROUGHNESS") = osgx::pbr::F_SCHLICK_ROUGHNESS;
-	m_pbr.attr("DIRECT_SPECULAR") = osgx::pbr::DIRECT_SPECULAR;
-	m_pbr.attr("DIRECT_DIFFUSE") = osgx::pbr::DIRECT_DIFFUSE;
-	m_pbr.attr("POINT_LIGHT_RADIANCE") = osgx::pbr::POINT_LIGHT_RADIANCE;
-	m_pbr.attr("LIGHT_UNIFORMS") = osgx::pbr::LIGHT_UNIFORMS;
-	m_pbr.attr("DIRECT_LIGHT") = osgx::pbr::DIRECT_LIGHT;
-	m_pbr.attr("DIRECTIONAL_LIGHT_RADIANCE") = osgx::pbr::DIRECTIONAL_LIGHT_RADIANCE;
-	m_pbr.attr("SPOT_LIGHT_RADIANCE") = osgx::pbr::SPOT_LIGHT_RADIANCE;
-	m_pbr.attr("SPHERE_LIGHT_SPECULAR") = osgx::pbr::SPHERE_LIGHT_SPECULAR;
-	m_pbr.attr("DIRECT_LIGHT_SPHERE") = osgx::pbr::DIRECT_LIGHT_SPHERE;
-	m_pbr.attr("MAX_LIGHTS") = osgx::pbr::MAX_LIGHTS;
-	m_pbr.attr("LIGHT_STRUCT_FLOATS") = osgx::pbr::LIGHT_STRUCT_FLOATS;
-	m_pbr.attr("DIRECT_LIGHTING_DECL") = osgx::pbr::DIRECT_LIGHTING_DECL;
-	m_pbr.attr("DIRECT_LIGHTING_HOOK_DEFAULT") = osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT;
-	m_pbr.attr("F_MULTISCATTER") = osgx::pbr::F_MULTISCATTER;
-	m_pbr.attr("IBL_SPECULAR") = osgx::pbr::IBL_SPECULAR;
-	m_pbr.attr("AMBIENT_LIGHTING_DECL") = osgx::pbr::AMBIENT_LIGHTING_DECL;
-	m_pbr.attr("AMBIENT_LIGHTING_HOOK_DEFAULT") = osgx::pbr::AMBIENT_LIGHTING_HOOK_DEFAULT;
-	m_pbr.attr("TONEMAP_PBR_NEUTRAL") = osgx::pbr::TONEMAP_PBR_NEUTRAL;
-	m_pbr.attr("TONEMAP_DECL") = osgx::pbr::TONEMAP_DECL;
-	m_pbr.attr("TONEMAP_HOOK_DEFAULT") = osgx::pbr::TONEMAP_HOOK_DEFAULT;
+	m_pbr.attr("D_GGX") = osgx::D_GGX;
+	m_pbr.attr("G_SCHLICK") = osgx::G_SCHLICK;
+	m_pbr.attr("G_SMITH") = osgx::G_SMITH;
+	m_pbr.attr("F_SCHLICK") = osgx::F_SCHLICK;
+	m_pbr.attr("F_SCHLICK_ROUGHNESS") = osgx::F_SCHLICK_ROUGHNESS;
+	m_pbr.attr("DIRECT_SPECULAR") = osgx::DIRECT_SPECULAR;
+	m_pbr.attr("DIRECT_DIFFUSE") = osgx::DIRECT_DIFFUSE;
+	m_pbr.attr("POINT_LIGHT_RADIANCE") = osgx::POINT_LIGHT_RADIANCE;
+	m_pbr.attr("LIGHT_UNIFORMS") = osgx::LIGHT_UNIFORMS;
+	m_pbr.attr("DIRECT_LIGHT") = osgx::DIRECT_LIGHT;
+	m_pbr.attr("DIRECTIONAL_LIGHT_RADIANCE") = osgx::DIRECTIONAL_LIGHT_RADIANCE;
+	m_pbr.attr("SPOT_LIGHT_RADIANCE") = osgx::SPOT_LIGHT_RADIANCE;
+	m_pbr.attr("SPHERE_LIGHT_SPECULAR") = osgx::SPHERE_LIGHT_SPECULAR;
+	m_pbr.attr("DIRECT_LIGHT_SPHERE") = osgx::DIRECT_LIGHT_SPHERE;
+	m_pbr.attr("MAX_LIGHTS") = osgx::MAX_LIGHTS;
+	m_pbr.attr("LIGHT_STRUCT_FLOATS") = osgx::LIGHT_STRUCT_FLOATS;
+	m_pbr.attr("DIRECT_LIGHTING_DECL") = osgx::DIRECT_LIGHTING_DECL;
+	m_pbr.attr("DIRECT_LIGHTING_HOOK_DEFAULT") = osgx::DIRECT_LIGHTING_HOOK_DEFAULT;
+	m_pbr.attr("F_MULTISCATTER") = osgx::F_MULTISCATTER;
+	m_pbr.attr("IBL_SPECULAR") = osgx::IBL_SPECULAR;
+	m_pbr.attr("AMBIENT_LIGHTING_DECL") = osgx::AMBIENT_LIGHTING_DECL;
+	m_pbr.attr("AMBIENT_LIGHTING_HOOK_DEFAULT") = osgx::AMBIENT_LIGHTING_HOOK_DEFAULT;
+	m_pbr.attr("TONEMAP_PBR_NEUTRAL") = osgx::TONEMAP_PBR_NEUTRAL;
+	m_pbr.attr("TONEMAP_DECL") = osgx::TONEMAP_DECL;
+	m_pbr.attr("TONEMAP_HOOK_DEFAULT") = osgx::TONEMAP_HOOK_DEFAULT;
 
-	m_pbr.def("snippets", &osgx::pbr::snippets);
+	m_pbr.def("snippets", &osgx::snippets);
 
 	// Assembles the osgx_DirectLighting() CONTRACT's default definition as a standalone FRAGMENT
 	// osg::Shader, ready to add()/append() onto an osg::Program alongside a consumer's own
@@ -52,7 +52,7 @@ void bind_pbr(py::module_& m_pbr) {
 		[]() {
 			return osg::ref_ptr<osg::Shader>(new osg::Shader(
 				osg::Shader::FRAGMENT,
-				osgx::resolveShaderLibs(std::string(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT))
+				osgx::resolveShaderLibs(std::string(osgx::DIRECT_LIGHTING_HOOK_DEFAULT))
 			));
 		},
 		"Builds the osgx_DirectLighting() CONTRACT's default-definition FRAGMENT shader object -- "
@@ -68,7 +68,7 @@ void bind_pbr(py::module_& m_pbr) {
 		[]() {
 			return osg::ref_ptr<osg::Shader>(new osg::Shader(
 				osg::Shader::FRAGMENT,
-				osgx::resolveShaderLibs(std::string(osgx::pbr::AMBIENT_LIGHTING_HOOK_DEFAULT))
+				osgx::resolveShaderLibs(std::string(osgx::AMBIENT_LIGHTING_HOOK_DEFAULT))
 			));
 		},
 		"Builds the osgx_AmbientLighting() CONTRACT's default-definition FRAGMENT shader object "
@@ -83,7 +83,7 @@ void bind_pbr(py::module_& m_pbr) {
 		[]() {
 			return osg::ref_ptr<osg::Shader>(new osg::Shader(
 				osg::Shader::FRAGMENT,
-				osgx::resolveShaderLibs(std::string(osgx::pbr::TONEMAP_HOOK_DEFAULT))
+				osgx::resolveShaderLibs(std::string(osgx::TONEMAP_HOOK_DEFAULT))
 			));
 		},
 		"Builds the osgx_Tonemap() CONTRACT's default-definition FRAGMENT shader object "
@@ -91,10 +91,10 @@ void bind_pbr(py::module_& m_pbr) {
 		"that only declares TONEMAP_DECL plus a call site."
 	);
 
-	py::class_<osgx::pbr::OrbitLightRig::Orbit>(m_pbr, "Orbit")
+	py::class_<osgx::OrbitLightRig::Orbit>(m_pbr, "Orbit")
 		.def(
 			py::init([](float radius, float height, float speed, float phase, float intensity) {
-				return osgx::pbr::OrbitLightRig::Orbit{radius, height, speed, phase, intensity};
+				return osgx::OrbitLightRig::Orbit{radius, height, speed, phase, intensity};
 			}),
 			"radius"_a=0.5f,
 			"height"_a=0.5f,
@@ -102,37 +102,37 @@ void bind_pbr(py::module_& m_pbr) {
 			"phase"_a=0.0f,
 			"intensity"_a=1.0f
 		)
-		.def_readwrite("radius", &osgx::pbr::OrbitLightRig::Orbit::radius)
-		.def_readwrite("height", &osgx::pbr::OrbitLightRig::Orbit::height)
-		.def_readwrite("speed", &osgx::pbr::OrbitLightRig::Orbit::speed)
-		.def_readwrite("phase", &osgx::pbr::OrbitLightRig::Orbit::phase)
-		.def_readwrite("intensity", &osgx::pbr::OrbitLightRig::Orbit::intensity)
+		.def_readwrite("radius", &osgx::OrbitLightRig::Orbit::radius)
+		.def_readwrite("height", &osgx::OrbitLightRig::Orbit::height)
+		.def_readwrite("speed", &osgx::OrbitLightRig::Orbit::speed)
+		.def_readwrite("phase", &osgx::OrbitLightRig::Orbit::phase)
+		.def_readwrite("intensity", &osgx::OrbitLightRig::Orbit::intensity)
 	;
 
-	py::enum_<osgx::pbr::LightType>(m_pbr, "LightType")
-		.value("Point", osgx::pbr::LightType::Point)
-		.value("Directional", osgx::pbr::LightType::Directional)
-		.value("Spot", osgx::pbr::LightType::Spot)
+	py::enum_<osgx::LightType>(m_pbr, "LightType")
+		.value("Point", osgx::LightType::Point)
+		.value("Directional", osgx::LightType::Directional)
+		.value("Spot", osgx::LightType::Spot)
 	;
 
-	py::class_<osgx::pbr::LightSet>(m_pbr, "LightSet")
+	py::class_<osgx::LightSet>(m_pbr, "LightSet")
 		.def(py::init<>())
-		.def_readwrite("ss", &osgx::pbr::LightSet::ss)
-		.def_static("create", &osgx::pbr::LightSet::create)
-		.def("valid", &osgx::pbr::LightSet::valid)
+		.def_readwrite("ss", &osgx::LightSet::ss)
+		.def_static("create", &osgx::LightSet::create)
+		.def("valid", &osgx::LightSet::valid)
 		.def(
 			"setPoint",
-			&osgx::pbr::LightSet::setPoint,
+			&osgx::LightSet::setPoint,
 			"index"_a,
 			"position"_a,
 			"color"_a,
 			"intensity"_a,
 			"sourceRadius"_a=0.0f
 		)
-		.def("setDirectional", &osgx::pbr::LightSet::setDirectional, "index"_a, "direction"_a, "color"_a, "intensity"_a)
+		.def("setDirectional", &osgx::LightSet::setDirectional, "index"_a, "direction"_a, "color"_a, "intensity"_a)
 		.def(
 			"setSpot",
-			&osgx::pbr::LightSet::setSpot,
+			&osgx::LightSet::setSpot,
 			"index"_a,
 			"position"_a,
 			"direction"_a,
@@ -142,27 +142,27 @@ void bind_pbr(py::module_& m_pbr) {
 			"outerConeAngle"_a,
 			"sourceRadius"_a=0.0f
 		)
-		.def("setCount", &osgx::pbr::LightSet::setCount)
-		.def("setPosition", &osgx::pbr::LightSet::setPosition, "index"_a, "position"_a, "intensity"_a)
-		.def("getCount", &osgx::pbr::LightSet::getCount)
-		.def("getPosIntensity", &osgx::pbr::LightSet::getPosIntensity, "index"_a)
-		.def("getColor", &osgx::pbr::LightSet::getColor, "index"_a)
-		.def("getType", &osgx::pbr::LightSet::getType, "index"_a)
-		.def("getDirection", &osgx::pbr::LightSet::getDirection, "index"_a)
-		.def("getSpotAngles", &osgx::pbr::LightSet::getSpotAngles, "index"_a)
-		.def("getSourceRadius", &osgx::pbr::LightSet::getSourceRadius, "index"_a)
+		.def("setCount", &osgx::LightSet::setCount)
+		.def("setPosition", &osgx::LightSet::setPosition, "index"_a, "position"_a, "intensity"_a)
+		.def("getCount", &osgx::LightSet::getCount)
+		.def("getPosIntensity", &osgx::LightSet::getPosIntensity, "index"_a)
+		.def("getColor", &osgx::LightSet::getColor, "index"_a)
+		.def("getType", &osgx::LightSet::getType, "index"_a)
+		.def("getDirection", &osgx::LightSet::getDirection, "index"_a)
+		.def("getSpotAngles", &osgx::LightSet::getSpotAngles, "index"_a)
+		.def("getSourceRadius", &osgx::LightSet::getSourceRadius, "index"_a)
 	;
 
 	py::class_<
-		osgx::pbr::OrbitLightRig,
+		osgx::OrbitLightRig,
 		osg::NodeCallback,
-		osg::ref_ptr<osgx::pbr::OrbitLightRig>
+		osg::ref_ptr<osgx::OrbitLightRig>
 	>(m_pbr, "OrbitLightRig")
 		.def(py::init<>())
-		.def_readwrite("lights", &osgx::pbr::OrbitLightRig::lights)
-		.def_readwrite("center", &osgx::pbr::OrbitLightRig::center)
-		.def_readwrite("intensity", &osgx::pbr::OrbitLightRig::intensity)
-		.def_readwrite("orbits", &osgx::pbr::OrbitLightRig::orbits)
+		.def_readwrite("lights", &osgx::OrbitLightRig::lights)
+		.def_readwrite("center", &osgx::OrbitLightRig::center)
+		.def_readwrite("intensity", &osgx::OrbitLightRig::intensity)
+		.def_readwrite("orbits", &osgx::OrbitLightRig::orbits)
 	;
 }
 

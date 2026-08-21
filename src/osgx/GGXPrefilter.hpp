@@ -13,7 +13,7 @@ OSGX_ENABLE_WARNINGS
 
 namespace osg { class Image; }
 
-namespace osgx::ibl {
+namespace osgx {
 
 // TODO: If these can't be NEGATIVE, they need to be OTHER TYPES than `int`!
 struct GGXPrefilterOptions {
@@ -70,6 +70,10 @@ public:
 	osg::TextureCubeMap* getResult() const { return result; }
 	void reset();
 
+	// Returns the finished, filtered/wrapped cubemap once isDone() is true (nullptr otherwise).
+	// Only valid to call once isDone() reports true.
+	osg::ref_ptr<osg::TextureCubeMap> finish() const;
+
 private:
 	osg::ref_ptr<osg::TextureCubeMap> srcTex;
 	int triggerFrame = 0;
@@ -84,25 +88,21 @@ struct GGXPrefilterScene {
 	osg::ref_ptr<osg::Texture2D> sourceTexture;
 	osg::ref_ptr<osg::TextureCubeMap> prefilterTexture;
 	osg::ref_ptr<GGXPrefilterReadback> readback;
+
+	// Builds the offscreen scene graph (PRE_RENDER cameras, one per cubemap
+	// face/mip) that GGX-prefilters `equirectImage`. Does not render anything:
+	// the caller owns the graphics context/viewer, is responsible for setting
+	// `root` as scene data, attaching `readback` as a post-draw callback on the
+	// camera that will actually render frames, and running frames until
+	// `readback->isDone()`.
+	static GGXPrefilterScene create(
+		osg::Image* equirectImage,
+		const GGXPrefilterOptions& options = {}
+	);
+
+	// Reuses this bake scene for a new equirectangular source image. This avoids rebuilding all
+	// PRE_RENDER cameras/FBOs/programs for live rebakes.
+	bool rebake(osg::Image* equirectImage);
 };
-
-// Builds the offscreen scene graph (PRE_RENDER cameras, one per cubemap
-// face/mip) that GGX-prefilters `equirectImage`. Does not render anything:
-// the caller owns the graphics context/viewer, is responsible for setting
-// `root` as scene data, attaching `readback` as a post-draw callback on the
-// camera that will actually render frames, and running frames until
-// `readback->isDone()`.
-GGXPrefilterScene createGGXPrefilterScene(
-	osg::Image* equirectImage,
-	const GGXPrefilterOptions& options = {}
-);
-
-// Reuses an existing bake scene for a new equirectangular source image. This
-// avoids rebuilding all PRE_RENDER cameras/FBOs/programs for live rebakes.
-bool rebakeGGXPrefilterScene(GGXPrefilterScene& scene, osg::Image* equirectImage);
-
-// Applies the standard cubemap filter/wrap settings to a completed bake.
-// Only valid to call once `readback->isDone()`.
-osg::ref_ptr<osg::TextureCubeMap> finishGGXPrefilter(GGXPrefilterReadback* readback);
 
 }

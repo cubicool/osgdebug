@@ -17,13 +17,18 @@ OSGX_ENABLE_WARNINGS
 namespace osgx {
 
 // ================================================================================================
-// osgx::shadow -- directional shadow mapping, shared by any osgx::pbr::LightSet-lit scene (nothing
-// here is glTF/PBR-specific). Only ONE light -- the key/directional light -- is ever shadowed here;
-// point/spot-light shadows need a cubemap and meaningfully different frustum math, and are a
-// separate, later feature. This is the real osgx home for the shadow_cam/shadowFactor() pattern
-// OpenSceneGraph.py/examples/pyosg-lighting/08-shadows.py and 09-ibl.py both independently
-// hand-rolled (and, in 08-shadows.py's case, duplicated a second time between the model and floor
-// fragment shaders) -- see ai/project_lighting_series_pip_simplification.md for the origin.
+// Directional shadow mapping, shared by any osgx::LightSet-lit scene (nothing here is glTF/PBR-
+// specific). Lives directly under `osgx::`, not its own namespace -- it's not a separate opt-in
+// subsystem (its own #include outside the umbrella, its own CMake link target) the way
+// osgx::debug/imgui/platform/gltf/ktx2 are; see TODO.md's namespace-boundary decision. The
+// `"osgx::shadow"` string passed to registerShadowShaderLibs() below is just the shader-lib
+// registry's conventional catalog tag, unrelated to the (now-flat) C++ namespace. Only ONE light
+// -- the key/directional light -- is ever shadowed here; point/spot-light shadows need a cubemap
+// and meaningfully different frustum math, and are a separate, later feature. This is the real
+// osgx home for the shadow_cam/shadowFactor() pattern OpenSceneGraph.py/examples/pyosg-lighting/
+// 08-shadows.py and 09-ibl.py both independently hand-rolled (and, in 08-shadows.py's case,
+// duplicated a second time between the model and floor fragment shaders) -- see
+// ai/project_lighting_series_pip_simplification.md for the origin.
 //
 // World-space, not eye-space: osgx::gltf::pbribl's direct-lighting call site (PBRIBL.cpp's
 // FULL_PBR_FRAGMENT_SHADER_SRC) already reconstructs a genuine world-space `worldPos` for
@@ -31,10 +36,8 @@ namespace osgx {
 // shaded in eye space and had to compose `inverse(camView)` into their shadow matrix every frame
 // to compensate. Working in world space here instead means `shadowMatrix` is just `lightProj *
 // lightView` -- no per-frame main-camera dependency at all -- and only needs recomputing
-// (updateShadowMatrix()) if the light itself moves, which no pyosg-lighting example has ever done.
+// (updateMatrix()) if the light itself moves, which no pyosg-lighting example has ever done.
 // ================================================================================================
-
-namespace shadow {
 
 struct ShadowMapOptions {
 	int size = 1024;
@@ -69,20 +72,20 @@ struct ShadowMapOptions {
 // A directional shadow map: owns the PRE_RENDER depth-only camera (`camera` -- add it to the
 // scene graph, e.g. as a sibling of whatever the shadowed model's own parent is, exactly where
 // the old hand-rolled examples added their own `shadow_cam`) plus the uniforms
-// pbr::DIRECT_LIGHTING_HOOK_SHADOWED reads every frame. Depth-only: no dummy color attachment
+// DIRECT_LIGHTING_HOOK_SHADOWED reads every frame. Depth-only: no dummy color attachment
 // needed (the old hand-rolled Python examples worked around a since-irrelevant pybind11 binding
 // gap -- osg::Camera::setDrawBuffer/setReadBuffer are ordinary C++ calls here).
 struct ShadowMap {
 	osg::ref_ptr<osg::Camera> camera;
 	osg::ref_ptr<osg::Texture2D> depthTexture;
 
-	// world space -> light clip space. Set once by createDirectionalShadowMap(); only needs
-	// recomputing (updateShadowMatrix()) if the light direction changes after creation.
+	// world space -> light clip space. Set once by ShadowMap::create(); only needs
+	// recomputing (updateMatrix()) if the light direction changes after creation.
 	osg::ref_ptr<osg::Uniform> shadowMatrix;
 	osg::ref_ptr<osg::Uniform> bias;
 	osg::ref_ptr<osg::Uniform> strength;
 
-	// Which osgx_lights[] index (osgx::pbr::LightSet) this shadow map is cast by/matched against --
+	// Which osgx_lights[] index (osgx::LightSet) this shadow map is cast by/matched against --
 	// DIRECT_LIGHTING_HOOK_SHADOWED multiplies exactly that light's contribution by
 	// osgx_ShadowFactor(); every other light is unaffected. Defaults to 0 (the common "index 0 is
 	// the key light" convention every existing pyosg-lighting example already follows).
@@ -91,59 +94,58 @@ struct ShadowMap {
 	osg::Matrixd lightView, lightProj;
 
 	bool valid() const;
+
+	// Builds `camera` -- an ORTHOGRAPHIC depth-only camera, the physically-correct frustum shape
+	// for a directional (parallel-ray) light -- looking from a point `2 * extent` away from
+	// `sceneBoundCenter` (`extent` per ShadowMapOptions::extent), back along `lightDirection`,
+	// toward `sceneBoundCenter`. `lightDirection` is the ray TRAVEL direction, matching
+	// osgx::LightSet::setDirectional()'s own convention -- the camera looks the opposite way,
+	// toward where the light is coming FROM, same as any physical shadow-casting light would.
+	//
+	// `camera`'s own StateSet carries a minimal depth-only Program (`ON|OVERRIDE`, vertex-transform
+	// only, empty fragment main()) -- ANY subgraph added as `camera`'s child renders through this,
+	// not through whatever (potentially expensive: normal-mapped/textured/IBL-lit) Program that
+	// subgraph's own StateSet carries for the main render. Every existing pyosg-lighting example
+	// previously ran its full PBR/IBL fragment shader during the shadow pass too, computing lighting
+	// it then threw away except for gl_FragDepth -- see osgx/TODO.md's Shadow section ("use simpler
+	// shadow shaders... do not re-use shaders and then just discard the complicated color values").
+	// This does NOT alpha-test glTF MASK materials (no material/texture awareness at all, by design
+	// -- see this struct's own comment) -- a caller whose casting geometry relies on alpha-cutout
+	// shadows needs to override this Program on that geometry's own StateSet with something
+	// alpha-aware (no existing pyosg-lighting example needs this yet).
+	static ShadowMap create(
+		const osg::Vec3& lightDirection,
+		const osg::Vec3& sceneBoundCenter,
+		float sceneBoundRadius,
+		const ShadowMapOptions& options={}
+	);
+
+	// Recomputes `shadowMatrix` from `lightView`/`lightProj` -- call after mutating either
+	// directly; a no-op to call redundantly otherwise. Does NOT reposition `camera` itself or touch
+	// its view/projection -- see reposition() for that.
+	void updateMatrix();
+
+	// Repositions this EXISTING ShadowMap for a new light direction/scene bound, in place -- no new
+	// camera/FBO/depth-texture allocation, just recomputed view/projection matrices (same math
+	// create() itself uses) plus updateMatrix(). Cheap enough to call every
+	// frame, or on every GUI-slider tick, for an interactively-moving light -- create()
+	// itself remains the right call for a light that's fixed at scene-build time (07/08/09/10's
+	// pyosg-lighting rig, none of which move their light); this is for the genuinely-live case (a
+	// light an operator can drag around, e.g. 11-sketchfab.py's orbiting key light), where rebuilding
+	// the whole camera/texture on every drag tick would be wasteful and could visibly stutter.
+	// `options` should match whatever was originally passed to create() -- passing
+	// a different `size` here does NOT resize `depthTexture`, only the view/projection matrices are
+	// recomputed.
+	void reposition(
+		const osg::Vec3& lightDirection,
+		const osg::Vec3& sceneBoundCenter,
+		float sceneBoundRadius,
+		const ShadowMapOptions& options={}
+	);
 };
 
-// Builds `camera` -- an ORTHOGRAPHIC depth-only camera, the physically-correct frustum shape for a
-// directional (parallel-ray) light -- looking from a point `2 * extent` away from
-// `sceneBoundCenter` (`extent` per ShadowMapOptions::extent), back along `lightDirection`, toward
-// `sceneBoundCenter`. `lightDirection` is the ray TRAVEL direction, matching
-// osgx::pbr::LightSet::setDirectional()'s own convention -- the camera looks the opposite way,
-// toward where the light is coming FROM, same as any physical shadow-casting light would.
-//
-// `camera`'s own StateSet carries a minimal depth-only Program (`ON|OVERRIDE`, vertex-transform
-// only, empty fragment main()) -- ANY subgraph added as `camera`'s child renders through this,
-// not through whatever (potentially expensive: normal-mapped/textured/IBL-lit) Program that
-// subgraph's own StateSet carries for the main render. Every existing pyosg-lighting example
-// previously ran its full PBR/IBL fragment shader during the shadow pass too, computing lighting
-// it then threw away except for gl_FragDepth -- see osgx/TODO.md's Shadow section ("use simpler
-// shadow shaders... do not re-use shaders and then just discard the complicated color values").
-// This does NOT alpha-test glTF MASK materials (no material/texture awareness at all, by design --
-// see ShadowMap's own comment) -- a caller whose casting geometry relies on alpha-cutout shadows
-// needs to override this Program on that geometry's own StateSet with something alpha-aware
-// (no existing pyosg-lighting example needs this yet).
-ShadowMap createDirectionalShadowMap(
-	const osg::Vec3& lightDirection,
-	const osg::Vec3& sceneBoundCenter,
-	float sceneBoundRadius,
-	const ShadowMapOptions& options={}
-);
-
-// Recomputes `shadowMatrix` from `shadowMap.lightView`/`lightProj` -- call after mutating either
-// directly; a no-op to call redundantly otherwise. Does NOT reposition `camera` itself or touch
-// its view/projection -- see repositionDirectionalShadowMap() for that.
-void updateShadowMatrix(ShadowMap& shadowMap);
-
-// Repositions an EXISTING ShadowMap for a new light direction/scene bound, in place -- no new
-// camera/FBO/depth-texture allocation, just recomputed view/projection matrices (same math
-// createDirectionalShadowMap() itself uses) plus updateShadowMatrix(). Cheap enough to call every
-// frame, or on every GUI-slider tick, for an interactively-moving light -- createDirectionalShadowMap()
-// itself remains the right call for a light that's fixed at scene-build time (07/08/09/10's
-// pyosg-lighting rig, none of which move their light); this is for the genuinely-live case (a
-// light an operator can drag around, e.g. 11-sketchfab.py's orbiting key light), where rebuilding
-// the whole camera/texture on every drag tick would be wasteful and could visibly stutter.
-// `options` should match whatever was originally passed to createDirectionalShadowMap() -- passing
-// a different `size` here does NOT resize `shadowMap.depthTexture`, only the view/projection
-// matrices are recomputed.
-void repositionDirectionalShadowMap(
-	ShadowMap& shadowMap,
-	const osg::Vec3& lightDirection,
-	const osg::Vec3& sceneBoundCenter,
-	float sceneBoundRadius,
-	const ShadowMapOptions& options={}
-);
-
 // GLSL uniform declarations osgx_ShadowFactor() (SHADOW_FACTOR below) and
-// pbr::DIRECT_LIGHTING_HOOK_SHADOWED both assume are already in scope. `osgx_shadowMap` is
+// DIRECT_LIGHTING_HOOK_SHADOWED both assume are already in scope. `osgx_shadowMap` is
 // intentionally left for the caller to bind to whatever texture unit it likes (no fixed
 // convention imposed here) -- see ShadowMap::depthTexture.
 inline constexpr const char* SHADOW_UNIFORMS = R"GLSL(
@@ -182,7 +184,7 @@ float osgx_ShadowFactor(vec3 worldPos) {
 }
 )GLSL";
 
-// Shadowed counterpart to osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT (PBR.hpp) -- identical per-light
+// Shadowed counterpart to osgx::DIRECT_LIGHTING_HOOK_DEFAULT (PBR.hpp) -- identical per-light
 // dispatch loop, except the light at index `osgx_shadowCasterIndex` (default 0, the "index 0 is
 // the key light" convention every existing pyosg-lighting example already follows) has its
 // contribution multiplied by osgx_ShadowFactor(worldPos), computed once per fragment (not once per
@@ -192,7 +194,7 @@ float osgx_ShadowFactor(vec3 worldPos) {
 // no other shader changes needed: both define osgx_DirectLighting() with the identical (N, V,
 // worldPos, mat) signature DIRECT_LIGHTING_DECL forward-declares. Self-contained (own #version/PI/
 // #pragma lines), so not spliced by name via #pragma osgx::shadow -- deliberately NOT in
-// registerShaderLibs()'s catalog, same reasoning as DIRECT_LIGHTING_HOOK_DEFAULT itself.
+// registerShadowShaderLibs()'s catalog, same reasoning as DIRECT_LIGHTING_HOOK_DEFAULT itself.
 inline constexpr const char* DIRECT_LIGHTING_HOOK_SHADOWED = R"GLSL(
 #version 460 core
 
@@ -237,8 +239,6 @@ vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 }
 )GLSL";
 
-void registerShaderLibs();
-
-}
+void registerShadowShaderLibs();
 
 }

@@ -374,7 +374,7 @@ private:
 
 class BakeStatusCallback final: public osg::NodeCallback {
 public:
-	explicit BakeStatusCallback(osgx::ibl::BakeCompletion* completion): _completion(completion) {}
+	explicit BakeStatusCallback(osgx::BakeCompletion* completion): _completion(completion) {}
 
 	void operator()(osg::Node* node, osg::NodeVisitor* visitor) override {
 		if(!_reported && _completion && _completion->done()) {
@@ -386,7 +386,7 @@ public:
 	}
 
 private:
-	osg::ref_ptr<osgx::ibl::BakeCompletion> _completion;
+	osg::ref_ptr<osgx::BakeCompletion> _completion;
 	bool _reported = false;
 };
 
@@ -564,7 +564,7 @@ int main(int argc, char** argv) {
 
 	osg::ref_ptr<osg::TextureCubeMap> cubemap;
 	osg::ref_ptr<osg::Group> bakeRoot;
-	osg::ref_ptr<osgx::ibl::BakeCompletion> completion;
+	osg::ref_ptr<osgx::BakeCompletion> completion;
 	osg::ref_ptr<osg::Texture2D> sourceTexture;
 	osg::ref_ptr<osg::Texture2D> lutTexture;
 	int maxMip = 0;
@@ -596,12 +596,12 @@ int main(int argc, char** argv) {
 		}
 
 		if(mode == Mode::GGX) {
-			osgx::ibl::GGXPrefilterOptions options;
+			osgx::GGXPrefilterOptions options;
 
 			options.prefilterSize = cubeSize;
 			options.sampleCount = sampleCount;
 
-			auto bake = osgx::ibl::createGGXPrefilterScene(hdrImage, options);
+			auto bake = osgx::GGXPrefilterScene::create(hdrImage, options);
 
 			if(!bake.root || !bake.prefilterTexture) {
 				std::cerr << "osgx-ibl: could not create the GGX prefilter bake scene" << std::endl;
@@ -618,16 +618,16 @@ int main(int argc, char** argv) {
 
 			lutTexture = osgx::make_ref<osg::Texture2D>();
 
-			auto lutCamera = osgx::ibl::makeBRDFLUTCamera(256, lutTexture);
+			auto lutCamera = osgx::makeBRDFLUTCamera(256, lutTexture);
 
 			// A sibling bake root under the same parent, same as
-			// osgGLTF::pbr::preparePBRIBLEnvironment(hdrPath, ...) wires its own LUT/diffuse/
+			// osgx::gltf::pbribl::PBRIBLEnvironment::prepare(hdrPath, ...) wires its own LUT/diffuse/
 			// specular bakes together -- independent PRE_RENDER passes, not a dependency chain.
 			bakeRoot->addChild(lutCamera);
 		}
 
 		else {
-			auto bake = osgx::ibl::createLambertianBakeScene(
+			auto bake = osgx::LambertianBakeScene::create(
 				hdrImage,
 				{.cubeSize = cubeSize, .sampleCount = sampleCount}
 			);

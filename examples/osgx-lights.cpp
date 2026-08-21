@@ -12,7 +12,7 @@
 //
 // Press 'n' to cycle through one light of each type; the console prints which one is active. The
 // gizmos (a wireframe plane+arrow overlay for directional, depth-tested wireframe spheres/cones
-// for point/sphere/spot) read osgx::pbr::LightSet's uniforms live every frame, so cycling the demo
+// for point/sphere/spot) read osgx::LightSet's uniforms live every frame, so cycling the demo
 // is nothing more than calling LightSet's setters -- the gizmos and the shaded object update
 // themselves.
 //
@@ -132,11 +132,11 @@ void main() {
 )GLSL";
 
 osg::ref_ptr<osg::Program> makeProgram() {
-	osgx::pbr::registerShaderLibs();
+	osgx::registerPBRShaderLibs();
 
 	auto program = osgx::make_ref<osg::Program>();
 	// Only the fragment shader carries `#pragma osgx::pbr ...` directives -- matches
-	// osgx::gltf::pbribl::createPBRIBLScene()'s own split (PBRIBL.cpp), which resolves its
+	// osgx::gltf::pbribl::PBRIBLScene::create()'s own split (PBRIBL.cpp), which resolves its
 	// fragment shader but adds its vertex shader unchanged.
 	auto fragmentSrc = osgx::resolveShaderLibs(std::string(FRAGMENT_SHADER));
 	// The osgx_DirectLighting() CONTRACT's default definition -- a second, separately compiled
@@ -146,7 +146,7 @@ osg::ref_ptr<osg::Program> makeProgram() {
 	// further resolveShaderLibs() dependency wiring beyond this one call. Swap this shader object
 	// out for a different one (defining osgx_DirectLighting() differently) to override direct-light
 	// shading without touching fragmentSrc at all -- see PBR.hpp's DIRECT_LIGHTING_DECL comment.
-	auto hookSrc = osgx::resolveShaderLibs(std::string(osgx::pbr::DIRECT_LIGHTING_HOOK_DEFAULT));
+	auto hookSrc = osgx::resolveShaderLibs(std::string(osgx::DIRECT_LIGHTING_HOOK_DEFAULT));
 
 	program->setName("osgx_lights_demo");
 	program->addShader(new osg::Shader(osg::Shader::VERTEX, std::string(VERTEX_SHADER)));
@@ -222,7 +222,7 @@ struct LightsState {
 	float spotSourceRadius = 0.0f;
 };
 
-void applyState(const osgx::pbr::LightSet& lights, const LightsState& state) {
+void applyState(const osgx::LightSet& lights, const LightsState& state) {
 	lights.setCount(1);
 
 	switch(state.activeDemo) {
@@ -280,7 +280,7 @@ int main() {
 	ss->addUniform(new osg::Uniform("ambientColor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 	ss->addUniform(new osg::Uniform("ambientIntensity", 0.05f));
 
-	auto lights = osgx::pbr::LightSet::create(ss);
+	auto lights = osgx::LightSet::create(ss);
 
 	// A shared_ptr, not a `mutable` lambda -- LambdaKeyHandler::_wrap() (Callbacks.hpp) invokes the
 	// stored callable through a const call path, so a `mutable` lambda's non-const operator() can't
@@ -390,7 +390,7 @@ int main() {
 		if(changed && state->activeDemo == Demo::Directional) applyState(lights, *state);
 
 		ImGui::PopID();
-	}, osgx::imgui::makeSectionOptions(false, true));
+	}, osgx::imgui::SectionOptions::create(false, true));
 
 	gui->addSection("Point", [lights, state, activateButton](osg::RenderInfo&) {
 		ImGui::PushID("Point");
@@ -407,7 +407,7 @@ int main() {
 		if(changed && state->activeDemo == Demo::Point) applyState(lights, *state);
 
 		ImGui::PopID();
-	}, osgx::imgui::makeSectionOptions(false, true));
+	}, osgx::imgui::SectionOptions::create(false, true));
 
 	gui->addSection("Sphere", [lights, state, activateButton](osg::RenderInfo&) {
 		ImGui::PushID("Sphere");
@@ -425,7 +425,7 @@ int main() {
 		if(changed && state->activeDemo == Demo::Sphere) applyState(lights, *state);
 
 		ImGui::PopID();
-	}, osgx::imgui::makeSectionOptions(false, true));
+	}, osgx::imgui::SectionOptions::create(false, true));
 
 	gui->addSection("Spot", [lights, state, activateButton](osg::RenderInfo&) {
 		ImGui::PushID("Spot");
@@ -454,7 +454,7 @@ int main() {
 		if(changed && state->activeDemo == Demo::Spot) applyState(lights, *state);
 
 		ImGui::PopID();
-	}, osgx::imgui::makeSectionOptions(false, true));
+	}, osgx::imgui::SectionOptions::create(false, true));
 #endif
 
 	return viewer.run();

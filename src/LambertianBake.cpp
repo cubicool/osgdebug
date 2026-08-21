@@ -27,7 +27,7 @@ OSGX_ENABLE_WARNINGS
 #  define GL_COLOR_BUFFER_BIT 0x00004000
 #endif
 
-namespace osgx::ibl {
+namespace osgx {
 
 namespace {
 
@@ -152,7 +152,7 @@ bool LambertianBakeScene::ready() const {
 	return completion && completion->done();
 }
 
-LambertianBakeScene createLambertianBakeScene(
+LambertianBakeScene LambertianBakeScene::create(
 	osg::Image* equirectangularHDR,
 	const LambertianBakeOptions& options
 ) {
@@ -248,15 +248,12 @@ LambertianBakeScene createLambertianBakeScene(
 	return scene;
 }
 
-bool rebakeLambertianBakeScene(
-	LambertianBakeScene& scene,
-	osg::Image* equirectangularHDR
-) {
-	if(!scene.root || !scene.sourceTexture || !scene.completion || !equirectangularHDR) return false;
+bool LambertianBakeScene::rebake(osg::Image* equirectangularHDR) {
+	if(!root || !sourceTexture || !completion || !equirectangularHDR) return false;
 
-	scene.sourceTexture->setImage(equirectangularHDR);
-	scene.completion->reset();
-	rearmRunOnceCallbacks(scene.root);
+	sourceTexture->setImage(equirectangularHDR);
+	completion->reset();
+	rearmRunOnceCallbacks(root);
 
 	return true;
 }
@@ -298,10 +295,10 @@ void LambertianCubeReadback::operator()(osg::RenderInfo& ri) const {
 	_done = true;
 }
 
-osg::ref_ptr<osg::TextureCubeMap> finishLambertianCubeReadback(LambertianCubeReadback* readback) {
-	if(!readback || !readback->isDone()) return nullptr;
+osg::ref_ptr<osg::TextureCubeMap> LambertianCubeReadback::finish() const {
+	if(!isDone()) return nullptr;
 
-	osg::TextureCubeMap* result = readback->getResult();
+	osg::TextureCubeMap* result = getResult();
 
 	result->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
 	result->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
