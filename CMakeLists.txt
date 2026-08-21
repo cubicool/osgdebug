@@ -88,17 +88,43 @@ else()
 endif()
 find_package(OpenGL REQUIRED)
 
-# Detected once here (not per-subdirectory/per-target) so OSGX_WITH_IMGUI and the
-# IMGUI_* variables are already set by the time add_subdirectory(examples)/ext are
-# reached below -- CMake subdirectories inherit the parent's variables at the point
-# add_subdirectory() is called. REQUIRED because osgx::platform's Linux.cpp (X11/XRandr) is an
-# unconditional part of libosgx -- see the X11 pkg_check_modules() call below.
-find_package(PkgConfig REQUIRED)
+# The current platform layer is specifically Linux/X11.  Keep it separate from
+# osgx's portable rendering helpers so a Windows build does not acquire a
+# pkg-config or X11 dependency merely by enabling osgx.
+set(OSGX_PLATFORM_SUPPORTED OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	set(OSGX_PLATFORM_SUPPORTED ON)
+endif()
 
-pkg_check_modules(IMGUI imgui)
-pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xrandr)
-pkg_check_modules(EGL egl)
-pkg_check_modules(GBM gbm libdrm)
+option(OSGX_WITH_PLATFORM
+	"Compile the Linux/X11 osgx::platform helpers"
+	${OSGX_PLATFORM_SUPPORTED}
+)
+
+if(OSGX_WITH_PLATFORM AND NOT OSGX_PLATFORM_SUPPORTED)
+	message(FATAL_ERROR
+		"OSGX_WITH_PLATFORM is currently supported only on Linux; "
+		"disable it to build osgx's portable functionality on this platform."
+	)
+endif()
+
+# pkg-config currently supplies the optional Linux integrations.  On other
+# platforms deliberately leave them unavailable rather than making pkg-config
+# a hard requirement for the portable library and Python module.
+if(OSGX_PLATFORM_SUPPORTED)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(IMGUI imgui)
+	pkg_check_modules(EGL egl)
+	pkg_check_modules(GBM gbm libdrm)
+
+	if(OSGX_WITH_PLATFORM)
+		pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xrandr)
+	endif()
+else()
+	set(IMGUI_FOUND OFF)
+	set(EGL_FOUND OFF)
+	set(GBM_FOUND OFF)
+endif()
 
 option(OSGX_WITH_IMGUI "Compile osgx::imgui (Dear ImGui overlay) into libosgx" ${IMGUI_FOUND})
 
@@ -106,11 +132,8 @@ if(OSGX_WITH_IMGUI AND NOT IMGUI_FOUND)
 	message(FATAL_ERROR "OSGX_WITH_IMGUI is ON but Dear ImGui was not found via pkg-config")
 endif()
 
-# osgx::platform's Linux.cpp (X11/XRandr) is not optional -- osgViewer already requires X11 for
-# its GLX backend on Linux, so this carries no more risk than the existing OpenGL::GL dependency
-# below. GraphicsWindowEGL/GBM are genuinely optional: EGL and GBM+libdrm are niche dev packages
-# a box building osgx may not have installed, so they get the same auto-detected option treatment
-# as OSGX_WITH_IMGUI.
+# GraphicsWindowEGL/GBM are Linux-only extensions of osgx::platform. They are
+# deliberately unavailable whenever the platform layer is unavailable.
 option(OSGX_WITH_EGL "Compile osgx::platform's EGL-backed GraphicsWindowEGL into libosgx" ${EGL_FOUND})
 option(OSGX_WITH_GBM "Compile osgx::platform's GBM/DRM-backed GraphicsWindowGBM into libosgx" ${GBM_FOUND})
 
@@ -152,7 +175,6 @@ set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 add_library(osgx SHARED
 	src/CameraIntents.cpp
 	src/CaptureCubeMap.cpp
-	src/Cursor.cpp
 	src/Debug.cpp
 	src/GBuffer.cpp
 	src/GGXPrefilter.cpp
@@ -160,7 +182,6 @@ add_library(osgx SHARED
 	src/Grid.cpp
 	src/IBL.cpp
 	src/LambertianBake.cpp
-	src/Linux.cpp
 	src/Manipulators.cpp
 	src/PBR.cpp
 	src/Picking.cpp
@@ -173,7 +194,7 @@ add_library(osgx::osgx ALIAS osgx)
 target_compile_features(osgx PUBLIC cxx_std_20)
 target_link_libraries(osgx
 	PUBLIC osgx::core
-	PRIVATE OpenGL::GL PkgConfig::X11
+	PRIVATE OpenGL::GL
 )
 target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/osgx.hpp>"
@@ -192,10 +213,6 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shader.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Debug.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/ImGui.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Linux.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/GraphicsWindowEGL.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/GraphicsWindowGBM.hpp>"
-	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Cursor.hpp>"
 )
 set_target_properties(osgx PROPERTIES
 	EXPORT_NAME osgx
@@ -203,6 +220,21 @@ set_target_properties(osgx PROPERTIES
 )
 
 target_compile_options(osgx PRIVATE ${OSGX_WARNING_OPTIONS})
+
+if(OSGX_WITH_PLATFORM)
+	target_sources(osgx PRIVATE
+		src/Cursor.cpp
+		src/Linux.cpp
+	)
+	target_sources(osgx PUBLIC
+		"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Linux.hpp>"
+		"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/GraphicsWindowEGL.hpp>"
+		"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/GraphicsWindowGBM.hpp>"
+		"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Cursor.hpp>"
+	)
+	target_compile_definitions(osgx PUBLIC OSGX_PLATFORM)
+	target_link_libraries(osgx PRIVATE PkgConfig::X11)
+endif()
 
 if(OSGX_WITH_IMGUI)
 	target_sources(osgx PRIVATE src/ImGui.cpp)
@@ -232,8 +264,22 @@ if(OSGX_INSTALL)
 		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 	)
 	install(DIRECTORY src/osgx/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
-		FILES_MATCHING PATTERN "*.hpp"
+		FILES_MATCHING
+		PATTERN "*.hpp"
+		PATTERN "Linux.hpp" EXCLUDE
+		PATTERN "GraphicsWindowEGL.hpp" EXCLUDE
+		PATTERN "GraphicsWindowGBM.hpp" EXCLUDE
+		PATTERN "Cursor.hpp" EXCLUDE
 	)
+	if(OSGX_WITH_PLATFORM)
+		install(FILES
+			src/osgx/Linux.hpp
+			src/osgx/GraphicsWindowEGL.hpp
+			src/osgx/GraphicsWindowGBM.hpp
+			src/osgx/Cursor.hpp
+			DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
+		)
+	endif()
 	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp"
 		DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
 	)
@@ -407,7 +453,6 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 		"ext/python/osgx-gbuffer.cpp"
 		"ext/python/osgx-ibl.cpp"
 		"ext/python/osgx-debug.cpp"
-		"ext/python/osgx-platform.cpp"
 		"ext/python/osgx-picking.cpp"
 		"ext/python/osgx-shapes.cpp"
 		"ext/python/osgx-gizmos.cpp"
@@ -434,6 +479,12 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 	osgx_compile_options(osgx_python_bindings)
 	set_target_properties(osgx_python_bindings PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+	if(OSGX_WITH_PLATFORM)
+		target_sources(osgx_python_bindings PRIVATE "ext/python/osgx-platform.cpp")
+	else()
+		message(STATUS "OSGX_WITH_PLATFORM is OFF; osgx.platform will be unavailable")
+	endif()
+
 	# osgx.imgui Python bindings ride along automatically: osgx_python_bindings links osgx::osgx,
 	# which already carries OSGX_IMGUI + the Dear ImGui include dirs and link libraries as PUBLIC
 	# usage requirements when OSGX_WITH_IMGUI is on. ext/python/osgx-imgui.cpp itself is a no-op
@@ -444,9 +495,9 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 		message(STATUS "OSGX_WITH_IMGUI is OFF; osgx.imgui Python bindings will be unavailable")
 	endif()
 
-	# Same story for osgx.platform's createEGLWindow()/createGBMWindow() -- OSGX_EGL/OSGX_GBM ride
-	# along from osgx::osgx the same way OSGX_IMGUI does above; ext/python/osgx-platform.cpp
-	# guards those two bindings internally with #ifdef OSGX_EGL/OSGX_GBM.
+	# OSGX_EGL/OSGX_GBM ride along from osgx::osgx the same way OSGX_IMGUI
+	# does above; ext/python/osgx-platform.cpp guards those two bindings
+	# internally with #ifdef OSGX_EGL/OSGX_GBM.
 	if(NOT OSGX_WITH_EGL)
 		message(STATUS "OSGX_WITH_EGL is OFF; osgx.platform.createEGLWindow will be unavailable")
 	endif()

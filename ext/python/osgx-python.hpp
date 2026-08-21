@@ -37,13 +37,16 @@ void bind_shadow(py::module_& m_shadow);
 void bind_gbuffer(py::module_& m_gbuffer);
 void bind_ibl(py::module_& m_ibl);
 void bind_debug(py::module_& m_debug);
-void bind_platform(py::module_& m_platform);
 void bind_picking(py::module_& m_picking);
 void bind_shapes(py::module_& m);
 void bind_gizmos(py::module_& m);
 
 #ifdef OSGX_IMGUI
 void bind_imgui(py::module_& m_imgui);
+#endif
+
+#ifdef OSGX_PLATFORM
+void bind_platform(py::module_& m_platform);
 #endif
 
 #ifdef OSGX_GLTF

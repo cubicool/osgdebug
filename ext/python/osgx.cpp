@@ -51,9 +51,11 @@ PYBIND11_MODULE(osgx, m) {
 	osgx_python::bind_imgui(m_imgui);
 #endif
 
-	auto m_platform = m.def_submodule("platform", "osgx::platform - X11/EGL/GBM window helpers");
+#ifdef OSGX_PLATFORM
+	auto m_platform = m.def_submodule("platform", "osgx::platform - Linux/X11 window helpers");
 
 	osgx_python::bind_platform(m_platform);
+#endif
 
 	auto m_picking = m.def_submodule("picking", "osgx::picking - texture-based object-ID picking");
 
