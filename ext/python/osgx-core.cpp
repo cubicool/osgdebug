@@ -470,6 +470,16 @@ void bind_core(py::module_& m) {
 		"src"_a,
 		"Expand '#pragma osgx::pbr ...' / '#pragma osgx::ibl ...' lines into their GLSL source."
 	);
+
+	// Shader-object substitution hook slots, the counterpart to resolveShaderLibs()' text
+	// splicing above -- see osgx::applyHooks() (Shader.hpp) and PBRIBLScene.create()'s "hooks"
+	// parameter. A HookList is just `[(osgx.Hook.Tonemap, shader), ...]` in Python; no separate
+	// binding is needed for HookList itself, pybind11's stl.h vector/pair casters cover it once
+	// osgx.Hook is bound below.
+	py::enum_<osgx::Hook>(m, "Hook")
+		.value("Tonemap", osgx::Hook::Tonemap)
+		.value("Skinning", osgx::Hook::Skinning)
+	;
 }
 
 }

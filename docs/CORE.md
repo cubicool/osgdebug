@@ -5,6 +5,18 @@ that live directly in `osgx::`, one section per header. For the opt-in, explicit
 subsystems (each with its own C++ namespace), see [DEBUG.md](DEBUG.md), [IMGUI.md](IMGUI.md),
 [PLATFORM.md](PLATFORM.md), and [GLTF.md](GLTF.md) instead.
 
+> [!NOTE]
+> Most types below are built via a static `Type::create(...)` rather than `osgx::make_ref<Type>(...)`.
+> `make_ref` is for a plain constructor call; `create()` is for a factory that assembles several
+> real OSG objects — a camera, its FBO attachments, a depth-only `Program`, an SSBO and its
+> uniforms — and hands back the finished bundle as one struct, work no single constructor could do.
+> Every osgx-owned factory converges on this one call shape (`create()`, or a distinctly-named verb
+> like `::load()`/`::prepare()` only when the operation genuinely isn't "build one" — see
+> `PBRIBLEnvironment` in [GLTF.md](GLTF.md)) rather than a taxonomy of `create*`/`make*` free
+> functions — one predictable shape to remember beats memorizing which verb applies where. A
+> function returning a type osgx doesn't own (`osg::Camera`, `osg::TextureCubeMap`, ...) stays a
+> free function, since there's no class to hang a static method on.
+
 ## `osgx/Core.hpp`
 
 - `OSGX_DISABLE_WARNINGS` / `OSGX_ENABLE_WARNINGS` silence noisy OSG headers with compiler-specific diagnostic push/pop macros (`__clang__` branch first, then `__GNUC__`, then a no-op fallback).
@@ -84,7 +96,7 @@ See `examples/osgx-manipulator.cpp` for patrol (`LOOP`) and arrival-latch usage,
 
 ## `osgx/Grid.hpp`
 
-- `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane.
+- `Grid` draws a procedurally generated, antialiased grid as either a screen-space overlay or a perspective ground plane. The shader is adapted from Ben Golus's [The Best Darn Grid Shader (Yet)](https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8) (credited in `src/Grid.cpp`/`src/osgx/Grid.hpp` as well).
 
 ## `osgx/Shapes.hpp`
 
@@ -101,15 +113,30 @@ namespace/library names are case-insensitive; a pragma accepts comma-separated l
 optional GLSL-function aliases, and `*` to expand an entire catalog in registration order. See the
 worked example in the main [README](../README.md#osgxhpp--public-headers).
 
+This header also holds `Hook`/`HookList`/`applyHooks()` — the shader-object *substitution*
+counterpart to the text-splicing above. A Program-building call site (e.g. `osgx::gltf::pbribl::
+PBRIBLScene::create()`, see [GLTF.md](GLTF.md)) declares which `Hook` slots it supports as a
+`defaults` `HookList`; a caller overrides only the slots it cares about via its own `HookList`,
+via one shared enum/mechanism instead of each call site growing its own `osg::Shader*
+someHook=nullptr` parameter. `applyHooks()` guarantees exactly one shader ends up attached per
+supported slot, always — never zero, never two (GLSL permits one body per function, so an override
+substitutes the built-in rather than competing with it).
+
 ## `osgx/PBR.hpp`
 
-- Reusable BRDF GLSL snippets (`osgx::pbr` namespace — GGX distribution, Schlick Fresnel, Smith geometry) — plain function-body snippets, concatenated into a consuming fragment shader, not full shaders of their own.
+Reusable BRDF GLSL snippets and typed direct lights, living flat in `osgx::` (not its own
+namespace — `registerPBRShaderLibs()`'s `"osgx::pbr"` catalog tag is a conventional shader-lib key
+only, unrelated to the C++ namespace; see [Namespaces](#namespaces) below).
+
+- GLSL snippets — GGX distribution, Schlick Fresnel, Smith geometry — plain function-body
+  snippets, concatenated into a consuming fragment shader via `registerPBRShaderLibs()`/
+  `resolveShaderLibs()`, not full shaders of their own.
 - `LightSet` — owns a `std430`-SSBO-backed array of typed direct lights (`LightType::Point`/`Directional`/`Spot`; a sphere light is a `Point`/`Spot` with non-zero `sourceRadius`, not a fourth type) plus its `osgx_lightCount` uniform on an `osg::StateSet`. `LightSet::create(ss)` allocates and installs the buffer (size `MAX_LIGHTS`, zero-initialized, everything off until `setCount()`+`setPoint()`/`setDirectional()`/`setSpot()`). Typed setters/getters (`getType()`, `getPosIntensity()`, `getColor()`, `getSourceRadius()`, `getDirection()`, `getSpotAngles()`, …) replace the old parallel-`osg::Uniform`-array contract.
 - `OrbitLightRig` — the animated counterpart: an `osg::NodeCallback` that writes orbiting position/intensity into a `LightSet` every update traversal (for the subset of lights that should move; a `LightSet` can be shared between a static rig and an orbiting one).
 
 ## `osgx/Gizmos.hpp`
 
-Debug visualization for `osgx::pbr::LightSet` lights — deliberately not part of `osgx::debug`
+Debug visualization for `LightSet` lights — deliberately not part of `osgx::debug`
 (that's `GL_KHR_debug` integration specifically, not scene gizmos).
 
 - `LightMarkers` — an `osg::Group` of depth-tested, real scene-space markers for point/sphere/spot lights (up to `MAX_LIGHTS`), rebuilt in place every update traversal from the live `LightSet`. Three orthogonal wireframe circles for a point/sphere light (sized to `max(sourceRadius, minMarkerRadius)`); a wireframe cone (ring + spokes) for a spot light, sized by its outer cone angle and `spotConeLength`. A directional light has no position and is never drawn here.
@@ -124,13 +151,103 @@ See `examples/osgx-lights.cpp` for one shaded object cycling through every light
 
 ## `osgx/IBL.hpp`, `CaptureCubeMap.hpp`, `GGXPrefilter.hpp`, `LambertianBake.hpp`
 
-- `osgx::ibl` provides reusable IBL GLSL snippets plus environment-map loading, BRDF-LUT baking (including the process-wide `sharedBRDFLUT()` cache), SH9/Lambertian diffuse irradiance, and cubemap readback helpers (`readCubeMapFaces()`, `BRDFLUTReadback`).
-- `CaptureCubeMap.hpp` — `CaptureCubeMapScene`, the low-level frame-driven reflection-probe primitive (six ordered FBO cameras capturing a caller-owned scene into a radiance cubemap).
-- `GGXPrefilter.hpp` — GPU GGX prefilter scene construction, rebaking, and readback (`GGXPrefilterScene`).
-- `LambertianBake.hpp` — frame-driven GPU Lambertian/diffuse cubemap baking and readback (`LambertianBakeScene`, `LambertianCubeReadback`).
+Reusable IBL GLSL snippets (`registerIBLShaderLibs()`'s `"osgx::ibl"` catalog tag, same
+flat-namespace/conventional-tag split as `PBR.hpp` above) plus environment-map loading, BRDF-LUT
+baking, SH9/Lambertian diffuse irradiance, and cubemap readback helpers.
+
+- `SharedBRDFLUT::create(lutSize)` — the process-wide BRDF-LUT cache. Deliberately named `create()`
+  despite sometimes returning an *existing* cached LUT rather than baking a fresh one — see its own
+  doc comment for the cache-or-create contract.
+- `readCubeMapFaces()` / `BRDFLUTReadback` — CPU readback helpers for a baked cubemap/LUT.
+- `CaptureCubeMap.hpp` — `CaptureCubeMapScene`, the low-level frame-driven reflection-probe primitive (six ordered FBO cameras capturing a caller-owned scene into a radiance cubemap). `CaptureCubeMapScene::create()`/`::recapture()`.
+- `GGXPrefilter.hpp` — GPU GGX prefilter scene construction, rebaking, and readback (`GGXPrefilterScene::create()`/`::rebake()`, `GGXPrefilterReadback::finish()`).
+- `LambertianBake.hpp` — frame-driven GPU Lambertian/diffuse cubemap baking and readback (`LambertianBakeScene::create()`/`::rebake()`, `LambertianCubeReadback::finish()`).
 
 glTF-specific material and rendering integration lives with the loader in [`osgx::gltf`](GLTF.md) —
 generic `osgx` does not depend on or duplicate its public shader interface.
+
+## `osgx/Shadow.hpp`
+
+Directional shadow mapping, shared by any `LightSet`-lit scene (nothing here is glTF/PBR-specific;
+`osgx::gltf::pbribl` consumes it as an optional parameter — see [GLTF.md](GLTF.md)). Lives flat in
+`osgx::` — `registerShadowShaderLibs()`'s `"osgx::shadow"` catalog tag is a conventional shader-lib
+key only, same split as `PBR.hpp`/`IBL.hpp` above.
+
+Only ONE light — the key/directional light — is ever shadowed; point/spot-light shadows need a
+cubemap and meaningfully different frustum math, and remain a separate, unimplemented feature (see
+TODO.md's Shadow section).
+
+- `ShadowMapOptions` — `size` (shadow-map resolution), `extent` (half-width of the orthographic
+  frustum's box; `0` derives it from `sceneBoundRadius * margin`), `margin` (scales both the
+  derived `extent` and near/far — keeps near:far bounded to a healthy ratio regardless of scene
+  scale, avoiding depth-precision collapse on a large scene), `bias`, `strength` (`0` = no effect,
+  `1` = fully black).
+- `ShadowMap` — owns the `PRE_RENDER` depth-only `camera` (add it to the scene graph) plus the
+  uniforms `DIRECT_LIGHTING_HOOK_SHADOWED` reads every frame (`shadowMatrix`, `bias`, `strength`,
+  `casterIndex` — which `LightSet` index this shadow is cast by/matched against, default `0`).
+  - `ShadowMap::create(lightDirection, sceneBoundCenter, sceneBoundRadius, options={})` — builds an
+    **orthographic** depth-only camera (the physically-correct frustum shape for a directional,
+    parallel-ray light) with its own minimal depth-only `Program` (`ON|OVERRIDE`) — a caster's own,
+    potentially expensive, main-render `Program` never runs during the shadow pass. Not glTF-alpha-mask
+    aware by design; a caller needing alpha-cutout shadows overrides the Program on that geometry's
+    own StateSet.
+  - `updateMatrix()` — recomputes `shadowMatrix` from `lightView`/`lightProj` after mutating either
+    directly.
+  - `reposition(lightDirection, sceneBoundCenter, sceneBoundRadius, options={})` — repositions an
+    *existing* `ShadowMap` in place (no new camera/FBO/depth-texture allocation), cheap enough to
+    call every frame for an interactively-moving light (e.g. an ImGui-dragged direction). `create()`
+    remains the right call for a light fixed at scene-build time.
+- `DIRECT_LIGHTING_HOOK_SHADOWED` — a drop-in replacement for `PBR.hpp`'s
+  `DIRECT_LIGHTING_HOOK_DEFAULT`: identical per-light dispatch loop, except the light at
+  `osgx_shadowCasterIndex` has its contribution multiplied by `osgx_ShadowFactor()` (world-space PCF
+  3×3 shadow test). Both define `osgx_DirectLighting()` with the same signature, so swapping hooks
+  is the only shader change needed — see `examples/osgx-shadow.cpp` for the full A/B wiring
+  (press `s` to toggle).
+
+See `examples/osgx-shadow.cpp` (standalone `LightSet` + `ShadowMap` proof, live-draggable light
+direction) and `examples/osgx-gbuffer.cpp` (the same shadow map plugged into the deferred pipeline
+below).
+
+## `osgx/GBuffer.hpp`
+
+Generic deferred G-buffer camera setup — not PBR/glTF-specific. `osgx::gltf::pbribl`'s own deferred
+split (`PBRIBLGBuffer::create()`, see [GLTF.md](GLTF.md)) is built on top of this, not a separate
+mechanism, and a non-PBR deferred shader can use it directly too. Lives flat in `osgx::`, same
+reasoning as `Shadow.hpp` above.
+
+- `AttachmentFormat` — texture internal-format presets for one G-buffer color attachment: `RGBA8`
+  (ordinary LDR color/albedo), `RGB16F` (signed `[-1,1]` data, e.g. a view-space normal, needing no
+  encode/decode remap), `RGBA16F` (HDR color, e.g. emissive, which can exceed `1.0` before
+  tonemapping), `RGBA32F` (real eye-space position, written straight from the vertex shader rather
+  than reconstructed from depth — see `PBRIBLGBuffer::positionTexture`'s note in GLTF.md for why
+  that reconstruction is unreliable across nested `PRE_RENDER` cameras).
+- `GBuffer` — `camera` is the `PRE_RENDER` FBO pass that writes `colorTextures` (indexed exactly as
+  passed to `create()`) plus `depthTexture`. The caller still owns adding `camera` to the scene
+  graph.
+  - `GBuffer::create(node, width, height, colorFormats, referenceFrame=RELATIVE_RF)` — `node` is a
+    real 3D scene subgraph (a geometry pass, not a fullscreen quad), writing
+    `colorFormats.size()` simultaneous color attachments (`COLOR_BUFFER0..N`, requiring
+    `layout(location = n) out` declarations in the caller's fragment shader) plus a real
+    `GL_DEPTH_COMPONENT24` depth attachment. `referenceFrame` defaults to `RELATIVE_RF` (composes
+    with `node`'s own ancestor transforms/camera); pass `ABSOLUTE_RF` for a camera that should own
+    its own fixed view/projection instead (`ShadowMap::create()` builds its own camera directly
+    rather than going through this helper, since it's depth-only with no color attachments at all).
+
+See `examples/osgx-gbuffer.cpp` for the full deferred pipeline (`PBRIBLGBuffer` +
+`PBRIBLLightingScene`, both built on this) and a channel-by-channel G-buffer visualizer (press `0`-`5`).
+
+## Namespaces
+
+`osgx::pbr`, `osgx::ibl`, `osgx::shadow`, and `osgx::gbuffer` used to exist as separate C++
+namespaces; as of 2026-08-20 every symbol they held lives directly under `osgx::`. The rule: a
+namespace exists only for a genuinely separate opt-in subsystem — its own `#include` outside the
+`osgx.hpp` umbrella AND its own CMake link target (exactly `debug`/`imgui`/`platform`/`gltf` (+ its
+own `gltf::pbribl` sub-target)/`ktx2`). Everything that compiles unconditionally into `libosgx`
+stays flat, no matter how "topic-shaped" it feels — this is also why `picking`/`grid`/
+`manipulators`/`shadow`/`gbuffer` never got their own namespace. The `"osgx::pbr"`/`"osgx::ibl"`/
+`"osgx::shadow"` strings passed to `registerPBRShaderLibs()`/`registerIBLShaderLibs()`/
+`registerShadowShaderLibs()` are shader-lib registry catalog tags only — conventional, `#pragma`-
+addressable names, unrelated to the (now-flat) C++ namespace.
 
 ## `osgx/Version.hpp`
 

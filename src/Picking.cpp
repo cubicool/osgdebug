@@ -425,7 +425,9 @@ void PickCameraSync::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 			osg::Matrix sub(W, 0, 0, 0, 0, H, 0, 0, 0, 0, 1, 0, W - 2.0*cx, H - 2.0*cy, 0, 1);
 
 			cam->setProjectionMatrix(vc->getProjectionMatrix() * sub);
-		} else {
+		}
+
+		else {
 			cam->setProjectionMatrix(vc->getProjectionMatrix());
 		}
 	}

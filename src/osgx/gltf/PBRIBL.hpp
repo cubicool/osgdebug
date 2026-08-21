@@ -23,6 +23,7 @@ OSGX_ENABLE_WARNINGS
 
 #include "osgx/LambertianBake.hpp"
 #include "osgx/Shadow.hpp"
+#include "osgx/Shader.hpp"
 #include "osgx/GBuffer.hpp"
 
 // Forward declaration only -- keeps tinygltf's header out of this public header's include list.
@@ -177,13 +178,15 @@ struct PBRIBLScene {
 	// the shader-side wiring. Default (nullptr) is unshadowed IBL+direct lighting, unchanged from
 	// before this parameter existed.
 	//
-	// `skinningHook`, when non-null, SUBSTITUTES the default osgx_gltf_ApplySkin() definition
-	// (shader::SKINNING_HOOK_IDENTITY, a pure passthrough) with the caller's own -- pass
-	// shader::SKINNING_HOOK_LINEAR_BLEND to enable standard glTF joint-matrix skinning, reading the
-	// exact JointIndices/JointWeights/joint-matrix SSBO wiring the loader (Skin.cpp) already
-	// populates unconditionally for every skinned primitive. Same "exactly one definition, never
-	// both" hook contract as `tonemapHook` -- see Shader.hpp's comment on those two constants for
-	// the full mechanism. Whole-Program scope, not per-primitive selection (see TODO.md).
+	// `hooks` (osgx::HookList, Shader.hpp) SUBSTITUTES this Program's default shader for any slot
+	// it names, in place of the built-in -- e.g. `{{osgx::Hook::Skinning,
+	// shader::SKINNING_HOOK_LINEAR_BLEND-as-a-Shader}}` enables standard glTF joint-matrix
+	// skinning (reading the exact JointIndices/JointWeights/joint-matrix SSBO wiring the loader
+	// (Skin.cpp) already populates unconditionally for every skinned primitive), in place of the
+	// default identity passthrough; `{{osgx::Hook::Tonemap, ...}}` substitutes a custom tone curve
+	// for the built-in PBR Neutral one. This Program supports exactly the `Tonemap`/`Skinning`
+	// slots -- see applyHooks()'s own comment for the "exactly one definition, never both" hook
+	// contract. Whole-Program scope, not per-primitive selection (see TODO.md).
 	static PBRIBLScene create(
 		osg::Node* node,
 		const PBRIBLEnvironment& environment,
@@ -191,8 +194,7 @@ struct PBRIBLScene {
 		float iblSpecularIntensity=1.0f,
 		bool diagnostics=false,
 		const osgx::ShadowMap* shadowMap=nullptr,
-		osg::Shader* tonemapHook=nullptr,
-		osg::Shader* skinningHook=nullptr
+		const osgx::HookList& hooks={}
 	);
 };
 
@@ -253,15 +255,16 @@ struct PBRIBLGBuffer {
 //   PBR.hpp for the full mechanism.
 //
 //   Note these are two separate decisions on purpose, not one flag split in two: WHICH tone curve
-//   runs is a hook swap (see `tonemapHook`), while WHETHER this pass emits display-referred or
+//   runs is a hook swap (see `hooks`), while WHETHER this pass emits display-referred or
 //   linear output is a property of the pass's output contract, and gates the gamma encode as well
 //   as the curve. Do not "simplify" by folding the gamma into the hook -- a custom hook author
 //   would then have to remember to apply a transfer function too.
-// - `tonemapHook`, if set, is used as THE definition of osgx_Tonemap() for this pass, in place of
-//   either built-in. This is the seam for a custom tone curve (ACES, a look LUT, a filmic
-//   response); it takes precedence over `tonemap`, since supplying a curve means you want it to
-//   run. Compose it the same way any other osgx shader is composed -- a FRAGMENT osg::Shader whose
-//   source defines osgx_Tonemap(vec3), optionally splicing library snippets in by name:
+// - `hooks` (osgx::HookList, Shader.hpp) -- an entry for osgx::Hook::Tonemap is used as THE
+//   definition of osgx_Tonemap() for this pass, in place of either built-in. This is the seam for
+//   a custom tone curve (ACES, a look LUT, a filmic response); it takes precedence over `tonemap`,
+//   since supplying a curve means you want it to run. Compose it the same way any other osgx
+//   shader is composed -- a FRAGMENT osg::Shader whose source defines osgx_Tonemap(vec3),
+//   optionally splicing library snippets in by name:
 //
 //       auto hook = new osg::Shader(osg::Shader::FRAGMENT, osgx::resolveShaderLibs(R"GLSL(
 //           #version 460 core
@@ -269,16 +272,19 @@ struct PBRIBLGBuffer {
 //           vec3 osgx_Tonemap(vec3 color) { return osgx_TonemapACES(color); }
 //       )GLSL"));
 //
-//   Attach a hook rather than adding a second shader that defines osgx_Tonemap() alongside the
-//   built-in: GLSL permits exactly ONE body per function, so a competing definition is a link
+//       options.hooks = {{osgx::Hook::Tonemap, hook}};
+//
+//   A hook SUBSTITUTES rather than adding a second shader that defines osgx_Tonemap() alongside
+//   the built-in: GLSL permits exactly ONE body per function, so a competing definition is a link
 //   error, not an override. This pass ALWAYS attaches exactly one definition (see
-//   PBRIBLLightingScene::create()'s own comment for why never-zero matters); `tonemapHook` chooses
+//   PBRIBLLightingScene::create()'s own comment for why never-zero matters); `hooks` chooses
 //   WHICH, it does not add another.
 struct PBRIBLLightingPassOptions {
 	bool tonemap = true;
-	// Custom osgx_Tonemap() definition; null uses the built-in `tonemap` selects. See the notes
-	// above -- this REPLACES the built-in hook, it is not attached alongside one.
-	osg::Shader* tonemapHook = nullptr;
+	// Custom osgx_Tonemap() definition via osgx::Hook::Tonemap; empty uses the built-in `tonemap`
+	// selects. See the notes above -- this REPLACES the built-in hook, it is not attached
+	// alongside one.
+	osgx::HookList hooks;
 	const osgx::ShadowMap* shadowMap = nullptr;
 	osg::Texture2D* aoTexture = nullptr;
 	bool diagnostics = false;

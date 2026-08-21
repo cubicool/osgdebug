@@ -338,8 +338,14 @@ int main() {
 	auto* gui = new osgx::imgui::Widget(viewer, gizmos->getOverlay());
 
 	gui->addSection("Directional Light", [
-		lights, &shadowMap, &lightDir, &lightColor, &lightIntensity, sceneBoundCenter, sceneBoundRadius, shadowOptions
-	](osg::RenderInfo&) {
+		lights,
+		&shadowMap,
+		&lightDir,
+		&lightColor,
+		&lightIntensity,
+		sceneBoundCenter,
+		shadowOptions
+	] (osg::RenderInfo&) {
 		bool changed = false;
 
 		changed |= ImGui::SliderFloat3("Direction", lightDir.ptr(), -1.0f, 1.0f);
@@ -354,7 +360,9 @@ int main() {
 				lights.setDirectional(0, lightDir, lightColor, lightIntensity);
 
 				shadowMap.reposition(lightDir, sceneBoundCenter, sceneBoundRadius, shadowOptions);
-			} else {
+			}
+
+			else {
 				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
 			}
 		}

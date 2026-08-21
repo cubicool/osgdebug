@@ -779,20 +779,19 @@ void bind_gltf(py::module_& m_gltf) {
 			"iblSpecularIntensity"_a=1.0f,
 			"diagnostics"_a=false,
 			"shadowMap"_a=nullptr,
-			"tonemapHook"_a=nullptr,
-			"skinningHook"_a=nullptr,
+			"hooks"_a=osgx::HookList{},
 			"Apply osgx::gltf's optional osgx-powered PBR/IBL renderer using prepared resources. Pass "
 			"an osgx.shadow.ShadowMap to shadow the key/directional light (osgx::LightSet index "
 			"shadowMap.casterIndex); omit it for today's unshadowed behavior.\n\n"
-			"skinningHook: a VERTEX osg.Shader defining osgx_gltf_ApplySkin(vec4, vec3, vec3), "
-			"REPLACING the default identity passthrough -- pass "
-			"osgx.gltf.shader.SKINNING_HOOK_LINEAR_BLEND (wrapped in "
-			"osgx.gltf.pbribl.resolveShaderLibs()) to enable standard glTF joint-matrix skinning. "
-			"Same substitutes-rather-than-adds contract as tonemapHook.\n\n"
-			"tonemapHook: a FRAGMENT osg.Shader defining osgx_Tonemap(vec3), REPLACING the built-in "
-			"PBR Neutral curve. It substitutes rather than adds -- GLSL permits one body per "
-			"function, so attaching a second definition alongside the built-in is a link error, not "
-			"an override."
+			"hooks: an osgx.HookList (a list of (osgx.Hook, osg.Shader) pairs) substituting this "
+			"Program's built-in shader for a slot. This Program supports osgx.Hook.Skinning (a "
+			"VERTEX osg.Shader defining osgx_gltf_ApplySkin(vec4, vec3, vec3), REPLACING the default "
+			"identity passthrough -- pass osgx.gltf.shader.SKINNING_HOOK_LINEAR_BLEND, wrapped in "
+			"osgx.gltf.pbribl.resolveShaderLibs(), to enable standard glTF joint-matrix skinning) and "
+			"osgx.Hook.Tonemap (a FRAGMENT osg.Shader defining osgx_Tonemap(vec3), REPLACING the "
+			"built-in PBR Neutral curve). Each hook substitutes rather than adds -- GLSL permits one "
+			"body per function, so attaching a second definition alongside the built-in is a link "
+			"error, not an override."
 		)
 	;
 
@@ -821,7 +820,7 @@ void bind_gltf(py::module_& m_gltf) {
 	py::class_<osgx::gltf::pbribl::PBRIBLLightingPassOptions>(m_gltf_pbribl, "PBRIBLLightingPassOptions")
 		.def(py::init<>())
 		.def_readwrite("tonemap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::tonemap)
-		.def_readwrite("tonemapHook", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::tonemapHook)
+		.def_readwrite("hooks", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::hooks)
 		.def_readwrite("shadowMap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::shadowMap)
 		.def_readwrite("aoTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::aoTexture)
 		.def_readwrite("diagnostics", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::diagnostics)

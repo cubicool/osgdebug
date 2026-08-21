@@ -96,6 +96,29 @@ void registerShaderLibs(std::string_view namespaceName, std::span<const ShaderLi
 	}
 }
 
+bool hasHook(const HookList& hooks, Hook hook) {
+	return std::any_of(hooks.begin(), hooks.end(), [hook](const auto& entry) { return entry.first == hook; });
+}
+
+void applyHooks(osg::Program* program, const HookList& hooks, const HookList& defaults) {
+	for(const auto& [hook, defaultShader] : defaults) {
+		const auto found = std::find_if(hooks.begin(), hooks.end(), [hook](const auto& entry) {
+			return entry.first == hook;
+		});
+
+		program->addShader(found != hooks.end() ? found->second : defaultShader);
+	}
+
+	for(const auto& [hook, shader] : hooks) {
+		if(!hasHook(defaults, hook)) {
+			throw std::runtime_error(
+				"osgx::applyHooks: hook " + std::to_string(static_cast<int>(hook)) +
+				" is not supported by this Program"
+			);
+		}
+	}
+}
+
 std::string resolveShaderLibs(std::string src) {
 	// Only pragmas whose namespace matches a registered osgx catalog are expanded.
 	// Other pragmas are intentionally preserved. In particular, this lets callers

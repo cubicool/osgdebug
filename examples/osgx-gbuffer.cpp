@@ -615,7 +615,9 @@ int main(int argc, char** argv) {
 				lights.setDirectional(0, lightDir, lightColor, lightIntensity);
 
 				shadowMap.reposition(lightDir, boundCenter, boundRadius, shadowOptions);
-			} else {
+			}
+
+			else {
 				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
 			}
 		}

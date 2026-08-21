@@ -249,9 +249,9 @@ out vec2 vUV;
 
 // osgx_gltf_ApplySkin() CONTRACT -- forward-declared here, DEFINED in a separate, separately
 // compiled VERTEX shader object (shader::SKINNING_HOOK_IDENTITY by default, or a caller-supplied
-// `skinningHook`, e.g. shader::SKINNING_HOOK_LINEAR_BLEND) attached alongside this one. See
-// Shader.hpp's own comment on those constants for the full mechanism -- same "forward-declare +
-// call site here, definition elsewhere" hook pattern PBR.hpp's DIRECT_LIGHTING_DECL uses.
+// `{{osgx::Hook::Skinning, ...}}` hooks entry, e.g. shader::SKINNING_HOOK_LINEAR_BLEND) attached
+// alongside this one via applyHooks() (Shader.hpp) -- same "forward-declare + call site here,
+// definition elsewhere" hook pattern PBR.hpp's DIRECT_LIGHTING_DECL uses.
 struct osgx_gltf_SkinnedVertex {
 	vec4 position;
 	vec3 normal;
@@ -891,8 +891,7 @@ PBRIBLScene PBRIBLScene::create(
 	float iblSpecularIntensity,
 	bool diagnostics,
 	const osgx::ShadowMap* shadowMap,
-	osg::Shader* tonemapHook,
-	osg::Shader* skinningHook
+	const osgx::HookList& hooks
 ) {
 	// osgx::gltf::pbribl::resolveShaderLibs() below idempotently registers the generic osgx catalogs and
 	// this component's glTF catalog before expansion. This keeps the one-call helper independent of
@@ -913,18 +912,6 @@ PBRIBLScene PBRIBLScene::create(
 
 	prog->setName("osgx_gltf_PBRIBLScene");
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
-	// osgx_gltf_ApplySkin() CONTRACT's definition -- a second, separately compiled VERTEX shader
-	// object with no main() of its own, same "exactly one definition, substitutes rather than adds"
-	// mechanism as tonemapHook below. See Shader.hpp's SKINNING_HOOK_IDENTITY/
-	// SKINNING_HOOK_LINEAR_BLEND comment for the full rationale.
-	if(skinningHook) prog->addShader(skinningHook);
-
-	else {
-		prog->addShader(new osg::Shader(
-			osg::Shader::VERTEX,
-			resolveShaderLibs(shader::SKINNING_HOOK_IDENTITY)
-		));
-	}
 
 	prog->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
@@ -942,24 +929,26 @@ PBRIBLScene PBRIBLScene::create(
 			shadowMap ? osgx::DIRECT_LIGHTING_HOOK_SHADOWED : osgx::DIRECT_LIGHTING_HOOK_DEFAULT
 		)
 	));
-	// osgx_Tonemap() CONTRACT's default definition -- same pattern as DIRECT_LIGHTING_HOOK_DEFAULT
-	// above, a third, separately compiled FRAGMENT shader object with no main() of its own. See
-	// PBR.hpp's TONEMAP_DECL/TONEMAP_HOOK_DEFAULT comment. evaluateIBL()'s own diffuse/specular
-	// blend above is NOT routed through osgx_AmbientLighting() -- that hook's default is
-	// specular-only (no SH-9 diffuse yet), while this scene already has a real baked Lambertian
-	// diffuseEnv cubemap; adding that shader object here would just be dead code.
-	// `tonemapHook` SUBSTITUTES this shader object -- it is never attached alongside it. GLSL
-	// permits one body per function, so a caller adding a competing osgx_Tonemap() definition gets
-	// a duplicate-definition link error, not an override. Exactly one definition, always: same
-	// invariant PBRIBLLightingScene::create() documents at its own tonemap attach site.
-	if(tonemapHook) prog->addShader(tonemapHook);
-
-	else {
-		prog->addShader(new osg::Shader(
+	// osgx_gltf_ApplySkin()/osgx_Tonemap() CONTRACTS' default definitions -- each a separately
+	// compiled shader object with no main() of its own. See PBR.hpp's TONEMAP_DECL/
+	// TONEMAP_HOOK_DEFAULT comment and Shader.hpp's SKINNING_HOOK_IDENTITY/SKINNING_HOOK_LINEAR_BLEND
+	// comment for the full rationale. evaluateIBL()'s own diffuse/specular blend above is NOT
+	// routed through osgx_AmbientLighting() -- that hook's default is specular-only (no SH-9
+	// diffuse yet), while this scene already has a real baked Lambertian diffuseEnv cubemap; there
+	// is no AmbientLighting hook slot here as a result. `hooks` SUBSTITUTES a slot's default shader
+	// object, it is never attached alongside it -- see applyHooks()'s own comment (Shader.hpp) for
+	// the exactly-one-definition invariant this preserves, same one
+	// PBRIBLLightingScene::create() relies on at its own tonemap attach site.
+	osgx::applyHooks(prog, hooks, {
+		{osgx::Hook::Skinning, new osg::Shader(
+			osg::Shader::VERTEX,
+			resolveShaderLibs(shader::SKINNING_HOOK_IDENTITY)
+		)},
+		{osgx::Hook::Tonemap, new osg::Shader(
 			osg::Shader::FRAGMENT,
 			resolveShaderLibs(osgx::TONEMAP_HOOK_DEFAULT)
-		));
-	}
+		)}
+	});
 
 	// resolveShaderLibs() expands the osgx snippet pragmas but preserves OSG's
 	// import_defines pragma. Let OSG assemble/cache the diagnostic shader variant
@@ -1055,8 +1044,8 @@ PBRIBLGBuffer PBRIBLGBuffer::create(osg::Node* node, int width, int height) {
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
 	// osgx_gltf_ApplySkin() CONTRACT's default (identity) definition -- FULL_PBR_VERTEX_SHADER
 	// always calls this hook now (see PBRIBLScene::create()'s own comment for the full mechanism).
-	// This geometry pass doesn't expose a `skinningHook` parameter of its own yet (see TODO.md), so
-	// it always gets the passthrough -- a skinned model through the deferred split still animates
+	// This geometry pass doesn't expose a `hooks` parameter of its own yet (see TODO.md), so it
+	// always gets the passthrough -- a skinned model through the deferred split still animates
 	// its joint transforms/gizmos correctly, it just won't deform the G-buffer mesh yet.
 	prog->addShader(new osg::Shader(
 		osg::Shader::VERTEX,
@@ -1146,7 +1135,9 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 		)
 	));
 
-	// EXACTLY ONE definition of osgx_Tonemap(), always -- never zero, never two.
+	// EXACTLY ONE definition of osgx_Tonemap(), always -- never zero, never two. applyHooks()
+	// (Shader.hpp) enforces this: it always attaches one shader for the Tonemap slot below, the
+	// caller's options.hooks override if present, otherwise the built-in chosen by options.tonemap.
 	//
 	// Never zero: OSGX_PBRIBL_NO_TONEMAP strips the CALL at render time, but that define is absent
 	// during OSG's realize-time GLObjectsVisitor pre-compile, which would then link a call with no
@@ -1155,18 +1146,16 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 	//
 	// Never two: GLSL allows one body per function, so a caller cannot "override" by adding a
 	// second shader defining osgx_Tonemap() -- that is a duplicate-definition link error. Which is
-	// exactly why options.tonemapHook exists: customization SUBSTITUTES this shader rather than
+	// exactly why options.hooks exists: customization SUBSTITUTES this shader rather than
 	// competing with it.
-	if(options.tonemapHook) prog->addShader(options.tonemapHook);
-
-	else {
-		prog->addShader(new osg::Shader(
+	osgx::applyHooks(prog, options.hooks, {
+		{osgx::Hook::Tonemap, new osg::Shader(
 			osg::Shader::FRAGMENT,
 			resolveShaderLibs(
 				options.tonemap ? osgx::TONEMAP_HOOK_DEFAULT : osgx::TONEMAP_HOOK_IDENTITY
 			)
-		));
-	}
+		)}
+	});
 
 	auto quad = osg::createTexturedQuadGeometry(
 		osg::Vec3(-1, -1, 0), osg::Vec3(2, 0, 0), osg::Vec3(0, 2, 0)
@@ -1276,7 +1265,9 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 
 	// A caller-supplied hook takes precedence over `tonemap`: supplying a curve means wanting it to
 	// run, so the call (and the gamma encode this define also gates) stays in.
-	if(!options.tonemap && !options.tonemapHook) ss->setDefine("OSGX_PBRIBL_NO_TONEMAP");
+	if(!options.tonemap && !osgx::hasHook(options.hooks, osgx::Hook::Tonemap)) {
+		ss->setDefine("OSGX_PBRIBL_NO_TONEMAP");
+	}
 	if(options.diagnostics) ss->setDefine("OSGX_PBRIBL_DIAGNOSTICS");
 
 	if(options.aoTexture) {

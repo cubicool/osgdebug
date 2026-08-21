@@ -75,9 +75,10 @@ uniform float osgx_gltf_alphaCutoff;
 // already uses (see that comment for the full mechanism: GLSL permits exactly one body per
 // function, so a hook SUBSTITUTES the built-in, never adds alongside it).
 //
-// SKINNING_HOOK_IDENTITY is what PBRIBLScene::create() attaches when no `skinningHook` argument is
-// supplied -- a pure passthrough, so an unskinned model (or a caller not yet exercising this) pays
-// for nothing beyond one extra function call. SKINNING_HOOK_LINEAR_BLEND is the real joint-matrix
+// SKINNING_HOOK_IDENTITY is what PBRIBLScene::create() attaches when no `hooks` entry names
+// osgx::Hook::Skinning -- a pure passthrough, so an unskinned model (or a caller not yet
+// exercising this) pays for nothing beyond one extra function call. SKINNING_HOOK_LINEAR_BLEND is
+// the real joint-matrix
 // linear blend skin (LBS), reading the exact JOINT_INDICES_ATTRIBUTE/JOINT_WEIGHTS_ATTRIBUTE/
 // JOINT_MATRICES_BINDING wiring the loader (Skin.cpp's SkinPaletteCallback) already populates
 // UNCONDITIONALLY for every skinned primitive, whether or not anything ever reads it -- this hook

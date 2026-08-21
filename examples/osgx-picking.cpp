@@ -157,7 +157,9 @@ int main(int argc, char** argv) {
 		pickCam->setPostDrawCallback(asyncRb);
 
 		rb = asyncRb;
-	} else {
+	}
+
+	else {
 		auto pickImage = osgx::make_ref<osg::Image>();
 
 		pickImage->allocateImage(pickW, pickH, 1, GL_RGBA, GL_UNSIGNED_BYTE);
@@ -180,7 +182,9 @@ int main(int argc, char** argv) {
 	rb->onPick = [rb, useAsync](uint32_t id, osgx::ActionType type) {
 		if(type == osgx::ActionType::HOVER) {
 			if(id != 0) OSG_NOTICE << "Hover -> ID " << id << std::endl;
-		} else {
+		}
+
+		else {
 			OSG_NOTICE
 				<< (useAsync ? "ASYNC pick" : "Pick")
 				<< " (" << rb->mouseX() << ", " << rb->mouseY()

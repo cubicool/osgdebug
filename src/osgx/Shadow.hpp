@@ -214,11 +214,15 @@ vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 
 		if(light.type == OSGX_LIGHT_TYPE_DIRECTIONAL) {
 			radiance = osgx_DirectionalLightRadiance(light.dir, light.color, light.posIntensity.w, L);
-		} else if(light.type == OSGX_LIGHT_TYPE_SPOT) {
+		}
+
+		else if(light.type == OSGX_LIGHT_TYPE_SPOT) {
 			radiance = osgx_SpotLightRadiance(
 				light.posIntensity, light.color, light.dir, light.spotAngles, worldPos, L
 			);
-		} else {
+		}
+
+		else {
 			radiance = osgx_PointLightRadiance(light.posIntensity, light.color, worldPos, L);
 		}
 
@@ -228,7 +232,9 @@ vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 			contribution = osgx_DirectLightSphere(
 				N, V, L, light.posIntensity.xyz - worldPos, radiance, mat, light.sourceRadius
 			);
-		} else {
+		}
+
+		else {
 			contribution = osgx_DirectLight(N, V, L, radiance, mat);
 		}
 

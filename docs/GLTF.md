@@ -83,15 +83,16 @@ The Python bindings expose the same constants, GLSL source, and helpers under `o
 
 ## Optional PBR/IBL Renderer
 
-`osgx::gltf::pbribl` applies `osgx::gltf`'s material interface using the generic facilities in
-`osgx::pbr` and `osgx::ibl`. The loader target remains shader-agnostic; applications opt into this
-renderer explicitly via `osgx::gltf_pbribl` (see CMake above):
+`osgx::gltf::pbribl` applies `osgx::gltf`'s material interface using the generic PBR/IBL/shadow
+facilities living flat in `osgx::` (see [CORE.md](CORE.md) — those used to be separate `osgx::pbr`/
+`osgx::ibl` namespaces, flattened 2026-08-20). The loader target remains shader-agnostic;
+applications opt into this renderer explicitly via `osgx::gltf_pbribl` (see CMake above):
 
 ```cpp
 #include <osgx/gltf/PBRIBL.hpp>
 
-auto environment = osgx::gltf::pbribl::loadPBRIBLEnvironment("papermill.gltf");
-auto scene = osgx::gltf::pbribl::createPBRIBLScene(model, environment);
+auto environment = osgx::gltf::pbribl::PBRIBLEnvironment::load("papermill.gltf");
+auto scene = osgx::gltf::pbribl::PBRIBLScene::create(model, environment);
 
 if(environment.valid() && scene.valid()) {
 	if(environment.root) root->addChild(environment.root);
@@ -99,11 +100,61 @@ if(environment.valid() && scene.valid()) {
 }
 ```
 
+`PBRIBLEnvironment` has two loading paths, kept as distinct verbs on purpose (disk load vs. dynamic
+HDR bake are genuinely different operations): `PBRIBLEnvironment::load(manifest, baseDir)` /
+`::load(manifestPath)` for pre-baked KTX2 resources (zero HDR decode or cubemap bake at runtime),
+and `PBRIBLEnvironment::prepare(hdrPath, lutSize=1024)` for a fully dynamic bake — `envMap` is a
+valid, bindable texture immediately, but its contents only become correct once
+`specularBakeRoot`'s passes have actually run a few frames.
+
+`PBRIBLScene::create()` also takes an optional `const osgx::ShadowMap*` — when non-null, it swaps
+in `osgx::DIRECT_LIGHTING_HOOK_SHADOWED` in place of the default unshadowed hook and wires the
+shadow depth texture/uniforms onto the node's StateSet; the caller still owns building the
+`ShadowMap` itself and adding `shadowMap->camera` to the scene graph (see [CORE.md's Shadow
+section](CORE.md#osgxshadowhpp)). An optional `const osgx::HookList& hooks` (see [CORE.md's
+`Shader.hpp` section](CORE.md#osgxshaderhpp)) substitutes this Program's built-in shader for either
+of the two slots it supports: `osgx::Hook::Skinning` enables standard glTF joint-matrix skinning
+(`shader::SKINNING_HOOK_LINEAR_BLEND`) in place of the default identity passthrough, and
+`osgx::Hook::Tonemap` substitutes a custom tone curve —
+
+```cpp
+auto scene = osgx::gltf::pbribl::PBRIBLScene::create(model, environment, 1.0f, 1.0f, false, nullptr, {
+	{osgx::Hook::Skinning, new osg::Shader(osg::Shader::VERTEX,
+		osgx::resolveShaderLibs(osgx::gltf::shader::SKINNING_HOOK_LINEAR_BLEND))}
+});
+```
+
 The material GLSL helpers are registered under `#pragma osgx::gltf ...`, and their canonical
 uniform/attribute names use the `osgx_gltf_*` prefix (for example, `osgx_gltf_Material` and
 `osgx_gltf_textures`). Their canonical material declaration comes directly from
 `osgx/gltf/Shader.hpp`. Python exposes the same API under
 `osgx.gltf.pbribl`. `utils/osgx-gltf-viewer` is the corresponding complete C++ consumer.
+
+### Deferred split
+
+`PBRIBLGBuffer::create(node, width, height)` + `PBRIBLLightingScene::create(gbuffer, environment,
+mainCamera, ...)` are a two-camera counterpart to `PBRIBLScene::create()`'s one-shader-does-
+everything shape: a geometry pass writing material-only G-buffer textures (built on
+[`osgx::GBuffer`](CORE.md#osgxgbufferhpp)), then a fullscreen-quad lighting pass running the same
+`evaluateIBL()`/`osgx_DirectLighting()` logic against those textures instead of interpolated
+varyings. `PBRIBLLightingPassOptions` carries the lighting pass's independent, optional inputs —
+`shadowMap` (same contract as `PBRIBLScene::create()`'s own parameter), `aoTexture` (an externally-
+baked SSAO result, multiplied into the ambient term — this pass does not bake SSAO itself),
+`tonemap`/`hooks` (whether/how this pass tone-maps its own output, vs. leaving it linear HDR for a
+caller chaining further passes — `hooks` supports only `osgx::Hook::Tonemap` here, no vertex stage
+to skin), and `colorTexture`/`renderOrderNum` (retarget the pass to an offscreen texture instead of
+the backbuffer).
+
+**Call `PBRIBLLightingScene::update(mainCamera)` from a `preDrawCallback` on the first `PRE_RENDER`
+camera in the scene graph** (by render order) — not from `mainCamera`'s own `preDrawCallback`, and
+not from application code after `viewer.frame()` returns. Every `PRE_RENDER` camera finishes
+drawing before `mainCamera`'s own `preDrawCallback` fires, so either of those alternatives hands the
+lighting pass a stale view matrix relative to what the geometry pass actually rendered with —
+visible as position/lighting artifacts that worsen while the camera moves.
+
+See `examples/osgx-gbuffer.cpp` for the full wiring, including the shadow camera plugged into the
+split (depth-only, so it sits alongside the geometry pass rather than inside it) and a per-channel
+G-buffer visualizer (press `0`-`5`).
 
 ## PBR/IBL environment baking
 

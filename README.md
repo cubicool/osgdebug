@@ -24,8 +24,8 @@ idioms (concepts, ranges, spans, lambdas) and adds five optional, explicitly-inc
   all, and `PointerCapture` for hide+warp+accumulate mouse capture (turntable/FPS-style look
   controls).
 - `osgx::gltf` — a glTF 2.0 loader (`osgdb_gltf`), plus an optional `osgx::gltf::pbribl` adapter that
-  renders it using the generic `osgx::pbr`/`osgx::ibl` facilities. Merged in from the formerly
-  separate `osgGLTF` repo.
+  renders it using the generic PBR/IBL/shadow facilities living flat in `osgx::`. Merged in from the
+  formerly separate `osgGLTF` repo.
 - `osgx::ktx2` — a KTX2 texture reader/writer built on vendored KTX-Software, merged in alongside
   `osgx::gltf` for the same reason (several `osgx::ibl` bake tools need KTX2 output).
 
@@ -113,16 +113,20 @@ by concern:
 - `osgx/Shader.hpp` — generic, line-oriented GLSL library expansion.
 - `osgx/PBR.hpp` — PBR BRDF snippets, typed direct lights (`LightSet`: directional/point/sphere/
   spot), and `OrbitLightRig`.
-- `osgx/Gizmos.hpp` — `LightMarkers`/`LightGizmos` scene-space visualizations for `osgx::pbr::LightSet`
+- `osgx/Gizmos.hpp` — `LightMarkers`/`LightGizmos` scene-space visualizations for `LightSet`
   lights (depth-tested markers for point/sphere/spot, plus a directional-only overlay camera).
+- `osgx/Shadow.hpp` — single-light directional shadow mapping (`ShadowMap::create()`), a drop-in
+  `DIRECT_LIGHTING_HOOK_SHADOWED` swap for `PBR.hpp`'s default direct-lighting hook.
 - `osgx/IBL.hpp` — environment-map loading, BRDF-LUT baking (including the process-wide
-  `sharedBRDFLUT()` cache), SH9/Lambertian diffuse irradiance, and cubemap readback helpers
+  `SharedBRDFLUT::create()` cache), SH9/Lambertian diffuse irradiance, and cubemap readback helpers
   (`readCubeMapFaces()`, `BRDFLUTReadback`).
 - `osgx/CaptureCubeMap.hpp` — `CaptureCubeMapScene`, the low-level frame-driven reflection-probe
   primitive (six ordered FBO cameras capturing a caller-owned scene into a radiance cubemap).
 - `osgx/GGXPrefilter.hpp` — GPU GGX prefilter scene construction, rebaking, and readback.
 - `osgx/LambertianBake.hpp` — frame-driven GPU Lambertian/diffuse cubemap baking and readback
   (`LambertianBakeScene`, `LambertianCubeReadback`).
+- `osgx/GBuffer.hpp` — generic deferred G-buffer camera setup (`GBuffer::create()`), the primitive
+  `osgx::gltf::pbribl`'s deferred forward/deferred split builds on.
 - `osgx.hpp` — convenience umbrella that includes all of the above (but not `osgx::debug` or
   `osgx::imgui` — see [Documentation](#documentation) below).
 - `osgx/Version.hpp` — `OSGX_VERSION_MAJOR`/`MINOR`/`PATCH` and the `OSGX_VERSION` string, generated
@@ -140,7 +144,7 @@ Per-subsystem deep dives live in [`docs/`](docs/):
 
 - [`osgx` core](docs/CORE.md) — everything above that lives flat in `osgx::`: `Core`, `Visitors`,
   `Array`, `Callbacks`, `Picking`, `Manipulators`, `CameraIntents`, `Grid`, `Shapes`, `Shader`,
-  `PBR`, `Gizmos`, `IBL`, and the cubemap-baking primitives it's built on.
+  `PBR`, `Gizmos`, `Shadow`, `IBL`, `GBuffer`, and the cubemap-baking primitives it's built on.
 - [`osgx::debug`](docs/DEBUG.md) — the three `GL_KHR_debug` systems, the two-phase GPU/CPU
   profiler, and `FrameByFrameViewer`.
 - [`osgx::imgui`](docs/IMGUI.md) — the Dear ImGui overlay.

@@ -563,7 +563,9 @@ std::tuple<float, float, float, float> Polyhedron::Face::extent(const std::vecto
 		if(i == 0) {
 			minU = maxU = u;
 			minV = maxV = v;
-		} else {
+		}
+
+		else {
 			minU = std::min(minU, u); maxU = std::max(maxU, u);
 			minV = std::min(minV, v); maxV = std::max(maxV, v);
 		}
