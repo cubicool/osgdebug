@@ -228,6 +228,14 @@ set_target_properties(osgx PROPERTIES
 	POSITION_INDEPENDENT_CODE ON
 )
 
+# The Python extension is also named "osgx" and MSVC emits an import library
+# beside it.  When osgx itself is static (the MSVC configuration above), both
+# would otherwise claim Release/osgx.lib.  Keep the logical CMake target name
+# stable while giving its implementation archive a distinct filename.
+if(MSVC)
+	set_target_properties(osgx PROPERTIES ARCHIVE_OUTPUT_NAME osgx_static)
+endif()
+
 target_compile_options(osgx PRIVATE ${OSGX_WARNING_OPTIONS})
 
 if(OSGX_WITH_PLATFORM)
