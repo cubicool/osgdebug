@@ -39,7 +39,7 @@
 #elif defined(_MSC_VER)
 	#define OSGX_DISABLE_WARNINGS \
 		__pragma(warning(push)) \
-		__pragma(warning(disable: 4244 4250 4267 4996))
+		__pragma(warning(disable: 4244 4250 4251 4267 4275 4305 4996 6326))
 
 	#define OSGX_ENABLE_WARNINGS \
 		__pragma(warning(pop))

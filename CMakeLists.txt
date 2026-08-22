@@ -171,7 +171,17 @@ target_sources(osgx_core INTERFACE
 )
 set_target_properties(osgx_core PROPERTIES EXPORT_NAME core)
 
-add_library(osgx SHARED
+# osgx is an implementation dependency of the Python extension.  With MSVC,
+# keeping it as a DLL would require every public class (including its vtables,
+# RTTI, and data) to carry a dllimport/dllexport annotation.  Link it statically
+# into its in-tree consumers instead; Linux retains the normal shared library.
+if(MSVC)
+	set(OSGX_LIBRARY_TYPE STATIC)
+else()
+	set(OSGX_LIBRARY_TYPE SHARED)
+endif()
+
+add_library(osgx ${OSGX_LIBRARY_TYPE}
 	src/CameraIntents.cpp
 	src/CaptureCubeMap.cpp
 	src/Debug.cpp
@@ -476,6 +486,13 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 		pybind11::module
 	)
 	osgx_compile_options(osgx_python_bindings)
+	# MSVC's /analyze reports C28182 from pybind11's dispatcher template even
+	# when the corresponding runtime path proves the pointer non-null.  This is
+	# an analyzer false positive at template-instantiation time; keep /analyze
+	# enabled and suppress only that diagnostic for the Python bindings.
+	if(MSVC)
+		target_compile_options(osgx_python_bindings PRIVATE /wd28182)
+	endif()
 	set_target_properties(osgx_python_bindings PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 	if(OSGX_WITH_PLATFORM)
