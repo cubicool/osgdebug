@@ -29,7 +29,6 @@ option(OSGX_INSTALL "Generate osgx installation rules" ${OSGX_IS_TOP_LEVEL})
 if(WIN32)
 	set(OSGX_WARNING_OPTIONS
 		/W4
-		/WX
 		/wd4100
 		/analyze
 	)
