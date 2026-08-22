@@ -479,6 +479,8 @@ void bind_core(py::module_& m) {
 	py::enum_<osgx::Hook>(m, "Hook")
 		.value("Tonemap", osgx::Hook::Tonemap)
 		.value("Skinning", osgx::Hook::Skinning)
+		.value("DeferredLighting", osgx::Hook::DeferredLighting)
+		.value("DirectLighting", osgx::Hook::DirectLighting)
 	;
 }
 

@@ -1,5 +1,9 @@
 #include "osgx/Picking.hpp"
 
+#ifdef OSGX_PLATFORM
+#include "osgx/Linux.hpp"
+#endif
+
 #include <cstring>
 
 namespace osgx {
@@ -322,8 +326,11 @@ void PickReadbackSync::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 			}
 
 			else {
-				int wx = _x.load(std::memory_order_relaxed);
-				int wy = _y.load(std::memory_order_relaxed);
+				// Window-absolute -> viewport-local: see PickReadback::setWindowOrigin's own
+				// comment for why this subtraction has to happen before the imgW/_winW scale
+				// below, not after.
+				int wx = _x.load(std::memory_order_relaxed) - _winX;
+				int wy = _y.load(std::memory_order_relaxed) - _winY;
 
 				imgX = (imgW == _winW) ? wx : wx * imgW / _winW;
 				imgY = (imgH == _winH) ? wy : wy * imgH / _winH;
@@ -406,19 +413,76 @@ void PickCameraSync::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 		auto* cam = static_cast<osg::Camera*>(node);
 		int width = _W;
 		int height = _H;
+		int originX = 0;
+		int originY = 0;
 
 		if(const auto* viewport = vc->getViewport()) {
 			width = static_cast<int>(viewport->width());
 			height = static_cast<int>(viewport->height());
+			originX = static_cast<int>(viewport->x());
+			originY = static_cast<int>(viewport->y());
 		}
 
 		cam->setViewMatrix(vc->getViewMatrix());
 
-		if(_rb && width > 0 && height > 0) _rb->setWindowSize(width, height);
+		if(_rb && width > 0 && height > 0) {
+			_rb->setWindowSize(width, height);
+			_rb->setWindowOrigin(originX, originY);
+		}
 
-		if(_pick1x1 && _rb && width > 0 && height > 0) {
-			double cx = _rb->mouseX() + 0.5;
-			double cy = _rb->mouseY() + 0.5;
+#ifdef OSGX_PLATFORM
+		// Transparent, no caller opt-in needed: OSG's own event stream has no "pointer left the
+		// window" event at all (see platform::isCursorInWindow()'s own comment), so continuous/
+		// hover picking has no way to notice on its own that the cursor is gone and clear
+		// itself -- the sub-frustum below would otherwise keep re-aiming at the last MOVE
+		// event's position forever, reporting stale hover indefinitely. Checked every update
+		// traversal, right here, since this callback already runs every frame regardless of
+		// whether anything is actually picking-relevant that frame. isCursorInWindow() fails
+		// open (true) on a non-X11 GraphicsContext, so this is a safe no-op everywhere else.
+		if(_rb && !platform::isCursorInWindow(vc)) _rb->invalidate();
+#endif
+
+		// Same shape as the isCursorInWindow() case just above, for a different reason: some
+		// other UI (ImGui) currently has mouse capture, so PickHandler stopped updating
+		// mouseX()/mouseY() and they're frozen at the last real 3D-viewport position -- see
+		// PickReadback::setSuspended()'s own comment for why a single invalidate() at the moment
+		// capture started isn't enough. Called every frame, unconditionally, for as long as
+		// isSuspended() stays true, so the sub-frustum below re-aiming at that frozen (but still
+		// valid) spot can never survive to be observed as a hover.
+		if(_rb && _rb->isSuspended()) _rb->invalidate();
+
+		// A THIRD, independent guard, needed even with isSuspended() above: mouseX()/mouseY()
+		// are window-absolute, and nothing guarantees they land inside THIS camera's own
+		// viewport just because they came from a real, freshly-handled event. Concretely:
+		// osgx::imgui::Widget::handle() reads io.WantCaptureMouse in the SAME call where it
+		// just fed the new position to io.AddMousePosEvent() -- Dear ImGui only recomputes
+		// WantCaptureMouse inside NewFrame() (run later, from Widget's own PreDraw callback),
+		// so that read is one ImGui frame stale. The very first MOVE event whose coordinates
+		// land on an ImGui panel is still evaluated against the PREVIOUS frame's hover result
+		// (still false), so it comes through with ea.getHandled()==false, isSuspended() never
+		// gets set for it, and PickHandler stores that real-but-out-of-viewport coordinate as
+		// mouseX()/mouseY() -- not frozen at the last good 3D position at all, but pinned to
+		// that one bad sample, indefinitely if no further MOVE event happens to correct it.
+		// Checking the coordinate directly against the viewport has no such lag, since it
+		// doesn't depend on any other handler's state -- only on this frame's own geometry.
+		bool cursorInViewport = false;
+
+		if(_rb && width > 0 && height > 0) {
+			int localX = _rb->mouseX() - originX;
+			int localY = _rb->mouseY() - originY;
+
+			cursorInViewport = localX >= 0 && localX < width && localY >= 0 && localY < height;
+
+			if(!cursorInViewport) _rb->invalidate();
+		}
+
+		if(_pick1x1 && _rb && width > 0 && height > 0 && cursorInViewport) {
+			// mouseX()/mouseY() are window-absolute; the sub-frustum below is built relative
+			// to THIS camera's own viewport, so the cursor position has to be viewport-local
+			// too, or the sub-frustum aims at the wrong point whenever the main viewport's
+			// origin isn't (0, 0) -- see PickReadback::setWindowOrigin's own comment.
+			double cx = (_rb->mouseX() - originX) + 0.5;
+			double cy = (_rb->mouseY() - originY) + 0.5;
 			double W = static_cast<double>(width);
 			double H = static_cast<double>(height);
 
@@ -450,6 +514,19 @@ void PickHoverCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 }
 
 bool PickHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) {
+	// Some earlier handler (osgx::imgui::Widget, which registers itself at the FRONT of the
+	// handler list -- see Widget's own constructor) already claimed this event, e.g. the cursor
+	// is over an ImGui panel. Match the convention every other OSG handler follows (see
+	// StatsHandler/HelpHandler/the stock manipulators) and bail immediately, instead of also
+	// updating pick state from a mouse position that isn't really "over the 3D scene". Recorded
+	// via setSuspended() rather than a one-shot invalidate() here -- PickCameraSync re-invalidates
+	// continuously every frame for as long as this stays true, which is what actually prevents
+	// the sub-frustum from re-detecting a hover at the now-frozen mouseX()/mouseY() a frame
+	// later; see PickReadback::setSuspended()'s own comment.
+	_rb->setSuspended(ea.getHandled());
+
+	if(ea.getHandled()) return false;
+
 	int x = static_cast<int>(ea.getX());
 	int y = static_cast<int>(ea.getY());
 

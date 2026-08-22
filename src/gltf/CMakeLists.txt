@@ -14,7 +14,7 @@ add_library(osgx::gltf ALIAS osgx_gltf)
 
 osgx_compile_options(osgx_gltf)
 target_include_directories(osgx_gltf PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
-target_link_libraries(osgx_gltf PUBLIC osgx::core)
+target_link_libraries(osgx_gltf PUBLIC osgx::osgx)
 target_sources(osgx_gltf PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../osgx/gltf/Reader.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../osgx/gltf/Shader.hpp>"

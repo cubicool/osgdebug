@@ -50,8 +50,8 @@ std::string resolveShaderLibs(std::string src);
 
 // Hook slots a Program-building call site MAY expose for shader-object substitution. Only add a
 // new enumerator once a real call site wires it up -- see TODO.md's HookList entry for slots
-// that are still discussed but not yet real parameters anywhere (e.g. direct/ambient lighting);
-// don't pre-populate this for hypothetical future hooks.
+// that are still discussed but not yet real parameters anywhere (e.g. ambient lighting); don't
+// pre-populate this for hypothetical future hooks.
 //
 // Tonemap/Skinning substitute one leaf function's body while the rest of a Program stays fixed --
 // genuinely reusable across whichever Program-building call sites happen to need that exact
@@ -62,10 +62,25 @@ std::string resolveShaderLibs(std::string src);
 // interchangeable with an equivalent hook on a differently-shaped Program (e.g. the forward path's
 // own main() reads vertex-interpolated PBR inputs, not G-buffer textures) -- hence the
 // pass-specific name instead of a generic one. See docs/CORE.md and docs/GLTF.md.
+//
+// DirectLighting (migrated 2026-08-21, `osgx-gbuffer-dice.cpp`) -- PBRIBLLightingScene::create()
+// used to attach its osgx_DirectLighting() shader (DIRECT_LIGHTING_HOOK_DEFAULT/_SHADOWED,
+// PBR.hpp) UNCONDITIONALLY, outside applyHooks() entirely, on the assumption that a
+// DeferredLighting override simply ignores it (true, and harmless, RIGHT UP UNTIL an override
+// wants the same low-level BRDF primitives -- D_GGX/G_Schlick/G_Smith/F_Schlick/DirectSpecular/
+// DirectDiffuse/DirectLight -- for its own use, since DIRECT_LIGHTING_HOOK_DEFAULT pulls in that
+// exact same `#pragma osgx::pbr` set to implement itself. Two shader objects in one Program then
+// define the same GLSL functions -- a link error (`function "osgx_D_GGX" is already defined`),
+// confirmed live building a worn-edge material blend that needed real osgx_DirectLight() calls
+// from inside its own DeferredLighting override). Now a real slot: a DeferredLighting override
+// that doesn't need osgx_DirectLighting() at all can supply a trivially empty
+// `osg::Shader(FRAGMENT, "#version 460 core\n")` override for THIS slot too, freeing it to declare
+// the underlying BRDF primitives itself with no collision.
 enum class Hook {
 	Tonemap,
 	Skinning,
 	DeferredLighting,
+	DirectLighting,
 };
 
 // One hook-slot override: which slot, and the shader object substituting the call site's own

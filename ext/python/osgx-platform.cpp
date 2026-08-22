@@ -79,6 +79,17 @@ void bind_platform(py::module_& m_platform) {
 		"Retitle the viewer's native X11 window (title bar + icon/taskbar name)."
 	);
 
+	m_platform.def(
+		"isCursorInWindow",
+		py::overload_cast<osgViewer::Viewer&>(&osgx::platform::isCursorInWindow),
+		"viewer"_a,
+		"True if the mouse pointer is currently within this viewer's real X11 window bounds. "
+		"Queries X11 directly -- there is no 'pointer left the window' GUIEventAdapter event in "
+		"OSG's own event stream. osgx.picking.PickCameraSync already checks this automatically "
+		"every frame to invalidate continuous/hover picking when the pointer leaves the window "
+		"entirely -- this standalone binding is for anything else that wants the same check."
+	);
+
 #ifdef OSGX_EGL
 	m_platform.def(
 		"createEGLWindow",

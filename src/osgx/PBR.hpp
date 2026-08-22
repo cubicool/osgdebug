@@ -10,6 +10,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/NodeVisitor>
 #include <osg/StateSet>
 #include <osg/Uniform>
+#include <osg/Vec4>
 
 OSGX_ENABLE_WARNINGS
 
@@ -110,6 +111,48 @@ struct osgx_Material {
 	vec3 F0;
 };
 )GLSL";
+
+// Binding point for the factor buffer MaterialFactors/attachMaterialFactors() below build. Lives
+// here (generic osgx::), not under osgx::gltf -- osgx::gltf::shader::MATERIAL_BINDING (Shader.hpp)
+// is now just an alias for this constant, so a caller reading GET_MATERIAL never has to care
+// whether the buffer at this binding was populated by the glTF loader (Material.cpp) or by a
+// hand-authored MaterialFactors (see examples/osgx-gbuffer-blueprint.cpp's buildShapeNode() for a
+// non-glTF consumer) -- same binding, same buffer shape, either way. See TODO.md's "Generic vs.
+// glTF-specific layering" section for the principle this is following.
+inline constexpr unsigned int MATERIAL_BINDING = 0;
+
+// Plain factor-only material description -- the C++-side counterpart to MATERIAL_INPUTS'
+// `osgx_gltf_Material` SSBO block (Shader.hpp) and the GET_MATERIAL snippet that decodes it
+// (PBRIBL.cpp). Plays the same role for a material buffer that VertexLayout (Shapes.hpp) plays
+// for vertex attribute locations: a small aggregate describing what the CALLER has, so the exact
+// std430 field order/padding of the buffer it feeds isn't private knowledge every producer has to
+// duplicate by hand. `has*Map` gates whether GET_MATERIAL samples a texture for that channel at
+// all -- leave a flag false and attachMaterialFactors() neither requires nor touches any texture
+// unit for it; a caller that DOES want texturing still binds its own osg::Texture2D at the
+// conventional unit (BASE_COLOR_TEXTURE_UNIT etc., Shader.hpp) separately. This struct only ever
+// carries the buffer's scalar factors/flags, never texture objects.
+struct MaterialFactors {
+	osg::Vec4 baseColor{1.0f, 1.0f, 1.0f, 1.0f};
+	float roughness = 1.0f;
+	float metallic = 1.0f;
+	bool hasBaseColorMap = false;
+	bool hasMetallicRoughnessMap = false;
+	bool hasOcclusion = false;
+	bool hasNormalMap = false;
+};
+
+// Builds the std430-laid-out osg::FloatArray GET_MATERIAL expects (must match MATERIAL_INPUTS'
+// `osgx_gltf_Material` block field-for-field: baseColorFactor(vec4), roughnessFactor,
+// metallicFactor, the four has*Map flags, then 2 floats of trailing padding) and binds it to
+// `stateSet` at MATERIAL_BINDING via a fresh osg::ShaderStorageBufferObject/Binding -- the exact
+// steps the glTF loader's Material.cpp and any non-glTF geometry both need, now written once. The
+// returned array is the live buffer backing that binding, in case a caller wants to mutate factors
+// later (osg::FloatArray writes are picked up by OSG's buffer-object dirty tracking same as any
+// other Array); most one-shot callers can simply discard the return value.
+osg::ref_ptr<osg::FloatArray> attachMaterialFactors(
+	osg::StateSet& stateSet,
+	const MaterialFactors& factors
+);
 
 // All five snippets, concatenated in dependency order (G_SMITH calls osgx_G_Schlick, so
 // G_SCHLICK must precede it). Convenience for callers that want the whole BRDF toolkit;

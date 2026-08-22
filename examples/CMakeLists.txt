@@ -35,6 +35,9 @@ if(OSGX_BUILD_GLTF)
 
 	osgx_add_executable("osgx" "gbuffer-comic")
 	target_link_libraries(osgx-gbuffer-comic PRIVATE osgx::gltf_pbribl)
+
+	osgx_add_executable("osgx" "gbuffer-blueprint")
+	target_link_libraries(osgx-gbuffer-blueprint PRIVATE osgx::gltf_pbribl)
 else()
 	message(STATUS "OSGX_BUILD_GLTF is OFF; skipping osgx-turntable and osgx-gbuffer")
 endif()

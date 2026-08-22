@@ -134,6 +134,13 @@ void bind_picking(py::module_& m_picking) {
 			"reportClick", &osgx::PickReadback::reportClick,
 			"Fire CLICK with the currently hovered ID -- call from a click handler in CONTINUOUS mode."
 		)
+		.def(
+			"invalidate", &osgx::PickReadback::invalidate,
+			"Force the tracked pick state back to 'nothing hovered' (id 0), so PickHoverCallback's "
+			"next poll fires onLeave naturally. Call once per frame the cursor is confirmed outside "
+			"the window (osgx.platform.isCursorInWindow()) -- there is no window-leave event to "
+			"drive this automatically."
+		)
 		.def_property_readonly("mouseX", &osgx::PickReadback::mouseX)
 		.def_property_readonly("mouseY", &osgx::PickReadback::mouseY)
 		.def_property_readonly("lastID", &osgx::PickReadback::lastID)

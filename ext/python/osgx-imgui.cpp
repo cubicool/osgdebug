@@ -53,6 +53,8 @@ void bind_imgui(py::module_& m_imgui) {
 		)
 		.def("removeSection", &osgx::imgui::Panel::removeSection, "label"_a)
 		.def("clearSections", &osgx::imgui::Panel::clearSections)
+		.def("setSectionOpen", &osgx::imgui::Panel::setSectionOpen, "label"_a, "open"_a)
+		.def("clearSectionOpen", &osgx::imgui::Panel::clearSectionOpen, "label"_a)
 		.def(
 			"addStatsSection",
 			&osgx::imgui::Panel::addStatsSection,
@@ -110,6 +112,8 @@ void bind_imgui(py::module_& m_imgui) {
 		)
 		.def("removeSection", &osgx::imgui::Widget::removeSection, "label"_a)
 		.def("clearSections", &osgx::imgui::Widget::clearSections)
+		.def("setSectionOpen", &osgx::imgui::Widget::setSectionOpen, "label"_a, "open"_a)
+		.def("clearSectionOpen", &osgx::imgui::Widget::clearSectionOpen, "label"_a)
 		// Widget no longer holds a Viewer/View reference of its own (see the C++
 		// class comment), so these now take one explicitly instead of reusing
 		// whatever Widget was constructed with.

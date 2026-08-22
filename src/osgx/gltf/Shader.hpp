@@ -1,5 +1,6 @@
 #pragma once
 
+#include "osgx/PBR.hpp"
 #include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
@@ -22,7 +23,11 @@ inline constexpr char TANGENT_ATTRIBUTE_NAME[] = "osg_Tangent";
 inline constexpr char JOINT_INDICES_ATTRIBUTE_NAME[] = "osgx_gltf_JointIndices";
 inline constexpr char JOINT_WEIGHTS_ATTRIBUTE_NAME[] = "osgx_gltf_JointWeights";
 
-inline constexpr unsigned int MATERIAL_BINDING = 0;
+// Alias, not a separate constant -- osgx::MATERIAL_BINDING (PBR.hpp) is now the canonical value,
+// since the buffer it names (MATERIAL_INPUTS' `osgx_gltf_Material` block) has a glTF-independent
+// C++-side builder too (osgx::attachMaterialFactors()). Keeping the name here means existing code
+// under osgx::gltf::shader:: doesn't need to change, just what it points at.
+inline constexpr unsigned int MATERIAL_BINDING = osgx::MATERIAL_BINDING;
 inline constexpr unsigned int JOINT_MATRICES_BINDING = 2;
 
 // Texture units populated per primitive by the loader.

@@ -16,6 +16,7 @@ OSGX_ENABLE_WARNINGS
 #include <backends/imgui_impl_opengl3.h>
 #include <cstring>
 #include <tuple>
+#include <unordered_map>
 #endif
 
 namespace osgx {
@@ -245,6 +246,22 @@ public:
 		_sections.clear();
 	}
 
+	// Forces a section's CollapsingHeader open/closed every frame (ImGui::SetNextItemOpen,
+	// ImGuiCond_Always), overriding both the user's own manual toggling and the one-time
+	// SectionOptions::defaultOpen seed -- SectionOptions::defaultOpen only ever applies the
+	// FIRST time ImGui sees a given label's ID, so it can't express "reopen this section
+	// whenever the app selects it again" on its own. Meant for exactly that app-driven case
+	// (e.g. a gallery that expands the section for whatever item was just clicked); not a
+	// general "set it once" API. A label with no override here falls back to normal
+	// user-toggleable behavior via defaultOpen, same as before this existed.
+	void setSectionOpen(const std::string& label, bool open) {
+		_forcedOpen[label] = open;
+	}
+
+	void clearSectionOpen(const std::string& label) {
+		_forcedOpen.erase(label);
+	}
+
 	void addProfilerSection(osgViewer::View& view, osg::Node* sceneRoot, bool defaultOpen=false, size_t printEvery=0) {
 		addSection("Profiler", ProfilerSection(view, sceneRoot, printEvery), {
 			.expand = true, .defaultOpen = defaultOpen
@@ -273,6 +290,7 @@ private:
 	};
 
 	std::vector<Section> _sections;
+	std::unordered_map<std::string, bool> _forcedOpen;
 };
 
 // Owns the ImGui lifecycle for one viewer window.
@@ -311,6 +329,8 @@ public:
 	void addSection(std::string label, std::function<void(osg::RenderInfo&)> fn, SectionOptions options={}) { _panel.addSection(std::move(label), std::move(fn), options); }
 	void removeSection(const std::string& label) { _panel.removeSection(label); }
 	void clearSections() { _panel.clearSections(); }
+	void setSectionOpen(const std::string& label, bool open) { _panel.setSectionOpen(label, open); }
+	void clearSectionOpen(const std::string& label) { _panel.clearSectionOpen(label); }
 	void addProfilerSection(osgViewer::View& view, osg::Node* root, bool defaultOpen=false, size_t printEvery=0) { _panel.addProfilerSection(view, root, defaultOpen, printEvery); }
 	void addStatsSection(osgViewer::Viewer& viewer, bool defaultOpen=false) { _panel.addStatsSection(viewer, defaultOpen); }
 	void addTextureSection(osgViewer::View& view, osg::Node* root, bool defaultOpen=false) { _panel.addTextureSection(view, root, defaultOpen); }

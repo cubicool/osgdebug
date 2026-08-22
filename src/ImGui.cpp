@@ -565,6 +565,10 @@ void Panel::draw(osg::RenderInfo& ri) {
 	));
 
 	for(auto& section : _sections) {
+		const auto forced = _forcedOpen.find(section.label);
+
+		if(forced != _forcedOpen.end()) ImGui::SetNextItemOpen(forced->second, ImGuiCond_Always);
+
 		const bool open = ImGui::CollapsingHeader(
 			section.label.c_str(),
 			section.options.defaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None

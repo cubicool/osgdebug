@@ -1,4 +1,3 @@
-#include "osgx/Array.hpp"
 #include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS
@@ -15,8 +14,6 @@ OSGX_ENABLE_WARNINGS
 OSGX_DISABLE_WARNINGS
 
 #include <osg/BlendFunc>
-#include <osg/BufferIndexBinding>
-#include <osg/BufferObject>
 #include <osg/Depth>
 #include <osg/Math>
 #include <osg/Uniform>
@@ -26,6 +23,7 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include "osgx/gltf/Shader.hpp"
+#include "osgx/PBR.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -452,48 +450,26 @@ void MaterialBuilder::applyMaterial(
 	// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
 	// with an unrelated shader's own material uniforms.
 	//
-	// std430 layout (must match the GLSL `layout(std430, binding = N) buffer
-	// osgx_gltf_Material { ... }` block exactly):
-	//
-	// vec4 baseColorFactor offset 0 (16 bytes)
-	// float roughnessFactor offset 16
-	// float metallicFactor offset 20
-	// float hasBaseColorMap offset 24
-	// float hasMetallicRoughnessMap offset 28
-	// float hasOcclusion offset 32
-	// float hasNormalMap offset 36
-	// (2 floats padding to round the block up to a multiple of 16) offset 40, 44
-	//
 	// haveOcclusion/haveMetallicRoughnessMap/haveCoreBaseColor/haveNormalMap are gates so
 	// a factor-only material (no texture at all - e.g. Fox's roughnessFactor=0.58 with
 	// no metallicRoughnessTexture) doesn't get its authored factor silently discarded by
 	// an unconditional texture() read of an unbound unit.
-	auto materialData = osgx::make_ref<osgx::FloatArray>(
-		baseColorFactor.x(),
-		baseColorFactor.y(),
-		baseColorFactor.z(),
-		baseColorFactor.w(),
-		static_cast<float>(pbr.roughnessFactor),
-		static_cast<float>(pbr.metallicFactor),
-		haveCoreBaseColor ? 1.0f : 0.0f,
-		haveMetallicRoughnessMap ? 1.0f : 0.0f,
-		haveOcclusion ? 1.0f : 0.0f,
-		haveNormalMap ? 1.0f : 0.0f,
-		0.0f,
-		0.0f
-	);
-
-	materialData->setBufferObject(new osg::ShaderStorageBufferObject());
-
-	geom->getOrCreateStateSet()->setAttributeAndModes(
-		new osg::ShaderStorageBufferBinding(
-			osgx::gltf::shader::MATERIAL_BINDING,
-			materialData,
-			0,
-			static_cast<GLsizeiptr>(materialData->getTotalDataSize())
+	//
+	// The std430 buffer layout/binding this builds is osgx::attachMaterialFactors()'s job now
+	// (PBR.hpp/PBR.cpp) -- generic, not glTF-specific, so any non-glTF geometry feeding the same
+	// deferred G-buffer pipeline builds this exact buffer the same way instead of hand-duplicating
+	// the field layout (see examples/osgx-gbuffer-blueprint.cpp's buildShapeNode()).
+	osgx::attachMaterialFactors(*geom->getOrCreateStateSet(), osgx::MaterialFactors{
+		.baseColor = osg::Vec4(
+			baseColorFactor.x(), baseColorFactor.y(), baseColorFactor.z(), baseColorFactor.w()
 		),
-		osg::StateAttribute::ON
-	);
+		.roughness = static_cast<float>(pbr.roughnessFactor),
+		.metallic = static_cast<float>(pbr.metallicFactor),
+		.hasBaseColorMap = haveCoreBaseColor,
+		.hasMetallicRoughnessMap = haveMetallicRoughnessMap,
+		.hasOcclusion = haveOcclusion,
+		.hasNormalMap = haveNormalMap
+	});
 
 
 	// Alpha coverage is a core glTF material property, but this loader deliberately

@@ -1,3 +1,4 @@
+#include "osgx/Array.hpp"
 #include "osgx/PBR.hpp"
 
 OSGX_DISABLE_WARNINGS
@@ -15,6 +16,34 @@ namespace osgx {
 
 std::string snippets() {
 	return std::string(D_GGX) + G_SCHLICK + G_SMITH + F_SCHLICK + F_SCHLICK_ROUGHNESS;
+}
+
+osg::ref_ptr<osg::FloatArray> attachMaterialFactors(
+	osg::StateSet& stateSet,
+	const MaterialFactors& factors
+) {
+	// Field order/padding must match MATERIAL_INPUTS' `osgx_gltf_Material` std430 block
+	// (Shader.hpp) exactly -- see MaterialFactors' own comment (PBR.hpp).
+	auto buffer = osgx::make_ref<osgx::FloatArray>(
+		factors.baseColor.r(), factors.baseColor.g(), factors.baseColor.b(), factors.baseColor.a(),
+		factors.roughness, factors.metallic,
+		factors.hasBaseColorMap ? 1.0f : 0.0f,
+		factors.hasMetallicRoughnessMap ? 1.0f : 0.0f,
+		factors.hasOcclusion ? 1.0f : 0.0f,
+		factors.hasNormalMap ? 1.0f : 0.0f,
+		0.0f, 0.0f
+	);
+
+	buffer->setBufferObject(new osg::ShaderStorageBufferObject());
+
+	stateSet.setAttributeAndModes(
+		new osg::ShaderStorageBufferBinding(
+			MATERIAL_BINDING, buffer, 0, static_cast<GLsizeiptr>(buffer->getTotalDataSize())
+		),
+		osg::StateAttribute::ON
+	);
+
+	return buffer;
 }
 
 void OrbitLightRig::operator()(osg::Node* node, osg::NodeVisitor* nv) {

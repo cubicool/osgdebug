@@ -37,6 +37,31 @@ void bind_pbr(py::module_& m_pbr) {
 	m_pbr.attr("TONEMAP_PBR_NEUTRAL") = osgx::TONEMAP_PBR_NEUTRAL;
 	m_pbr.attr("TONEMAP_DECL") = osgx::TONEMAP_DECL;
 	m_pbr.attr("TONEMAP_HOOK_DEFAULT") = osgx::TONEMAP_HOOK_DEFAULT;
+	m_pbr.attr("MATERIAL_BINDING") = osgx::MATERIAL_BINDING;
+
+	py::class_<osgx::MaterialFactors>(m_pbr, "MaterialFactors")
+		.def(py::init<>())
+		.def_readwrite("baseColor", &osgx::MaterialFactors::baseColor)
+		.def_readwrite("roughness", &osgx::MaterialFactors::roughness)
+		.def_readwrite("metallic", &osgx::MaterialFactors::metallic)
+		.def_readwrite("hasBaseColorMap", &osgx::MaterialFactors::hasBaseColorMap)
+		.def_readwrite(
+			"hasMetallicRoughnessMap", &osgx::MaterialFactors::hasMetallicRoughnessMap
+		)
+		.def_readwrite("hasOcclusion", &osgx::MaterialFactors::hasOcclusion)
+		.def_readwrite("hasNormalMap", &osgx::MaterialFactors::hasNormalMap)
+	;
+
+	m_pbr.def(
+		"attachMaterialFactors",
+		&osgx::attachMaterialFactors,
+		"stateSet"_a,
+		"factors"_a,
+		"Build and attach the MATERIAL_INPUTS std430 factor buffer used by the deferred glTF "
+		"PBR pipeline. Texture maps, when their corresponding has*Map flag is true, remain the "
+		"caller's responsibility to bind at their conventional texture units. Returns the live "
+		"osg.FloatArray backing the binding."
+	);
 
 	m_pbr.def("snippets", &osgx::snippets);
 

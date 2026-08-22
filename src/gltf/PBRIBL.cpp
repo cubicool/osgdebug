@@ -1096,19 +1096,11 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 
 	prog->setName("osgx_gltf_PBRIBLLightingPass");
 	prog->addShader(new osg::Shader(osg::Shader::VERTEX, osgx::FULLSCREEN_VERT));
-	prog->addShader(new osg::Shader(
-		osg::Shader::FRAGMENT,
-		resolveShaderLibs(
-			options.shadowMap
-				? osgx::DIRECT_LIGHTING_HOOK_SHADOWED
-				: osgx::DIRECT_LIGHTING_HOOK_DEFAULT
-		)
-	));
 
-	// EXACTLY ONE definition each of osgx_Tonemap() and main() (the DeferredLighting slot),
-	// always -- never zero, never two. applyHooks() (Shader.hpp) enforces this: it always
-	// attaches one shader per slot below, the caller's options.hooks override if present,
-	// otherwise the built-in.
+	// EXACTLY ONE definition each of osgx_DirectLighting(), osgx_Tonemap(), and main() (the
+	// DeferredLighting slot), always -- never zero, never two. applyHooks() (Shader.hpp) enforces
+	// this: it always attaches one shader per slot below, the caller's options.hooks override if
+	// present, otherwise the built-in.
 	//
 	// DeferredLighting's built-in default IS this pass's own main() (detail::
 	// LIGHTING_FRAGMENT_SHADER_SRC) -- an override REPLACES the whole lighting orchestration, not
@@ -1117,6 +1109,14 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 	// read the G-buffer via osgx_GetGBuffer() (#pragma osgx::gltf GET_GBUFFER) instead. See
 	// Shader.hpp's own Hook::DeferredLighting comment for why this is pass-specific rather than a
 	// generically-named slot.
+	//
+	// DirectLighting: was attached unconditionally here, OUTSIDE applyHooks() entirely, until this
+	// collided with a real DeferredLighting override that also wanted the same low-level BRDF
+	// primitives (D_GGX/G_Schlick/G_Smith/F_Schlick/DirectSpecular/DirectDiffuse/DirectLight) for
+	// its own use -- DIRECT_LIGHTING_HOOK_DEFAULT/_SHADOWED pull those in via their own `#pragma
+	// osgx::pbr` to implement osgx_DirectLighting() itself, so two shader objects ended up defining
+	// the same GLSL functions (a link error). Now a real slot -- see Hook::DirectLighting's own
+	// comment (Shader.hpp) for the full incident.
 	//
 	// Tonemap: never zero because OSGX_PBRIBL_NO_TONEMAP strips the CALL at render time, but that
 	// define is absent during OSG's realize-time GLObjectsVisitor pre-compile, which would then
@@ -1130,6 +1130,14 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 		{osgx::Hook::DeferredLighting, new osg::Shader(
 			osg::Shader::FRAGMENT,
 			resolveShaderLibs(detail::LIGHTING_FRAGMENT_SHADER_SRC)
+		)},
+		{osgx::Hook::DirectLighting, new osg::Shader(
+			osg::Shader::FRAGMENT,
+			resolveShaderLibs(
+				options.shadowMap
+					? osgx::DIRECT_LIGHTING_HOOK_SHADOWED
+					: osgx::DIRECT_LIGHTING_HOOK_DEFAULT
+			)
 		)},
 		{osgx::Hook::Tonemap, new osg::Shader(
 			osg::Shader::FRAGMENT,

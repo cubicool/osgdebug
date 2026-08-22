@@ -139,13 +139,54 @@ struct PickReadback: public virtual osg::Object {
 	void updateMouse(int x, int y);
 	void reportClick();
 
+	// Forces the tracked pick state back to "nothing hovered" (id 0) -- both lastID() and the
+	// internal onPick-hover dedup state. Meant for invalidating from OUTSIDE the pick camera's
+	// own knowledge: the pick camera/sub-frustum only ever updates on a MOVE event, so if the
+	// mouse leaves the window entirely (no GUIEventAdapter event fires for that at all -- see
+	// osgx::platform::isCursorInWindow()'s own comment), the last-hovered ID stays reported as
+	// hovered forever, with the cursor nowhere near the window.
+	//
+	// PickCameraSync already calls this automatically every frame the cursor is outside the
+	// window (when built with OSGX_PLATFORM) -- nothing else needs to call it in the common
+	// case. Public for callers driving picking without a PickCameraSync, or wanting to
+	// invalidate for an unrelated reason (e.g. picking should pause while some other UI has
+	// mouse capture). PickHoverCallback's own next poll of lastID() fires onLeave naturally
+	// after this, exactly as if the pick camera itself had detected the transition. A no-op if
+	// nothing was hovered.
+	void invalidate() {
+		_lastID.store(0, std::memory_order_release);
+		_prevID = 0;
+	}
+
 	int mouseX() const { return _x.load(std::memory_order_relaxed); }
 	int mouseY() const { return _y.load(std::memory_order_relaxed); }
 
-	// PickCameraSync refreshes this from the live viewer-camera viewport every
-	// update traversal. Readbacks that convert window coordinates to a reduced
-	// RTT target override it; 1x1 continuous pickers need no extra state.
+	// Set by PickHandler from GUIEventAdapter::getHandled() -- true while some earlier handler
+	// (e.g. osgx::imgui::Widget) already claimed the current mouse event, meaning mouseX()/
+	// mouseY() are frozen at whatever they were the last time a REAL 3D-viewport event updated
+	// them (see PickHandler::handle()'s own comment for why they're frozen rather than tracking
+	// the cursor's true, now-over-some-other-UI position). A one-shot invalidate() at the moment
+	// this becomes true isn't enough on its own: PickCameraSync's sub-frustum keeps re-aiming at
+	// that same frozen-but-still-valid position every frame regardless of events, so the
+	// continuous readback just re-derives the same hover a frame later. PickCameraSync checks
+	// this every update traversal and calls invalidate() continuously while set, the same way it
+	// already does for "cursor left the window" (isCursorInWindow()) -- see its own comment.
+	void setSuspended(bool suspended) const { _suspended.store(suspended, std::memory_order_relaxed); }
+	bool isSuspended() const { return _suspended.load(std::memory_order_relaxed); }
+
+	// PickCameraSync refreshes these from the live viewer-camera viewport every update
+	// traversal. Readbacks that convert window coordinates to a reduced RTT target override
+	// them; 1x1 continuous pickers need no extra state.
+	//
+	// setWindowOrigin exists because mouseX()/mouseY() (via requestPick()/updateMouse(), fed
+	// by PickHandler from raw GUIEventAdapter coordinates) are WINDOW-absolute, but every pick
+	// target (the pick camera's own viewport, a reduced RTT image, ...) is sized and addressed
+	// relative to the MAIN viewer camera's viewport -- which is only the whole window when that
+	// viewport's origin is (0, 0). An app that gives part of the window to something else (an
+	// ImGui dock, a split view, ...) and confines the 3D camera's own viewport to the rest needs
+	// this correction or every pick target is silently offset by exactly that viewport's origin.
 	virtual void setWindowSize(int, int) {}
+	virtual void setWindowOrigin(int, int) {}
 	uint32_t lastID() const { return _lastID.load(std::memory_order_acquire); }
 
 protected:
@@ -154,6 +195,7 @@ protected:
 
 	mutable std::atomic<int> _x{0}, _y{0};
 	mutable std::atomic<bool> _requested{false};
+	mutable std::atomic<bool> _suspended{false};
 	mutable std::atomic<uint32_t> _lastID{0};
 	mutable uint32_t _prevID{0};
 };
@@ -190,12 +232,18 @@ public:
 		_winH = height;
 	}
 
+	void setWindowOrigin(int x, int y) override {
+		_winX = x;
+		_winY = y;
+	}
+
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 
 private:
 	int _pickSize;
 	PickRule _rule;
 	int _winW, _winH;
+	int _winX{0}, _winY{0};
 	Mode _mode;
 	osg::ref_ptr<osg::Image> _image;
 };
@@ -236,9 +284,17 @@ private:
 // update traversal. Install directly on the pick camera via setUpdateCallback(); chain
 // other pick callbacks (e.g. PickReadbackSync) via setNestedCallback().
 //
+// When built with OSGX_PLATFORM: also transparently invalidates rb every frame the cursor is
+// outside the window (platform::isCursorInWindow()) -- see PickReadback::invalidate()'s own
+// comment for why that's needed at all. No caller opt-in; a safe no-op on a non-X11
+// GraphicsContext or a non-OSGX_PLATFORM build.
+//
 // pick1x1=true: also builds a sub-frustum projection centered on the cursor each frame
-// (gluPickMatrix equivalent). The live viewer-camera viewport supplies its
-// dimensions, so the cursor projection stays correct after window resize.
+// (gluPickMatrix equivalent). The live viewer-camera viewport supplies its dimensions AND
+// origin (via rb->setWindowSize()/setWindowOrigin()), so the cursor projection stays correct
+// after a window resize AND when that viewport doesn't start at (0, 0) -- e.g. an app that
+// confines the 3D camera to part of the window (a docked UI panel taking the rest) needs the
+// origin correction or picking is silently offset by exactly that viewport's own (x, y).
 // Requires rb for the current mouse position.
 class PickCameraSync: public osg::NodeCallback {
 public:
