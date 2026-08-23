@@ -45,11 +45,14 @@ tg3_stream_action tickSection(
 	std::uint32_t total,
 	const char* section
 ) {
+	std::uint64_t current = static_cast<std::uint64_t>(idx) + 1;
+
 	(*ctx.progress)(Progress{
 		Stage::Parsing,
-		static_cast<std::uint64_t>(idx) + 1,
+		current,
 		total,
-		section
+		section,
+		osgx::gltf::Reader::computeOverall(Stage::Parsing, current, total, section)
 	});
 
 	return TG3_STREAM_CONTINUE;

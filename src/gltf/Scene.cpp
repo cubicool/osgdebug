@@ -123,7 +123,8 @@ private:
 			Reader::Stage::BuildingNodes,
 			_nodesBuilt,
 			_model.nodes_count,
-			{}
+			{},
+			Reader::computeOverall(Reader::Stage::BuildingNodes, _nodesBuilt, _model.nodes_count, {})
 		});
 
 		osg::MatrixTransform* transform = new osg::MatrixTransform();

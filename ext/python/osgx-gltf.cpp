@@ -641,23 +641,63 @@ std::string inspectGLTFJson(const std::string& path, bool loadImages, int indent
 	));
 }
 
-// Async glTF load: releases the GIL and calls osgx::gltf::Reader directly (bypassing the generic
-// osgDB::readNodeFile plugin dispatch, which has no hook for a progress callback), so a
-// caller can run this via asyncio.to_thread(...) while the viewer keeps rendering. Progress
-// (and the final node) are delivered through the same loop/queue call_soon_threadsafe bridge
-// as pyosg_async_task_example -- see pybind11x::put_nowait.
+// Owns both the pyx::PollableProgress<Stage> a background thread writes into and the poller's
+// own "last seen generation" cursor. Kept as one Python-visible object (rather than exposing
+// PollableProgress directly) so a caller never has to thread a generation variable through
+// itself -- construct one, hand it to readNodeFile(), and call .poll() from a loop with a real
+// sleep between checks (see pyosg_async.run_with_progress()). The call itself is free of GIL
+// contention (see pybind11x.hpp's PollableProgress docs), but the loop calling it still needs a
+// real cadence -- a zero-delay busy-loop caused a genuine, measured slowdown; see
+// run_with_progress()'s docstring.
+struct AsyncProgress {
+	pyx::PollableProgress<osgx::gltf::Reader::Stage> progress;
+	std::uint64_t seen = 0;
+
+	// Returns None when nothing changed since the last poll() call, otherwise
+	// (stage_name, current, total, section, overall) -- the same shape readNodeFileAsync used to
+	// push through a queue, just pulled instead of pushed. `overall` is a monotonic 0.0-1.0
+	// estimate of progress across the whole load (see Reader::computeOverall()), reported
+	// alongside the per-section (current, total) detail rather than in place of it.
+	py::object poll() {
+		osgx::gltf::Reader::Stage stage;
+		std::uint64_t current = 0, total = 0;
+		const char* section = nullptr;
+		double overall = 0.0;
+
+		if(!progress.poll(seen, stage, current, total, section, overall)) return py::none();
+
+		return py::make_tuple(
+			std::string(osgx::gltf::Reader::stageName(stage)),
+			current,
+			total,
+			std::string(section ? section : ""),
+			overall
+		);
+	}
+};
+
+// glTF load off the GIL: releases the GIL and calls osgx::gltf::Reader directly (bypassing the
+// generic osgDB::readNodeFile plugin dispatch, which has no hook for a progress callback). This
+// function is a plain blocking call -- run it via asyncio.to_thread(...) from Python to get it
+// off the render thread; see examples/pyosg_async.py's run_with_progress() for the awaiting
+// side. Progress is written into `progress` (an AsyncProgress) purely through atomics -- this
+// function never touches Python once it starts, not even to report progress, which is what
+// makes it safe to poll from the main thread as tightly as that thread likes without
+// contending with it for the GIL (see aipython/25-async-loading.md).
+//
+// The final osg::ref_ptr<osg::Node> is returned normally, not pushed anywhere -- when called via
+// asyncio.to_thread(...), asyncio's own machinery delivers it back to the awaiting coroutine
+// through its Future, touching the GIL exactly once, at completion. That single unavoidable
+// touch was never the problem; the repeated per-tick progress touches were.
 //
 // Cancellation via `stop` is cooperative and can only take effect between osgx::gltf::Reader's own
 // checkpoints (see osgx::gltf::Reader::ProgressCallback) -- it cannot interrupt tinygltf's own file
 // parse/decode, which is a single opaque blocking call. If a stop was requested by the time
-// read() returns, the result is discarded (not attached to the scene) and "complete" is
-// delivered with None instead of the loaded node.
-osg::ref_ptr<osg::Node> readNodeFileAsync(
+// read() returns, nullptr is returned instead of the loaded node.
+osg::ref_ptr<osg::Node> readNodeFile(
 	std::string location,
 	pyx::StopEvent* stop,
-	py::object loop,
-	py::object queue,
-	size_t job_id
+	AsyncProgress* progress
 ) {
 	py::gil_scoped_release release;
 
@@ -676,32 +716,17 @@ osg::ref_ptr<osg::Node> readNodeFileAsync(
 
 	reader.setTextureCache(&s_asyncTextureCache);
 
-	osgx::gltf::Reader::ProgressCallback onProgress = [&](const osgx::gltf::Reader::Progress& progress) {
-		pyx::put_nowait(
-			loop,
-			queue,
-			"progress",
-			job_id,
-			std::string(osgx::gltf::Reader::stageName(progress.stage)),
-			progress.current,
-			progress.total,
-			std::string(progress.section)
-		);
+	osgx::gltf::Reader::ProgressCallback onProgress = [&](const osgx::gltf::Reader::Progress& p) {
+		if(progress) {
+			progress->progress.set(p.stage, p.current, p.total, p.section.data(), p.overall);
+		}
 	};
 
 	auto result = reader.read(location, isBinary, nullptr, onProgress);
 
-	if(stop && stop->stop.load(std::memory_order_relaxed)) {
-		pyx::put_nowait(loop, queue, "complete", job_id, py::none());
+	if(stop && stop->stop.load(std::memory_order_relaxed)) return nullptr;
 
-		return nullptr;
-	}
-
-	osg::ref_ptr<osg::Node> node = result.validNode() ? result.getNode() : nullptr;
-
-	pyx::put_nowait(loop, queue, "complete", job_id, node);
-
-	return node;
+	return result.validNode() ? result.getNode() : nullptr;
 }
 
 }
@@ -970,18 +995,36 @@ void bind_gltf(py::module_& m_gltf) {
 		.def("restart", &osgx::gltf::SimplePlayer::restart)
 	;
 
+	py::class_<AsyncProgress>(m_gltf, "AsyncProgress")
+		.def(py::init<>())
+		.def(
+			"poll",
+			&AsyncProgress::poll,
+			"Returns None if nothing has changed since the last poll() call, otherwise "
+			"(stage, current, total, section, overall). current/total/section are real, "
+			"never-fabricated detail within the current section; overall is a monotonic 0.0-1.0 "
+			"estimate of progress across the whole load, reported alongside that detail rather "
+			"than in place of it -- see osgx::gltf::Reader::computeOverall() for how it's "
+			"weighted. The call itself is cheap (no GIL contention, since readNodeFile() never "
+			"touches Python to report progress) -- but still call it from a loop with a real "
+			"sleep between checks (e.g. pyosg_async.run_with_progress()), never from a "
+			"zero-delay busy-loop; see that function's docstring for the real slowdown a "
+			"busy-loop caused."
+		)
+	;
+
 	m_gltf
 		.def(
-			"readNodeFileAsync",
-			&readNodeFileAsync,
+			"readNodeFile",
+			&readNodeFile,
 			"location"_a,
 			"stop_event"_a,
-			"loop"_a,
-			"queue"_a,
-			"job_id"_a,
-			"Load a glTF/GLB file off the GIL, reporting (stage, current, total, section) progress and "
-			"the final node through loop/queue via call_soon_threadsafe. Call via "
-			"asyncio.to_thread(...); see examples/pyosg-async.py for the queue-draining pattern."
+			"progress"_a,
+			"Load a glTF/GLB file off the GIL. A plain blocking call -- run it via "
+			"asyncio.to_thread(...) from Python; see examples/pyosg_async.py's "
+			"run_with_progress() and examples/pyosg-async-gltf.py for the awaiting side. "
+			"Progress is written into `progress` (an AsyncProgress) purely through atomics, "
+			"polled rather than pushed -- this function never touches Python once it starts."
 		)
 	;
 
