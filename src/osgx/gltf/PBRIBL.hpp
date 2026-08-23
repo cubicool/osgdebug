@@ -26,9 +26,12 @@ OSGX_ENABLE_WARNINGS
 #include "osgx/Shader.hpp"
 #include "osgx/GBuffer.hpp"
 
-// Forward declaration only -- keeps tinygltf's header out of this public header's include list.
-// Only PBRIBL.cpp, which implements decodeIBLEnvironments(), needs the real definition.
-namespace tinygltf { class Value; }
+// Forward declaration only -- keeps tinygltf_json_c.h out of this public header's include list.
+// Only PBRIBL.cpp, which implements decodeIBLEnvironments(), needs the real definition. This is
+// the standalone JSON backend (tinygltf_json_c.h), not the glTF model library (tiny_gltf_v3.h) --
+// the osgx_pbribl manifest this decodes was never real glTF scene data, just a JSON file shaped
+// enough like one to reuse a JSON-with-extensions parser.
+struct tg3json_value;
 
 namespace osgx::gltf::pbribl {
 
@@ -148,10 +151,13 @@ struct IBLEnvironmentManifest {
 };
 
 // Decodes every `environments[]` entry out of an `osgx_pbribl` extension block. `extensionValue`
-// is whatever `tinygltf::Model::extensions.at("osgx_pbribl")` returns -- tinygltf parses the root
-// `extensions` block through the same generic path whether it came from a minimal standalone
-// manifest document or a real asset's own embedded extension, so this one function covers both.
-std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tinygltf::Value& extensionValue);
+// is whatever `tg3json_object_get(root, "osgx_pbribl")` returns when parsing a standalone
+// manifest document (PBRIBLEnvironment::load(manifestPath)) via tinygltf_json_c.h -- the only
+// caller today. Note this is a different value type from a real glTF asset's own embedded
+// extensions (tg3_value, from tiny_gltf_v3.h's model parser, see osgx::gltf::detail::tg3_value
+// helpers in tg3_util.hpp) -- there's currently no code path that decodes an osgx_pbribl block
+// embedded in a real asset rather than a standalone manifest file.
+std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tg3json_value* extensionValue);
 
 struct PBRIBLScene {
 	osg::ref_ptr<osg::Node> node;

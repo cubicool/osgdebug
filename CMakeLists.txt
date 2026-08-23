@@ -540,14 +540,6 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 		target_compile_definitions(osgx_python_bindings PUBLIC OSGX_GLTF)
 		target_include_directories(osgx_python_bindings PRIVATE "${PROJECT_SOURCE_DIR}/ext/tinygltf")
 		target_link_libraries(osgx_python_bindings PRIVATE osgx::gltf_pbribl)
-
-		# tinygltf's bundled json.hpp uses the deprecated std::is_pod trait, same as everywhere
-		# else it's included in this repo.
-		if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-			set_source_files_properties("ext/python/osgx-gltf.cpp" PROPERTIES
-				COMPILE_OPTIONS "-Wno-deprecated-declarations"
-			)
-		endif()
 	else()
 		message(STATUS "OSGX_BUILD_GLTF is OFF; osgx.gltf Python bindings will be unavailable")
 	endif()

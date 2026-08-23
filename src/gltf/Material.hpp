@@ -17,14 +17,14 @@ OSGX_ENABLE_WARNINGS
 #include <string>
 
 namespace osgDB { class Options; }
-namespace tinygltf { class Model; }
+struct tg3_model;
 
 namespace osgx::gltf::detail {
 
 class MaterialBuilder {
 public:
 	MaterialBuilder(
-		const tinygltf::Model& model,
+		const tg3_model& model,
 		const std::string& referrer,
 		const osgDB::Options* readOptions,
 		TextureLoader& textureLoader
@@ -43,7 +43,7 @@ private:
 		const osgDB::Options* _readOptions;
 	};
 
-	const tinygltf::Model& _model;
+	const tg3_model& _model;
 	Environment _env;
 	TextureLoader& _textureLoader;
 

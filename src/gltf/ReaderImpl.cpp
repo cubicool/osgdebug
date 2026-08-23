@@ -2,15 +2,14 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
 #include "ReaderImpl.hpp"
 #include "Log.hpp"
 #include "Scene.hpp"
+#include "tg3_util.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -20,107 +19,108 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace {
 
+using Progress = osgx::gltf::Reader::Progress;
 using ProgressCallback = osgx::gltf::Reader::ProgressCallback;
 using Stage = osgx::gltf::Reader::Stage;
 
-struct ImageLoadContext {
-	const ProgressCallback* _progress = nullptr;
-	size_t _imagesLoaded = 0;
-	size_t _totalImages = 0;
+// Per-section progress: tg3_stream_callbacks fires one of these per item, only after that
+// section's array is fully parsed (TG3__STREAM_CB in tiny_gltf_v3.c parses the whole section,
+// THEN loops the callback over it) -- so ctx.model->X_count is already the real, final count
+// by the time the first item of that section ticks, never a fabricated denominator. Covers the
+// sections most worth showing progress for; buffers/bufferViews/accessors/samplers/cameras/
+// scenes are typically tiny or uninteresting to report individually.
+struct ParseProgressContext {
+	const ProgressCallback* progress;
+	const tg3_model* model;
 };
 
-std::string expandFilePath(const std::string& filepath, void* userData) {
-	const std::string& referrer = *static_cast<const std::string*>(userData);
-
-	std::string path = osgDB::getRealPath(
-		osgDB::isAbsolutePath(filepath) ? filepath :
-		osgDB::concatPaths(osgDB::getFilePath(referrer), filepath)
-	);
-
-	return tinygltf::ExpandFilePath(path, userData);
-}
-
-bool skipImageLoad(
-	tinygltf::Image*,
-	const int,
-	std::string*,
-	std::string*,
-	int,
-	int,
-	const unsigned char*,
-	int,
-	void*
+tg3_stream_action tickSection(
+	const ParseProgressContext& ctx,
+	int32_t idx,
+	std::uint32_t total,
+	const char* section
 ) {
-	return true;
+	(*ctx.progress)(Progress{
+		Stage::Parsing,
+		static_cast<std::uint64_t>(idx) + 1,
+		total,
+		section
+	});
+
+	return TG3_STREAM_CONTINUE;
 }
 
-bool loadImage(
-	tinygltf::Image* image,
-	const int imageIdx,
-	std::string* err,
-	std::string* warn,
-	int reqWidth,
-	int reqHeight,
-	const unsigned char* bytes,
-	int size,
-	void* userData
-) {
-	auto* context = static_cast<ImageLoadContext*>(userData);
+tg3_stream_action onMesh(const tg3_mesh*, int32_t idx, void* ud) {
+	auto* ctx = static_cast<ParseProgressContext*>(ud);
 
-	// Pass nullptr as LoadImageData's own user_data. A non-null value is interpreted
-	// as tinygltf::LoadImageDataOption, not our progress context.
-	bool ok = tinygltf::LoadImageData(
-		image,
-		imageIdx,
-		err,
-		warn,
-		reqWidth,
-		reqHeight,
-		bytes,
-		size,
-		nullptr
-	);
-
-	if(context && context->_progress && *context->_progress) {
-		context->_imagesLoaded++;
-		(*context->_progress)(
-			Stage::LoadingTextures,
-			context->_imagesLoaded,
-			context->_totalImages
-		);
-	}
-
-	return ok;
+	return tickSection(*ctx, idx, ctx->model->meshes_count, "meshes");
 }
 
-void logAnimationBits(const tinygltf::Model& model) {
-	if(model.skins.empty() && model.animations.empty()) return;
+tg3_stream_action onNode(const tg3_node*, int32_t idx, void* ud) {
+	auto* ctx = static_cast<ParseProgressContext*>(ud);
+
+	return tickSection(*ctx, idx, ctx->model->nodes_count, "nodes");
+}
+
+tg3_stream_action onMaterial(const tg3_material*, int32_t idx, void* ud) {
+	auto* ctx = static_cast<ParseProgressContext*>(ud);
+
+	return tickSection(*ctx, idx, ctx->model->materials_count, "materials");
+}
+
+tg3_stream_action onTexture(const tg3_texture*, int32_t idx, void* ud) {
+	auto* ctx = static_cast<ParseProgressContext*>(ud);
+
+	return tickSection(*ctx, idx, ctx->model->textures_count, "textures");
+}
+
+tg3_stream_action onImage(const tg3_image*, int32_t idx, void* ud) {
+	auto* ctx = static_cast<ParseProgressContext*>(ud);
+
+	return tickSection(*ctx, idx, ctx->model->images_count, "images");
+}
+
+tg3_stream_action onAnimation(const tg3_animation*, int32_t idx, void* ud) {
+	auto* ctx = static_cast<ParseProgressContext*>(ud);
+
+	return tickSection(*ctx, idx, ctx->model->animations_count, "animations");
+}
+
+tg3_stream_action onSkin(const tg3_skin*, int32_t idx, void* ud) {
+	auto* ctx = static_cast<ParseProgressContext*>(ud);
+
+	return tickSection(*ctx, idx, ctx->model->skins_count, "skins");
+}
+
+void logAnimationBits(const tg3_model& model) {
+	if(model.skins_count == 0 && model.animations_count == 0) return;
 
 	GLTF_NOTIFY(0)
-		<< model.skins.size() << " skin(s), "
-		<< model.animations.size() << " animation(s)" << std::endl
+		<< model.skins_count << " skin(s), "
+		<< model.animations_count << " animation(s)" << std::endl
 	;
 
-	for(size_t skinIdx = 0; skinIdx < model.skins.size(); skinIdx++) {
-		const auto& skin = model.skins[skinIdx];
+	for(std::uint32_t skinIdx = 0; skinIdx < model.skins_count; skinIdx++) {
+		const tg3_skin& skin = model.skins[skinIdx];
 
 		GLTF_NOTIFY(1)
-			<< "skin[" << skinIdx << "] '" << skin.name << "'"
-			<< " joints=" << skin.joints.size()
+			<< "skin[" << skinIdx << "] '" << osgx::gltf::detail::tg3_to_string(skin.name) << "'"
+			<< " joints=" << skin.joints_count
 			<< " skeleton=" << skin.skeleton
-			<< " inverseBindMatrices=" << skin.inverseBindMatrices << std::endl
+			<< " inverseBindMatrices=" << skin.inverse_bind_matrices << std::endl
 		;
 
-		for(size_t jointIdx = 0; jointIdx < skin.joints.size(); jointIdx++) {
+		for(std::uint32_t jointIdx = 0; jointIdx < skin.joints_count; jointIdx++) {
 			int nodeIdx = skin.joints[jointIdx];
-			const char* nodeName =
-				nodeIdx >= 0 && nodeIdx < static_cast<int>(model.nodes.size())
-				? model.nodes[static_cast<size_t>(nodeIdx)].name.c_str()
-				: ""
+			std::string nodeName =
+				nodeIdx >= 0 && static_cast<std::uint32_t>(nodeIdx) < model.nodes_count
+				? osgx::gltf::detail::tg3_to_string(model.nodes[static_cast<std::uint32_t>(nodeIdx)].name)
+				: std::string()
 			;
 
 			GLTF_NOTIFY(2)
@@ -131,41 +131,45 @@ void logAnimationBits(const tinygltf::Model& model) {
 		}
 	}
 
-	for(size_t animIdx = 0; animIdx < model.animations.size(); animIdx++) {
-		const auto& animation = model.animations[animIdx];
+	for(std::uint32_t animIdx = 0; animIdx < model.animations_count; animIdx++) {
+		const tg3_animation& animation = model.animations[animIdx];
 
 		GLTF_NOTIFY(1)
-			<< "animation[" << animIdx << "] '" << animation.name << "'"
-			<< " channels=" << animation.channels.size()
-			<< " samplers=" << animation.samplers.size() << std::endl
+			<< "animation[" << animIdx << "] '"
+			<< osgx::gltf::detail::tg3_to_string(animation.name) << "'"
+			<< " channels=" << animation.channels_count
+			<< " samplers=" << animation.samplers_count << std::endl
 		;
 
-		for(size_t samplerIdx = 0; samplerIdx < animation.samplers.size(); samplerIdx++) {
-			const auto& sampler = animation.samplers[samplerIdx];
+		for(std::uint32_t samplerIdx = 0; samplerIdx < animation.samplers_count; samplerIdx++) {
+			const tg3_animation_sampler& sampler = animation.samplers[samplerIdx];
 
 			GLTF_NOTIFY(2)
 				<< "sampler[" << samplerIdx << "]"
 				<< " input=" << sampler.input
 				<< " output=" << sampler.output
-				<< " interpolation=" << sampler.interpolation << std::endl
+				<< " interpolation=" << osgx::gltf::detail::tg3_to_string(sampler.interpolation)
+				<< std::endl
 			;
 		}
 
-		for(size_t channelIdx = 0; channelIdx < animation.channels.size(); channelIdx++) {
-			const auto& channel = animation.channels[channelIdx];
-			const char* nodeName =
-				channel.target_node >= 0 &&
-				channel.target_node < static_cast<int>(model.nodes.size())
-				? model.nodes[static_cast<size_t>(channel.target_node)].name.c_str()
-				: ""
+		for(std::uint32_t channelIdx = 0; channelIdx < animation.channels_count; channelIdx++) {
+			const tg3_animation_channel& channel = animation.channels[channelIdx];
+			std::string nodeName =
+				channel.target.node >= 0 &&
+				static_cast<std::uint32_t>(channel.target.node) < model.nodes_count
+				? osgx::gltf::detail::tg3_to_string(
+					model.nodes[static_cast<std::uint32_t>(channel.target.node)].name
+				)
+				: std::string()
 			;
 
 			GLTF_NOTIFY(2)
 				<< "channel[" << channelIdx << "]"
 				<< " sampler=" << channel.sampler
-				<< " targetNode=" << channel.target_node
+				<< " targetNode=" << channel.target.node
 				<< " '" << nodeName << "'"
-				<< " path=" << channel.target_path << std::endl
+				<< " path=" << osgx::gltf::detail::tg3_to_string(channel.target.path) << std::endl
 			;
 		}
 	}
@@ -177,79 +181,66 @@ namespace osgx::gltf::detail {
 
 osgDB::ReaderWriter::ReadResult ReaderImpl::read(
 	const std::string& location,
-	bool isBinary,
+	bool /* isBinary -- tg3_parse_file auto-sniffs JSON vs GLB, no longer needed internally */,
 	const osgDB::Options* readOptions,
 	const Reader::ProgressCallback& progress
 ) const {
-	std::string err, warn;
-	tinygltf::Model model;
-	tinygltf::TinyGLTF loader;
-	ImageLoadContext imageLoadContext;
-
-	tinygltf::FsCallbacks fs;
-
-	fs.FileExists = &tinygltf::FileExists;
-	fs.ExpandFilePath = &expandFilePath;
-	fs.ReadWholeFile = &tinygltf::ReadWholeFile;
-	fs.WriteWholeFile = &tinygltf::WriteWholeFile;
-	fs.user_data = const_cast<std::string*>(&location);
-
-	loader.SetFsCallbacks(fs);
-
 	GLTF_NOTIFY(0) << "loading " << location << std::endl;
 
-	if(progress) progress(Stage::Parsing, 0, 1);
+	tinygltf3::Model model;
+	tinygltf3::ErrorStack errors;
+	ParseProgressContext progressContext{&progress, model.get()};
+	tg3_stream_callbacks stream{};
 
-	// Parse metadata without decoding images so texture progress has a real total.
-	{
-		tinygltf::Model countModel;
-		tinygltf::TinyGLTF counter;
-		std::string countErr, countWarn;
+	stream.on_mesh = &onMesh;
+	stream.on_node = &onNode;
+	stream.on_material = &onMaterial;
+	stream.on_texture = &onTexture;
+	stream.on_image = &onImage;
+	stream.on_animation = &onAnimation;
+	stream.on_skin = &onSkin;
+	stream.user_data = &progressContext;
 
-		counter.SetFsCallbacks(fs);
-		counter.SetImageLoader(&skipImageLoad, nullptr);
+	tg3_parse_options opts;
 
-		bool countOk = isBinary
-			? counter.LoadBinaryFromFile(&countModel, &countErr, &countWarn, location)
-			: counter.LoadASCIIFromFile(&countModel, &countErr, &countWarn, location)
-		;
+	tg3_parse_options_init(&opts);
 
-		imageLoadContext._totalImages = countOk ? countModel.images.size() : 0;
+	opts.stream = progress ? &stream : nullptr;
+	opts.fs.read_file = &tg3_read_file;
+	opts.fs.free_file = &tg3_free_file;
+
+	tg3_error_code rc = tinygltf3::parse_file(model, errors, location.c_str(), &opts);
+
+	for(std::uint32_t i = 0; i < errors.count(); i++) {
+		const tg3_error_entry* entry = errors.entry(i);
+		const char* message = entry->message ? entry->message : "";
+
+		if(entry->severity == TG3_SEVERITY_ERROR) {
+			OSG_WARN << location << ": " << message << std::endl;
+		}
+		else {
+			GLTF_NOTIFY(0) << location << ": " << message << std::endl;
+		}
 	}
 
-	if(progress) progress(Stage::Parsing, 1, 1);
-
-	imageLoadContext._progress = &progress;
-
-	if(progress) progress(Stage::LoadingTextures, 0, imageLoadContext._totalImages);
-
-	loader.SetImageLoader(&loadImage, &imageLoadContext);
-
-	bool ok = isBinary
-		? loader.LoadBinaryFromFile(&model, &err, &warn, location)
-		: loader.LoadASCIIFromFile(&model, &err, &warn, location)
-	;
-
-	if(!warn.empty()) OSG_WARN << "" << location << ": " << warn << std::endl;
-
-	if(!ok || !err.empty()) {
-		OSG_WARN << "failed to load " << location << ": " << err << std::endl;
+	if(rc != TG3_OK || errors.has_error()) {
+		OSG_WARN << "failed to load " << location << std::endl;
 
 		return osgDB::ReaderWriter::ReadResult::ERROR_IN_READING_FILE;
 	}
 
 	GLTF_NOTIFY(0)
-		<< model.meshes.size() << " mesh(es), "
-		<< model.accessors.size() << " accessor(s), "
-		<< model.bufferViews.size() << " bufferView(s), "
-		<< model.buffers.size() << " buffer(s), "
-		<< model.images.size() << " image(s)" << std::endl
+		<< model->meshes_count << " mesh(es), "
+		<< model->accessors_count << " accessor(s), "
+		<< model->buffer_views_count << " bufferView(s), "
+		<< model->buffers_count << " buffer(s), "
+		<< model->images_count << " image(s)" << std::endl
 	;
 
-	logAnimationBits(model);
+	logAnimationBits(*model.get());
 
 	return buildScene(
-		model,
+		*model.get(),
 		location,
 		readOptions,
 		_textureCache,

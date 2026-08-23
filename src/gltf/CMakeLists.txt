@@ -8,7 +8,7 @@ add_library(osgx_gltf STATIC
 	Scene.cpp
 	Skin.cpp
 	Texture.cpp
-	TinyGLTF.cpp
+	"${PROJECT_SOURCE_DIR}/ext/tinygltf/tiny_gltf_v3.c"
 )
 add_library(osgx::gltf ALIAS osgx_gltf)
 
@@ -23,6 +23,18 @@ target_sources(osgx_gltf PUBLIC
 set_target_properties(osgx_gltf PROPERTIES
 	EXPORT_NAME gltf
 	POSITION_INDEPENDENT_CODE ON
+	C_STANDARD 11
+	C_STANDARD_REQUIRED ON
+)
+
+# tiny_gltf_v3.c lives in ext/tinygltf (a .c file among otherwise-.cpp sources) and must be
+# compiled as C, not C++ -- CMake infers language from file extension by default, which is
+# already correct here, but this is explicit since the extension lives outside src/gltf/.
+# TINYGLTF3_ENABLE_STB_IMAGE turns on tiny_gltf_v3.c's built-in stb_image-based decoder, same
+# intent as the old STB_IMAGE_IMPLEMENTATION/STB_IMAGE_WRITE_IMPLEMENTATION defines it replaces.
+set_source_files_properties("${PROJECT_SOURCE_DIR}/ext/tinygltf/tiny_gltf_v3.c" PROPERTIES
+	LANGUAGE C
+	COMPILE_DEFINITIONS TINYGLTF3_ENABLE_STB_IMAGE
 )
 
 add_library(osgx_gltf_pbribl STATIC
@@ -40,26 +52,6 @@ set_target_properties(osgx_gltf_pbribl PROPERTIES
 	EXPORT_NAME gltf_pbribl
 	POSITION_INDEPENDENT_CODE ON
 )
-
-# tinygltf's bundled JSON header (json.hpp) uses the deprecated std::is_pod trait; isolate that
-# third-party warning to just these translation units, same treatment used before the merge.
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-	set_source_files_properties(
-		Accessor.cpp Animation.cpp Material.cpp Mesh.cpp PBRIBL.cpp Reader.cpp ReaderImpl.cpp Scene.cpp Skin.cpp Texture.cpp TinyGLTF.cpp
-		PROPERTIES
-		COMPILE_OPTIONS "-Wno-deprecated-declarations"
-	)
-	# nlohmann/json 3.5.0, bundled by this pinned tinygltf version, includes <ciso646>.
-	# GCC 15 emits a preprocessor warning for that header in C++20 mode; keep warnings-as-errors
-	# enabled for project code while isolating the third-party compatibility warning here.
-	set_property(SOURCE TinyGLTF.cpp APPEND PROPERTY COMPILE_OPTIONS "-Wno-cpp")
-	# GCC 14's stringop-overflow analysis cannot prove the bounds in stb_image's PNG parser.
-	# This is vendored third-party code, so keep -Werror for the rest of osgx and suppress only
-	# the false positive on the translation unit that includes stb_image's implementation.
-	if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-		set_property(SOURCE TinyGLTF.cpp APPEND PROPERTY COMPILE_OPTIONS "-Wno-stringop-overflow")
-	endif()
-endif()
 
 if(OSGX_INSTALL)
 	install(TARGETS osgx_gltf osgx_gltf_pbribl EXPORT osgxTargets

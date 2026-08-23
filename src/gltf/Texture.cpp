@@ -2,24 +2,27 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
 #include "Texture.hpp"
+#include "tg3_util.hpp"
 
 OSGX_DISABLE_WARNINGS
 
 #include <osg/Image>
 
+#include <osgDB/ConvertBase64>
 #include <osgDB/FileNameUtils>
 #include <osgDB/ReadFile>
+#include <osgDB/Registry>
 
 OSGX_ENABLE_WARNINGS
 
-#include <cstring>
+#include <cstdint>
+#include <sstream>
+#include <string>
 
 #ifndef GL_SRGB8
 # define GL_SRGB8 0x8C41
@@ -29,6 +32,100 @@ OSGX_ENABLE_WARNINGS
 #endif
 
 namespace osgx::gltf::detail {
+namespace {
+
+// OSG's own image ReaderWriter plugins are this plugin's one and only image-decode path, by
+// deliberate choice -- osgDB::readImageFile() already uses them for external files, and this
+// self-decodes embedded (bufferView-referenced) and base64 data-URI images the same way rather
+// than depending on tinygltf's own decoder. (tinygltf v3.0.1's decoder is unimplemented anyway --
+// confirmed by reading tg3__parse_image in tiny_gltf_v3.c, which never calls any decode callback
+// and never populates tg3_image.image -- but the choice to route everything through OSG stands
+// regardless of whether/when a future tinygltf release wires one up.)
+
+struct DataUriPayload {
+	std::string mimeType;
+	const char* data = nullptr;
+	std::size_t length = 0;
+};
+
+// Mirrors tinygltf v3's own (non-exported) data URI convention: "data:<mime>;base64,<data>".
+bool parseDataUri(const std::string& uri, DataUriPayload& out) {
+	const std::string prefix = "data:";
+
+	if(uri.compare(0, prefix.size(), prefix) != 0) return false;
+
+	std::size_t semicolon = uri.find(';', prefix.size());
+
+	if(semicolon == std::string::npos) return false;
+
+	std::size_t comma = uri.find(',', semicolon);
+
+	if(comma == std::string::npos) return false;
+
+	if(uri.compare(semicolon + 1, comma - semicolon - 1, "base64") != 0) return false;
+
+	out.mimeType = uri.substr(prefix.size(), semicolon - prefix.size());
+	out.data = uri.data() + comma + 1;
+	out.length = uri.size() - comma - 1;
+
+	return true;
+}
+
+std::string extensionForMimeType(const std::string& mimeType) {
+	if(mimeType == "image/jpeg") return "jpg";
+	if(mimeType == "image/png") return "png";
+
+	// Falls back to the substring after the last '/', close enough for osgDB::Registry to
+	// pick the right plugin by extension for less common MIME types (image/webp, image/ktx2).
+	std::size_t slash = mimeType.rfind('/');
+
+	return slash == std::string::npos ? std::string() : mimeType.substr(slash + 1);
+}
+
+osg::Image* decodeCompressedImage(
+	const unsigned char* bytes,
+	std::size_t size,
+	const std::string& extension,
+	const osgDB::Options* readOptions
+) {
+	if(extension.empty()) return nullptr;
+
+	osgDB::ReaderWriter* readerWriter =
+		osgDB::Registry::instance()->getReaderWriterForExtension(extension);
+
+	if(!readerWriter) return nullptr;
+
+	std::string data(reinterpret_cast<const char*>(bytes), size);
+	std::istringstream stream(data);
+	osg::ref_ptr<osg::Image> image;
+
+	{
+		// ReadResult holds its own internal ref_ptr<osg::Object> alongside the local `image`
+		// ref_ptr below -- two independent owners of the same refcount. Scoped so ReadResult's
+		// destructor (a normal unref(), WITH delete-on-zero) runs here, while `image` still
+		// holds a live reference keeping the count above zero. Without this block, `image`'s
+		// release() (unref_nodelete(), no delete) at the bottom leaves the object relying
+		// entirely on ReadResult's own reference to stay alive -- and ReadResult's destructor
+		// then runs during this function's unwind, deleting the object out from under the raw
+		// pointer just handed to the caller.
+		osgDB::ReaderWriter::ReadResult result = readerWriter->readImage(stream, readOptions);
+
+		if(!result.success()) return nullptr;
+
+		image = result.getImage();
+	}
+
+	// glTF's UV convention puts v=0 at the TOP of the image, opposite OpenGL's native texture
+	// row order -- a fixed, spec-wide convention (not per-image), so every glTF-in-GL loader
+	// flips unconditionally after decode. Mirrors what the external-file path (loadRawImage's
+	// osgDB::readImageFile branch) already does; this is the same requirement for bytes that
+	// happen to come from a bufferView or data URI instead of a standalone file.
+	if(image) image->flipVertical();
+
+	return image.release();
+}
+
+}
 
 osg::Texture2D* TextureCache::find(const std::string& key) const {
 	std::lock_guard<std::mutex> lock(_mutex);
@@ -46,7 +143,7 @@ void TextureCache::store(const std::string& key, osg::Texture2D* texture) {
 }
 
 TextureLoader::TextureLoader(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::string& referrer,
 	const osgDB::Options* readOptions,
 	TextureCache* cache
@@ -57,41 +154,68 @@ _readOptions(readOptions),
 _cache(cache) {}
 
 osg::Image* TextureLoader::loadRawImage(int textureIndex) const {
-	if(textureIndex < 0 || textureIndex >= static_cast<int>(_model.textures.size())) return nullptr;
+	if(textureIndex < 0 || static_cast<std::uint32_t>(textureIndex) >= _model.textures_count) {
+		return nullptr;
+	}
 
-	const tinygltf::Texture& texture = _model.textures[static_cast<std::size_t>(textureIndex)];
+	const tg3_texture& texture = _model.textures[static_cast<std::uint32_t>(textureIndex)];
 
-	if(texture.source < 0 || texture.source >= static_cast<int>(_model.images.size())) return nullptr;
+	if(texture.source < 0 || static_cast<std::uint32_t>(texture.source) >= _model.images_count) {
+		return nullptr;
+	}
 
-	const tinygltf::Image& source = _model.images[static_cast<std::size_t>(texture.source)];
+	const tg3_image& source = _model.images[static_cast<std::uint32_t>(texture.source)];
 	osg::ref_ptr<osg::Image> image;
 
-	if(!source.image.empty()) {
-		const GLenum pixelFormat = source.component == 4 ? GL_RGBA : GL_RGB;
-		const GLint internalFormat = source.component == 4
-			? static_cast<GLint>(GL_RGBA8)
-			: static_cast<GLint>(GL_RGB8)
-		;
-		auto* data = new unsigned char[source.image.size()];
+	// Deliberately never consumes source.image (tinygltf's own decoded-pixel-data field), even
+	// though tg3_image declares it. OSG's own image ReaderWriter plugins are the one and only
+	// decode path here, on purpose (user preference, not just working around v3.0.1's decoder
+	// being unimplemented) -- if a future tinygltf release starts populating source.image, that
+	// must NOT silently start being used in place of OSG's own decode.
+	if(
+		source.buffer_view >= 0 &&
+		static_cast<std::uint32_t>(source.buffer_view) < _model.buffer_views_count
+	) {
+		const tg3_buffer_view& bufferView =
+			_model.buffer_views[static_cast<std::uint32_t>(source.buffer_view)];
 
-		std::memcpy(data, source.image.data(), source.image.size());
+		if(bufferView.buffer >= 0 && static_cast<std::uint32_t>(bufferView.buffer) < _model.buffers_count) {
+			const tg3_buffer& buffer = _model.buffers[static_cast<std::uint32_t>(bufferView.buffer)];
 
-		image = new osg::Image();
-		image->setImage(
-			source.width,
-			source.height,
-			1,
-			internalFormat,
-			pixelFormat,
-			GL_UNSIGNED_BYTE,
-			data,
-			osg::Image::USE_NEW_DELETE
-		);
+			if(bufferView.byte_offset + bufferView.byte_length <= buffer.data.count) {
+				image = decodeCompressedImage(
+					buffer.data.data + bufferView.byte_offset,
+					static_cast<std::size_t>(bufferView.byte_length),
+					extensionForMimeType(tg3_to_string(source.mime_type)),
+					_readOptions
+				);
+			}
+		}
 	}
-	else if(!source.uri.empty() && !tinygltf::IsDataURI(source.uri)) {
+	else if(source.uri.len > 0 && tg3_is_data_uri(source.uri.data, source.uri.len)) {
+		DataUriPayload payload;
+
+		if(parseDataUri(tg3_to_string(source.uri), payload)) {
+			std::istringstream encoded(std::string(payload.data, payload.length));
+			std::ostringstream decoded;
+			osgDB::Base64decoder decoder;
+
+			decoder.decode(encoded, decoded);
+
+			std::string bytes = decoded.str();
+
+			image = decodeCompressedImage(
+				reinterpret_cast<const unsigned char*>(bytes.data()),
+				bytes.size(),
+				extensionForMimeType(payload.mimeType),
+				_readOptions
+			);
+		}
+	}
+	else if(source.uri.len > 0) {
 		const std::string path = osgDB::concatPaths(
 			osgDB::getFilePath(_referrer),
-			source.uri
+			tg3_to_string(source.uri)
 		);
 
 		image = osgDB::readImageFile(path, _readOptions);
@@ -121,17 +245,17 @@ void TextureLoader::applyFormatAndSampler(
 	texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
 	texture->setMaxAnisotropy(16.0f);
 
-	if(samplerIndex >= 0 && samplerIndex < static_cast<int>(_model.samplers.size())) {
-		const tinygltf::Sampler& sampler =
-			_model.samplers[static_cast<std::size_t>(samplerIndex)];
+	if(samplerIndex >= 0 && static_cast<std::uint32_t>(samplerIndex) < _model.samplers_count) {
+		const tg3_sampler& sampler =
+			_model.samplers[static_cast<std::uint32_t>(samplerIndex)];
 
 		texture->setWrap(
 			osg::Texture::WRAP_S,
-			static_cast<osg::Texture::WrapMode>(sampler.wrapS)
+			static_cast<osg::Texture::WrapMode>(sampler.wrap_s)
 		);
 		texture->setWrap(
 			osg::Texture::WRAP_T,
-			static_cast<osg::Texture::WrapMode>(sampler.wrapT)
+			static_cast<osg::Texture::WrapMode>(sampler.wrap_t)
 		);
 	}
 	else {
@@ -141,26 +265,30 @@ void TextureLoader::applyFormatAndSampler(
 }
 
 osg::Texture2D* TextureLoader::getOrCreateTexture(int textureIndex, bool sRGB) const {
-	if(textureIndex < 0 || textureIndex >= static_cast<int>(_model.textures.size())) return nullptr;
+	if(textureIndex < 0 || static_cast<std::uint32_t>(textureIndex) >= _model.textures_count) {
+		return nullptr;
+	}
 
-	const tinygltf::Texture& texture = _model.textures[static_cast<std::size_t>(textureIndex)];
+	const tg3_texture& texture = _model.textures[static_cast<std::uint32_t>(textureIndex)];
 
-	if(texture.source < 0 || texture.source >= static_cast<int>(_model.images.size())) return nullptr;
+	if(texture.source < 0 || static_cast<std::uint32_t>(texture.source) >= _model.images_count) {
+		return nullptr;
+	}
 
-	const tinygltf::Image& image = _model.images[static_cast<std::size_t>(texture.source)];
-	const bool dataURI = !image.uri.empty() && tinygltf::IsDataURI(image.uri);
-	const bool externalImage = !image.uri.empty() && !dataURI;
-	// tinygltf decodes every image, including an ordinary external PNG, into
-	// image.image. That describes temporary decoded data, not the glTF asset's
-	// identity: using it to identify embedded images made every external texture
-	// miss the cache and copy itself once per primitive during scene construction.
-	const bool unrefImageDataAfterApply = !image.image.empty() || dataURI;
+	const tg3_image& image = _model.images[static_cast<std::uint32_t>(texture.source)];
+	const bool dataURI = image.uri.len > 0 && tg3_is_data_uri(image.uri.data, image.uri.len);
+	const bool externalImage = image.uri.len > 0 && !dataURI;
+	// Embedded (bufferView) and data-URI images are decoded fresh by loadRawImage() every
+	// call (self-decoded via OSG's plugins, see the anonymous-namespace comment above) --
+	// there's no shared/cached raw-byte identity to preserve, unlike an external file path,
+	// so it's always safe to drop the CPU copy once the GPU upload has happened.
+	const bool unrefImageDataAfterApply = dataURI || image.buffer_view >= 0;
 	std::string cacheKey;
 
 	if(externalImage) {
 		cacheKey = osgDB::getRealPath(osgDB::concatPaths(
 			osgDB::getFilePath(_referrer),
-			image.uri
+			tg3_to_string(image.uri)
 		)) + (sRGB ? "|sRGB" : "|linear");
 	}
 	else cacheKey = _referrer + "|image:" + std::to_string(texture.source) +

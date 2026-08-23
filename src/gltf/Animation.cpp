@@ -2,14 +2,13 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
 #include "Animation.hpp"
 #include "Log.hpp"
+#include "tg3_util.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -19,6 +18,7 @@ OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 
 namespace osgx::gltf::detail {
@@ -31,34 +31,24 @@ osg::Matrixd TRS::matrix() const {
 	;
 }
 
-TRS nodeBaseTRS(const tinygltf::Node& node) {
+TRS nodeBaseTRS(const tg3_node& node) {
 	TRS trs;
 
-	if(node.matrix.size() == 16) {
+	// has_matrix is the explicit "was a matrix given" signal (v3 always populates
+	// translation/rotation/scale with spec defaults, and matrix with an identity diagonal,
+	// regardless of which the JSON actually specified) -- see Scene.cpp's _createNode for
+	// the same pattern.
+	if(node.has_matrix) {
 		osg::Quat so;
-		osg::Matrixd matrix(node.matrix.data());
+		osg::Matrixd matrix(node.matrix);
 
 		matrix.decompose(trs.translation, trs.rotation, trs.scale, so);
 	}
-
-	if(node.translation.size() == 3) trs.translation.set(
-		node.translation[0],
-		node.translation[1],
-		node.translation[2]
-	);
-
-	if(node.rotation.size() == 4) trs.rotation.set(
-		node.rotation[0],
-		node.rotation[1],
-		node.rotation[2],
-		node.rotation[3]
-	);
-
-	if(node.scale.size() == 3) trs.scale.set(
-		node.scale[0],
-		node.scale[1],
-		node.scale[2]
-	);
+	else {
+		trs.translation.set(node.translation[0], node.translation[1], node.translation[2]);
+		trs.rotation.set(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3]);
+		trs.scale.set(node.scale[0], node.scale[1], node.scale[2]);
+	}
 
 	return trs;
 }
@@ -138,7 +128,7 @@ std::vector<osg::Quat> readQuatValues(
 }
 
 void installAnimationCallback(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
 	const std::vector<osg::observer_ptr<osg::MatrixTransform>>& nodeTransforms,
 	osg::Node* root,
@@ -150,44 +140,44 @@ void installAnimationCallback(
 		return;
 	}
 
-	if(!root || model.animations.empty()) return;
+	if(!root || model.animations_count == 0) return;
 
 	osg::ref_ptr<AnimationCallback> callback = new AnimationCallback();
 
 	for(
-		std::size_t animationIndex = 0;
-		animationIndex < model.animations.size();
+		std::uint32_t animationIndex = 0;
+		animationIndex < model.animations_count;
 		animationIndex++
 	) {
-		const tinygltf::Animation& animation = model.animations[animationIndex];
+		const tg3_animation& animation = model.animations[animationIndex];
 		AnimationCallback::Clip clip;
 
-		clip.name = animation.name.empty()
+		clip.name = animation.name.len == 0
 			? std::string("animation[") + std::to_string(animationIndex) + "]"
-			: animation.name
+			: tg3_to_string(animation.name)
 		;
 
 		for(
-			std::size_t channelIndex = 0;
-			channelIndex < animation.channels.size();
+			std::uint32_t channelIndex = 0;
+			channelIndex < animation.channels_count;
 			channelIndex++
 		) {
-			const tinygltf::AnimationChannel& gltfChannel = animation.channels[channelIndex];
+			const tg3_animation_channel& gltfChannel = animation.channels[channelIndex];
 
-			if(gltfChannel.sampler < 0 || gltfChannel.target_node < 0) continue;
+			if(gltfChannel.sampler < 0 || gltfChannel.target.node < 0) continue;
 
-			const std::size_t samplerIndex = static_cast<std::size_t>(gltfChannel.sampler);
-			const std::size_t targetNodeIndex = static_cast<std::size_t>(gltfChannel.target_node);
+			const std::uint32_t samplerIndex = static_cast<std::uint32_t>(gltfChannel.sampler);
+			const std::size_t targetNodeIndex = static_cast<std::size_t>(gltfChannel.target.node);
 
-			if(samplerIndex >= animation.samplers.size()) continue;
+			if(samplerIndex >= animation.samplers_count) continue;
 			if(targetNodeIndex >= nodeTransforms.size()) continue;
-			if(targetNodeIndex >= model.nodes.size()) continue;
+			if(targetNodeIndex >= model.nodes_count) continue;
 			if(!nodeTransforms[targetNodeIndex].valid()) continue;
 
-			const tinygltf::AnimationSampler& gltfSampler =
+			const tg3_animation_sampler& gltfSampler =
 				animation.samplers[samplerIndex];
 
-			if(gltfSampler.interpolation == "CUBICSPLINE") {
+			if(tg3_str_equals_cstr(gltfSampler.interpolation, "CUBICSPLINE")) {
 				GLTF_NOTIFY(2)
 					<< "animation '" << clip.name
 					<< "' channel[" << channelIndex << "] CUBICSPLINE skipped" << std::endl
@@ -198,22 +188,22 @@ void installAnimationCallback(
 			AnimationCallback::Channel channel;
 
 			channel.target = nodeTransforms[targetNodeIndex];
-			channel.targetNode = gltfChannel.target_node;
-			channel.interpolation = gltfSampler.interpolation.empty()
+			channel.targetNode = gltfChannel.target.node;
+			channel.interpolation = gltfSampler.interpolation.len == 0
 				? "LINEAR"
-				: gltfSampler.interpolation
+				: tg3_to_string(gltfSampler.interpolation)
 			;
 			channel.times = readFloatTimes(arrays, gltfSampler.input);
 
-			if(gltfChannel.target_path == "translation") {
+			if(tg3_str_equals_cstr(gltfChannel.target.path, "translation")) {
 				channel.path = AnimationCallback::Path::Translation;
 				channel.vec3Values = readVec3Values(arrays, gltfSampler.output);
 			}
-			else if(gltfChannel.target_path == "rotation") {
+			else if(tg3_str_equals_cstr(gltfChannel.target.path, "rotation")) {
 				channel.path = AnimationCallback::Path::Rotation;
 				channel.quatValues = readQuatValues(arrays, gltfSampler.output);
 			}
-			else if(gltfChannel.target_path == "scale") {
+			else if(tg3_str_equals_cstr(gltfChannel.target.path, "scale")) {
 				channel.path = AnimationCallback::Path::Scale;
 				channel.vec3Values = readVec3Values(arrays, gltfSampler.output);
 			}
@@ -221,7 +211,7 @@ void installAnimationCallback(
 				GLTF_NOTIFY(2)
 					<< "animation '" << clip.name
 					<< "' channel[" << channelIndex << "] path '"
-					<< gltfChannel.target_path << "' skipped" << std::endl
+					<< tg3_to_string(gltfChannel.target.path) << "' skipped" << std::endl
 				;
 				continue;
 			}
@@ -240,7 +230,7 @@ void installAnimationCallback(
 
 			clip.duration = std::max<double>(clip.duration, channel.times.back());
 			callback->baseTRS.emplace(
-				gltfChannel.target_node,
+				gltfChannel.target.node,
 				nodeBaseTRS(model.nodes[targetNodeIndex])
 			);
 			clip.channels.push_back(std::move(channel));
@@ -264,8 +254,8 @@ void installAnimationCallback(
 
 	std::size_t initialAnimation = 0;
 
-	for(std::size_t i = 0; i < model.animations.size(); i++) {
-		if(model.animations[i].name == "Walk") {
+	for(std::uint32_t i = 0; i < model.animations_count; i++) {
+		if(tg3_str_equals_cstr(model.animations[i].name, "Walk")) {
 			initialAnimation = i;
 			break;
 		}

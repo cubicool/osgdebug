@@ -23,10 +23,8 @@ OSGX_ENABLE_WARNINGS
 #include <string>
 #include <vector>
 
-namespace tinygltf {
-class Model;
-class Node;
-}
+struct tg3_model;
+struct tg3_node;
 
 namespace osgx::gltf::detail {
 
@@ -38,10 +36,10 @@ struct TRS {
 	osg::Matrixd matrix() const;
 };
 
-TRS nodeBaseTRS(const tinygltf::Node& node);
+TRS nodeBaseTRS(const tg3_node& node);
 
 void installAnimationCallback(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
 	const std::vector<osg::observer_ptr<osg::MatrixTransform>>& nodeTransforms,
 	osg::Node* root,

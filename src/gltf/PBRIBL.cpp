@@ -2,9 +2,9 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+// Declarations only -- tiny_gltf_v3.c already compiles the implementation
+// (TINYGLTF_JSON_C_IMPLEMENTATION) once into osgx_gltf, which osgx_gltf_pbribl links.
+#include "tinygltf_json_c.h"
 
 OSGX_ENABLE_WARNINGS
 
@@ -28,6 +28,7 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <filesystem>
+#include <fstream>
 
 // ================================================================================================
 // osgx::gltf::pbribl - the glue between the glTF loader material interface
@@ -690,37 +691,86 @@ PBRIBLEnvironment PBRIBLEnvironment::prepare(const std::string& hdrPath, int lut
 
 namespace {
 
-// `value.Get(key)` asserts IsObject() on the receiver, so every lookup below guards that first --
-// a missing/malformed role (e.g. no "diffuse" object at all) must decode to defaults, not assert.
-std::string decodeString(const tinygltf::Value& value, const char* key) {
-	if(!value.IsObject()) return {};
+// Every lookup guards for a null/wrong-typed value first -- a missing/malformed role (e.g. no
+// "diffuse" object at all) must decode to defaults, not crash.
+std::string decodeString(const tg3json_value* value, const char* key) {
+	if(!value || value->type != TG3JSON_OBJECT) return {};
 
-	const auto& found = value.Get(key);
+	const tg3json_value* found = tg3json_object_get(value, key);
 
-	return found.IsString() ? found.Get<std::string>() : std::string();
+	return found && found->type == TG3JSON_STRING
+		? std::string(found->u.string.ptr, found->u.string.len)
+		: std::string()
+	;
 }
 
-int decodeInt(const tinygltf::Value& value, const char* key, int fallback) {
-	if(!value.IsObject()) return fallback;
+int decodeInt(const tg3json_value* value, const char* key, int fallback) {
+	if(!value || value->type != TG3JSON_OBJECT) return fallback;
 
-	const auto& found = value.Get(key);
+	const tg3json_value* found = tg3json_object_get(value, key);
 
-	return found.IsInt() ? found.GetNumberAsInt() : fallback;
+	if(!found) return fallback;
+	if(found->type == TG3JSON_INT) return static_cast<int>(found->u.integer);
+	if(found->type == TG3JSON_REAL) return static_cast<int>(found->u.real);
+
+	return fallback;
 }
 
-IBLEnvironmentManifest decodeIBLEnvironment(const tinygltf::Value& entry) {
+// Owns a tg3json_value tree parsed by tg3json_parse_n(). tg3json_value_free() must never run
+// twice on the same value (it doesn't reset itself after freeing, unlike tg3_model_free()'s
+// whole-arena semantics) -- parse() itself already frees on failure internally, so _owned only
+// tracks the success case to avoid a double-free on that path.
+class JsonDocument {
+public:
+	JsonDocument() { tg3json_value_init_null(&_value); }
+	~JsonDocument() { if(_owned) tg3json_value_free(&_value); }
+
+	JsonDocument(const JsonDocument&) = delete;
+	JsonDocument& operator=(const JsonDocument&) = delete;
+
+	bool parse(const std::string& text) {
+		const char* errorPos = nullptr;
+
+		_owned = tg3json_parse_n(text.data(), text.size(), 0, &_value, &errorPos) != 0;
+
+		return _owned;
+	}
+
+	const tg3json_value& root() const { return _value; }
+
+private:
+	tg3json_value _value;
+	bool _owned = false;
+};
+
+bool readWholeFile(const std::string& path, std::string& out) {
+	std::ifstream file(path, std::ios::binary | std::ios::ate);
+
+	if(!file) return false;
+
+	std::streamoff size = file.tellg();
+
+	if(size < 0) return false;
+
+	file.seekg(0, std::ios::beg);
+	out.resize(static_cast<std::size_t>(size));
+
+	return static_cast<bool>(file.read(out.data(), size));
+}
+
+IBLEnvironmentManifest decodeIBLEnvironment(const tg3json_value* entry) {
 	IBLEnvironmentManifest manifest;
 
-	if(!entry.IsObject()) return manifest;
+	if(!entry || entry->type != TG3JSON_OBJECT) return manifest;
 
-	const auto& specular = entry.Get("specular");
+	const tg3json_value* specular = tg3json_object_get(entry, "specular");
 
 	manifest.specular.uri = decodeString(specular, "uri");
 	manifest.specular.prefilterSize = decodeInt(specular, "prefilterSize", 0);
 	manifest.specular.lowestMipLevel = decodeInt(specular, "lowestMipLevel", 0);
-	manifest.diffuse.uri = decodeString(entry.Get("diffuse"), "uri");
+	manifest.diffuse.uri = decodeString(tg3json_object_get(entry, "diffuse"), "uri");
 
-	const auto& brdfLUT = entry.Get("brdfLUT");
+	const tg3json_value* brdfLUT = tg3json_object_get(entry, "brdfLUT");
 
 	manifest.brdfLUT.uri = decodeString(brdfLUT, "uri");
 	manifest.brdfLUT.builtin = decodeString(brdfLUT, "builtin");
@@ -731,17 +781,17 @@ IBLEnvironmentManifest decodeIBLEnvironment(const tinygltf::Value& entry) {
 
 }
 
-std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tinygltf::Value& extensionValue) {
+std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tg3json_value* extensionValue) {
 	std::vector<IBLEnvironmentManifest> result;
 
-	if(!extensionValue.IsObject()) return result;
+	if(!extensionValue || extensionValue->type != TG3JSON_OBJECT) return result;
 
-	const auto& environments = extensionValue.Get("environments");
+	const tg3json_value* environments = tg3json_object_get(extensionValue, "environments");
 
-	if(!environments.IsArray()) return result;
+	if(!environments || environments->type != TG3JSON_ARRAY) return result;
 
-	for(std::size_t i = 0; i < environments.ArrayLen(); i++) result.push_back(
-		decodeIBLEnvironment(environments.Get(static_cast<int>(i)))
+	for(std::size_t i = 0; i < tg3json_array_size(environments); i++) result.push_back(
+		decodeIBLEnvironment(tg3json_array_get(environments, i))
 	);
 
 	return result;
@@ -810,29 +860,35 @@ PBRIBLEnvironment PBRIBLEnvironment::load(const IBLEnvironmentManifest& manifest
 }
 
 PBRIBLEnvironment PBRIBLEnvironment::load(const std::string& manifestPath) {
-	tinygltf::TinyGLTF loader;
-	tinygltf::Model document;
-	std::string error, warning;
+	std::string text;
 
-	if(!loader.LoadASCIIFromFile(&document, &error, &warning, manifestPath)) {
-		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: failed to load " << manifestPath << ": " << error << std::endl;
+	if(!readWholeFile(manifestPath, text)) {
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: failed to read " << manifestPath << std::endl;
 
 		return {};
 	}
 
-	if(!warning.empty()) {
-		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: " << manifestPath << ": " << warning << std::endl;
+	JsonDocument document;
+
+	if(!document.parse(text)) {
+		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: failed to parse " << manifestPath << std::endl;
+
+		return {};
 	}
 
-	const auto it = document.extensions.find("osgx_pbribl");
+	const tg3json_value* extensions = tg3json_object_get(&document.root(), "extensions");
+	const tg3json_value* pbriblExtension = extensions
+		? tg3json_object_get(extensions, "osgx_pbribl")
+		: nullptr
+	;
 
-	if(it == document.extensions.end()) {
+	if(!pbriblExtension) {
 		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: " << manifestPath << " has no osgx_pbribl extension" << std::endl;
 
 		return {};
 	}
 
-	auto environments = decodeIBLEnvironments(it->second);
+	auto environments = decodeIBLEnvironments(pbriblExtension);
 
 	if(environments.empty()) {
 		OSG_WARN << "osgx::gltf::pbribl::PBRIBLEnvironment::load: " << manifestPath << " declares no environments" << std::endl;

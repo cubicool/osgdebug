@@ -15,9 +15,7 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 #include <osg/ArgumentParser>
 #include <osg/Camera>
@@ -41,8 +39,11 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include "gltf/tg3_util.hpp"
+
 #include <atomic>
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -108,51 +109,62 @@ private:
 };
 
 bool applyKhronosCamera(osg::Camera* camera, const std::string& filename) {
-	tinygltf::TinyGLTF loader;
-	tinygltf::Model document;
-	std::string error, warning;
+	tinygltf3::Model document;
+	tinygltf3::ErrorStack errors;
+	tg3_parse_options opts;
 
-	if(!loader.LoadASCIIFromFile(&document, &error, &warning, filename)) {
-		std::cerr << "Failed to read camera export '" << filename << "': " << error << std::endl;
+	tg3_parse_options_init(&opts);
+
+	opts.fs.read_file = &osgx::gltf::detail::tg3_read_file;
+	opts.fs.free_file = &osgx::gltf::detail::tg3_free_file;
+
+	if(tinygltf3::parse_file(document, errors, filename.c_str(), &opts) != TG3_OK || errors.has_error()) {
+		std::cerr << "Failed to read camera export '" << filename << "'" << std::endl;
+
+		for(std::uint32_t i = 0; i < errors.count(); i++) {
+			const tg3_error_entry* entry = errors.entry(i);
+
+			if(entry->severity == TG3_SEVERITY_ERROR) {
+				std::cerr << "  " << (entry->message ? entry->message : "") << std::endl;
+			}
+		}
 
 		return false;
 	}
 
-	if(!warning.empty()) std::cerr << "Camera export warning: " << warning << std::endl;
-
-	if(document.cameras.empty()) {
+	if(document->cameras_count == 0) {
 		std::cerr << "Camera export contains no cameras: " << filename << std::endl;
 
 		return false;
 	}
 
-	const tinygltf::Node* node = nullptr;
+	const tg3_node* node = nullptr;
 
-	for(const auto& candidate : document.nodes) {
-		if(candidate.camera >= 0) {
-			node = &candidate;
+	for(std::uint32_t i = 0; i < document->nodes_count; i++) {
+		if(document->nodes[i].camera >= 0) {
+			node = &document->nodes[i];
 
 			break;
 		}
 	}
 
-	if(!node || node->matrix.size() != 16) {
+	if(!node || !node->has_matrix) {
 		std::cerr << "Camera export needs a camera node with a 4x4 matrix: " << filename << std::endl;
 
 		return false;
 	}
 
-	const std::size_t cameraIndex = static_cast<std::size_t>(node->camera);
+	const std::uint32_t cameraIndex = static_cast<std::uint32_t>(node->camera);
 
-	if(cameraIndex >= document.cameras.size()) {
+	if(cameraIndex >= document->cameras_count) {
 		std::cerr << "Camera export references an invalid camera: " << filename << std::endl;
 
 		return false;
 	}
 
-	const auto& perspective = document.cameras[cameraIndex].perspective;
+	const auto& perspective = document->cameras[cameraIndex].perspective;
 
-	if(perspective.yfov <= 0.0 || perspective.aspectRatio <= 0.0 || perspective.znear <= 0.0 || perspective.zfar <= perspective.znear) {
+	if(perspective.yfov <= 0.0 || perspective.aspect_ratio <= 0.0 || perspective.znear <= 0.0 || perspective.zfar <= perspective.znear) {
 		std::cerr << "Camera export has an unsupported perspective projection: " << filename << std::endl;
 
 		return false;
@@ -169,7 +181,7 @@ bool applyKhronosCamera(osg::Camera* camera, const std::string& filename) {
 	camera->setViewMatrixAsLookAt(eye, eye + forward, up);
 	camera->setProjectionMatrixAsPerspective(
 		perspective.yfov * 180.0 / std::numbers::pi,
-		perspective.aspectRatio,
+		perspective.aspect_ratio,
 		perspective.znear,
 		perspective.zfar
 	);

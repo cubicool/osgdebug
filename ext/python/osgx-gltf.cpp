@@ -18,124 +18,116 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Image>
 #include <osgDB/FileNameUtils>
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
+#include "gltf/tg3_util.hpp"
+
+#include <cstdint>
 #include <set>
 #include <string>
 
 namespace {
 
-bool skipImageLoad(
-	tinygltf::Image*,
-	const int,
-	std::string*,
-	std::string*,
-	int,
-	int,
-	const unsigned char*,
-	int,
-	void*
-) {
-	return true;
-}
+using osgx::gltf::detail::tg3_to_string;
 
 const char* componentTypeName(int componentType) {
 	switch(componentType) {
-		case TINYGLTF_COMPONENT_TYPE_BYTE: return "BYTE";
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: return "UNSIGNED_BYTE";
-		case TINYGLTF_COMPONENT_TYPE_SHORT: return "SHORT";
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: return "UNSIGNED_SHORT";
-		case TINYGLTF_COMPONENT_TYPE_INT: return "INT";
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: return "UNSIGNED_INT";
-		case TINYGLTF_COMPONENT_TYPE_FLOAT: return "FLOAT";
-		case TINYGLTF_COMPONENT_TYPE_DOUBLE: return "DOUBLE";
+		case TG3_COMPONENT_TYPE_BYTE: return "BYTE";
+		case TG3_COMPONENT_TYPE_UNSIGNED_BYTE: return "UNSIGNED_BYTE";
+		case TG3_COMPONENT_TYPE_SHORT: return "SHORT";
+		case TG3_COMPONENT_TYPE_UNSIGNED_SHORT: return "UNSIGNED_SHORT";
+		case TG3_COMPONENT_TYPE_INT: return "INT";
+		case TG3_COMPONENT_TYPE_UNSIGNED_INT: return "UNSIGNED_INT";
+		case TG3_COMPONENT_TYPE_FLOAT: return "FLOAT";
+		case TG3_COMPONENT_TYPE_DOUBLE: return "DOUBLE";
 		default: return "UNKNOWN";
 	}
 }
 
 const char* accessorTypeName(int type) {
 	switch(type) {
-		case TINYGLTF_TYPE_SCALAR: return "SCALAR";
-		case TINYGLTF_TYPE_VEC2: return "VEC2";
-		case TINYGLTF_TYPE_VEC3: return "VEC3";
-		case TINYGLTF_TYPE_VEC4: return "VEC4";
-		case TINYGLTF_TYPE_MAT2: return "MAT2";
-		case TINYGLTF_TYPE_MAT3: return "MAT3";
-		case TINYGLTF_TYPE_MAT4: return "MAT4";
+		case TG3_TYPE_SCALAR: return "SCALAR";
+		case TG3_TYPE_VEC2: return "VEC2";
+		case TG3_TYPE_VEC3: return "VEC3";
+		case TG3_TYPE_VEC4: return "VEC4";
+		case TG3_TYPE_MAT2: return "MAT2";
+		case TG3_TYPE_MAT3: return "MAT3";
+		case TG3_TYPE_MAT4: return "MAT4";
 		default: return "UNKNOWN";
 	}
 }
 
-py::object maybeString(const std::string& value) {
-	return value.empty() ? py::none() : py::cast(value);
+py::object maybeString(tg3_str value) {
+	return value.len == 0 ? py::none() : py::cast(tg3_to_string(value));
 }
 
-py::object maybeNodeName(const tinygltf::Model& model, int nodeIdx) {
-	if(nodeIdx < 0 || nodeIdx >= static_cast<int>(model.nodes.size())) return py::none();
+py::object maybeNodeName(const tg3_model& model, int nodeIdx) {
+	if(nodeIdx < 0 || static_cast<std::uint32_t>(nodeIdx) >= model.nodes_count) return py::none();
 
-	return maybeString(model.nodes[static_cast<size_t>(nodeIdx)].name);
+	return maybeString(model.nodes[static_cast<std::uint32_t>(nodeIdx)].name);
 }
 
-py::dict accessorInfo(const tinygltf::Model& model, int accessorIdx) {
+py::dict accessorInfo(const tg3_model& model, int accessorIdx) {
 	py::dict out;
 
 	out["index"] = accessorIdx;
 
-	if(accessorIdx < 0 || accessorIdx >= static_cast<int>(model.accessors.size())) {
+	if(accessorIdx < 0 || static_cast<std::uint32_t>(accessorIdx) >= model.accessors_count) {
 		out["valid"] = false;
 		return out;
 	}
 
-	const tinygltf::Accessor& accessor = model.accessors[static_cast<size_t>(accessorIdx)];
+	const tg3_accessor& accessor = model.accessors[static_cast<std::uint32_t>(accessorIdx)];
 
 	out["valid"] = true;
 	out["name"] = maybeString(accessor.name);
 	out["count"] = accessor.count;
-	out["componentType"] = componentTypeName(accessor.componentType);
-	out["componentTypeValue"] = accessor.componentType;
+	out["componentType"] = componentTypeName(accessor.component_type);
+	out["componentTypeValue"] = accessor.component_type;
 	out["type"] = accessorTypeName(accessor.type);
 	out["typeValue"] = accessor.type;
 	out["normalized"] = accessor.normalized;
-	out["bufferView"] = accessor.bufferView;
-	out["byteOffset"] = accessor.byteOffset;
+	out["bufferView"] = accessor.buffer_view;
+	out["byteOffset"] = accessor.byte_offset;
 
 	py::list minValues;
-	for(double value : accessor.minValues) minValues.append(value);
+	for(std::uint32_t i = 0; i < accessor.min_values_count; i++) minValues.append(accessor.min_values[i]);
 	out["min"] = minValues;
 
 	py::list maxValues;
-	for(double value : accessor.maxValues) maxValues.append(value);
+	for(std::uint32_t i = 0; i < accessor.max_values_count; i++) maxValues.append(accessor.max_values[i]);
 	out["max"] = maxValues;
 
 	return out;
 }
 
-py::dict textureInfo(const tinygltf::Model& model, int textureIdx, int texCoord) {
+py::dict textureInfo(const tg3_model& model, int textureIdx, int texCoord) {
 	py::dict out;
 
 	out["index"] = textureIdx;
 	out["texCoord"] = texCoord;
 
-	if(textureIdx >= 0 && textureIdx < static_cast<int>(model.textures.size())) {
-		const tinygltf::Texture& texture = model.textures[static_cast<size_t>(textureIdx)];
+	if(textureIdx >= 0 && static_cast<std::uint32_t>(textureIdx) < model.textures_count) {
+		const tg3_texture& texture = model.textures[static_cast<std::uint32_t>(textureIdx)];
 
 		out["valid"] = true;
 		out["name"] = maybeString(texture.name);
 		out["source"] = texture.source;
 		out["sampler"] = texture.sampler;
 
-		if(texture.source >= 0 && texture.source < static_cast<int>(model.images.size())) {
-			const tinygltf::Image& image = model.images[static_cast<size_t>(texture.source)];
+		if(texture.source >= 0 && static_cast<std::uint32_t>(texture.source) < model.images_count) {
+			const tg3_image& image = model.images[static_cast<std::uint32_t>(texture.source)];
 
 			out["imageName"] = maybeString(image.name);
 			out["imageUri"] = maybeString(image.uri);
 			out["imageWidth"] = image.width;
 			out["imageHeight"] = image.height;
-			out["embedded"] = !image.image.empty();
+			// tinygltf v3.0.1 never populates image.image itself (see Texture.cpp -- osgx
+			// self-decodes embedded/data-URI images via OSG's own plugins instead), so
+			// "embedded" here means "has no external uri", not "tinygltf already decoded it".
+			out["embedded"] = image.uri.len == 0;
 		}
 	}
 
@@ -144,19 +136,19 @@ py::dict textureInfo(const tinygltf::Model& model, int textureIdx, int texCoord)
 	return out;
 }
 
-py::object textureInfoOrNone(const tinygltf::Model& model, const tinygltf::TextureInfo& info) {
+py::object textureInfoOrNone(const tg3_model& model, const tg3_texture_info& info) {
 	if(info.index < 0) return py::none();
 
-	return textureInfo(model, info.index, info.texCoord);
+	return textureInfo(model, info.index, info.tex_coord);
 }
 
 py::object normalTextureInfoOrNone(
-	const tinygltf::Model& model,
-	const tinygltf::NormalTextureInfo& info
+	const tg3_model& model,
+	const tg3_normal_texture_info& info
 ) {
 	if(info.index < 0) return py::none();
 
-	py::dict out = textureInfo(model, info.index, info.texCoord);
+	py::dict out = textureInfo(model, info.index, info.tex_coord);
 
 	out["scale"] = info.scale;
 
@@ -164,137 +156,153 @@ py::object normalTextureInfoOrNone(
 }
 
 py::object occlusionTextureInfoOrNone(
-	const tinygltf::Model& model,
-	const tinygltf::OcclusionTextureInfo& info
+	const tg3_model& model,
+	const tg3_occlusion_texture_info& info
 ) {
 	if(info.index < 0) return py::none();
 
-	py::dict out = textureInfo(model, info.index, info.texCoord);
+	py::dict out = textureInfo(model, info.index, info.tex_coord);
 
 	out["strength"] = info.strength;
 
 	return out;
 }
 
-py::list numberList(const std::vector<double>& values) {
+py::list numberList(const double* values, std::uint32_t count) {
 	py::list out;
 
-	for(double value : values) out.append(value);
+	for(std::uint32_t i = 0; i < count; i++) out.append(values[i]);
 
 	return out;
 }
 
-py::dict materialInfo(const tinygltf::Model& model, int materialIdx) {
-	const tinygltf::Material& material = model.materials[static_cast<size_t>(materialIdx)];
-	const tinygltf::PbrMetallicRoughness& pbr = material.pbrMetallicRoughness;
+py::dict materialInfo(const tg3_model& model, int materialIdx) {
+	const tg3_material& material = model.materials[static_cast<std::uint32_t>(materialIdx)];
+	const tg3_pbr_metallic_roughness& pbr = material.pbr_metallic_roughness;
 
 	py::dict out;
 
 	out["index"] = materialIdx;
 	out["name"] = maybeString(material.name);
-	out["alphaMode"] = material.alphaMode;
-	out["alphaCutoff"] = material.alphaCutoff;
-	out["doubleSided"] = material.doubleSided;
-	out["emissiveFactor"] = numberList(material.emissiveFactor);
-	out["normalTexture"] = normalTextureInfoOrNone(model, material.normalTexture);
-	out["occlusionTexture"] = occlusionTextureInfoOrNone(model, material.occlusionTexture);
-	out["emissiveTexture"] = textureInfoOrNone(model, material.emissiveTexture);
+	out["alphaMode"] = tg3_to_string(material.alpha_mode);
+	out["alphaCutoff"] = material.alpha_cutoff;
+	out["doubleSided"] = static_cast<bool>(material.double_sided);
+	out["emissiveFactor"] = numberList(material.emissive_factor, 3);
+	out["normalTexture"] = normalTextureInfoOrNone(model, material.normal_texture);
+	out["occlusionTexture"] = occlusionTextureInfoOrNone(model, material.occlusion_texture);
+	out["emissiveTexture"] = textureInfoOrNone(model, material.emissive_texture);
 
 	py::dict pbrDict;
 
-	pbrDict["baseColorFactor"] = numberList(pbr.baseColorFactor);
-	pbrDict["metallicFactor"] = pbr.metallicFactor;
-	pbrDict["roughnessFactor"] = pbr.roughnessFactor;
-	pbrDict["baseColorTexture"] = textureInfoOrNone(model, pbr.baseColorTexture);
-	pbrDict["metallicRoughnessTexture"] = textureInfoOrNone(model, pbr.metallicRoughnessTexture);
+	pbrDict["baseColorFactor"] = numberList(pbr.base_color_factor, 4);
+	pbrDict["metallicFactor"] = pbr.metallic_factor;
+	pbrDict["roughnessFactor"] = pbr.roughness_factor;
+	pbrDict["baseColorTexture"] = textureInfoOrNone(model, pbr.base_color_texture);
+	pbrDict["metallicRoughnessTexture"] = textureInfoOrNone(model, pbr.metallic_roughness_texture);
 
 	out["pbrMetallicRoughness"] = pbrDict;
 
 	bool hasSpecGloss =
-		material.extensions.find("KHR_materials_pbrSpecularGlossiness") != material.extensions.end()
+		osgx::gltf::detail::tg3_find_extension(
+			material.ext, "KHR_materials_pbrSpecularGlossiness"
+		) != nullptr
 	;
 
 	out["hasSpecGloss"] = hasSpecGloss;
 	out["requiresSpecGlossBake"] = hasSpecGloss;
-	out["hasBaseColorMap"] = pbr.baseColorTexture.index >= 0;
-	out["hasMetallicRoughnessMap"] = pbr.metallicRoughnessTexture.index >= 0;
-	out["hasNormalMap"] = material.normalTexture.index >= 0;
-	out["hasOcclusionMap"] = material.occlusionTexture.index >= 0;
-	out["hasEmissiveMap"] = material.emissiveTexture.index >= 0;
+	out["hasBaseColorMap"] = pbr.base_color_texture.index >= 0;
+	out["hasMetallicRoughnessMap"] = pbr.metallic_roughness_texture.index >= 0;
+	out["hasNormalMap"] = material.normal_texture.index >= 0;
+	out["hasOcclusionMap"] = material.occlusion_texture.index >= 0;
+	out["hasEmissiveMap"] = material.emissive_texture.index >= 0;
 	out["factorOnlyPBR"] =
-		pbr.baseColorTexture.index < 0 &&
-		pbr.metallicRoughnessTexture.index < 0 &&
+		pbr.base_color_texture.index < 0 &&
+		pbr.metallic_roughness_texture.index < 0 &&
 		!hasSpecGloss
 	;
 	out["textureDrivenPBR"] =
-		pbr.baseColorTexture.index >= 0 ||
-		pbr.metallicRoughnessTexture.index >= 0 ||
+		pbr.base_color_texture.index >= 0 ||
+		pbr.metallic_roughness_texture.index >= 0 ||
 		hasSpecGloss
 	;
-	out["usesLowRoughnessFactor"] = pbr.roughnessFactor < 0.35;
+	out["usesLowRoughnessFactor"] = pbr.roughness_factor < 0.35;
 	out["likelyReflectiveFromFactors"] =
-		pbr.roughnessFactor < 0.35 &&
-		pbr.metallicFactor > 0.5
+		pbr.roughness_factor < 0.35 &&
+		pbr.metallic_factor > 0.5
 	;
 
 	py::list extensions;
 
-	for(const auto& [name, value] : material.extensions) extensions.append(name);
+	for(std::uint32_t i = 0; i < material.ext.extensions_count; i++) {
+		extensions.append(tg3_to_string(material.ext.extensions[i].name));
+	}
 
 	out["extensions"] = extensions;
 
 	return out;
 }
 
-py::dict primitiveInfo(const tinygltf::Model& model, const tinygltf::Primitive& primitive, int primitiveIdx) {
+py::dict primitiveInfo(const tg3_model& model, const tg3_primitive& primitive, int primitiveIdx) {
 	py::dict out;
 	py::dict attributes;
+	bool hasJoints0 = false, hasWeights0 = false, hasPosition = false, hasNormal = false, hasTangent = false;
 
 	out["index"] = primitiveIdx;
 	out["mode"] = primitive.mode;
 	out["indices"] = accessorInfo(model, primitive.indices);
 	out["material"] = primitive.material;
 
-	if(primitive.material >= 0 && primitive.material < static_cast<int>(model.materials.size())) {
+	if(
+		primitive.material >= 0 &&
+		static_cast<std::uint32_t>(primitive.material) < model.materials_count
+	) {
 		out["materialName"] = maybeString(
-			model.materials[static_cast<size_t>(primitive.material)].name
+			model.materials[static_cast<std::uint32_t>(primitive.material)].name
 		);
 	}
 
-	for(const auto& [name, accessorIdx] : primitive.attributes) {
-		attributes[py::str(name)] = accessorInfo(model, accessorIdx);
+	for(std::uint32_t i = 0; i < primitive.attributes_count; i++) {
+		const tg3_str& name = primitive.attributes[i].key;
+
+		attributes[py::str(tg3_to_string(name))] = accessorInfo(model, primitive.attributes[i].value);
+
+		if(tg3_str_equals_cstr(name, "JOINTS_0")) hasJoints0 = true;
+		else if(tg3_str_equals_cstr(name, "WEIGHTS_0")) hasWeights0 = true;
+		else if(tg3_str_equals_cstr(name, "POSITION")) hasPosition = true;
+		else if(tg3_str_equals_cstr(name, "NORMAL")) hasNormal = true;
+		else if(tg3_str_equals_cstr(name, "TANGENT")) hasTangent = true;
 	}
 
 	out["attributes"] = attributes;
-	out["hasJoints0"] = primitive.attributes.find("JOINTS_0") != primitive.attributes.end();
-	out["hasWeights0"] = primitive.attributes.find("WEIGHTS_0") != primitive.attributes.end();
-	out["hasPosition"] = primitive.attributes.find("POSITION") != primitive.attributes.end();
-	out["hasNormal"] = primitive.attributes.find("NORMAL") != primitive.attributes.end();
-	out["hasTangent"] = primitive.attributes.find("TANGENT") != primitive.attributes.end();
+	out["hasJoints0"] = hasJoints0;
+	out["hasWeights0"] = hasWeights0;
+	out["hasPosition"] = hasPosition;
+	out["hasNormal"] = hasNormal;
+	out["hasTangent"] = hasTangent;
 
 	return out;
 }
 
-py::dict meshInfo(const tinygltf::Model& model, int meshIdx) {
-	const tinygltf::Mesh& mesh = model.meshes[static_cast<size_t>(meshIdx)];
+py::dict meshInfo(const tg3_model& model, int meshIdx) {
+	const tg3_mesh& mesh = model.meshes[static_cast<std::uint32_t>(meshIdx)];
 	py::dict out;
 	py::list primitives;
 
 	out["index"] = meshIdx;
 	out["name"] = maybeString(mesh.name);
 
-	for(size_t i = 0; i < mesh.primitives.size(); i++) {
+	for(std::uint32_t i = 0; i < mesh.primitives_count; i++) {
 		primitives.append(primitiveInfo(model, mesh.primitives[i], static_cast<int>(i)));
 	}
 
 	out["primitives"] = primitives;
-	out["primitiveCount"] = mesh.primitives.size();
+	out["primitiveCount"] = mesh.primitives_count;
 
 	return out;
 }
 
-py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
-	const tinygltf::Skin& skin = model.skins[static_cast<size_t>(skinIdx)];
+py::dict skinInfo(const tg3_model& model, int skinIdx) {
+	const tg3_skin& skin = model.skins[static_cast<std::uint32_t>(skinIdx)];
 	py::dict out;
 	py::list joints;
 	py::list users;
@@ -303,9 +311,9 @@ py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
 	out["name"] = maybeString(skin.name);
 	out["skeleton"] = skin.skeleton;
 	out["skeletonName"] = maybeNodeName(model, skin.skeleton);
-	out["inverseBindMatrices"] = accessorInfo(model, skin.inverseBindMatrices);
+	out["inverseBindMatrices"] = accessorInfo(model, skin.inverse_bind_matrices);
 
-	for(size_t jointIdx = 0; jointIdx < skin.joints.size(); jointIdx++) {
+	for(std::uint32_t jointIdx = 0; jointIdx < skin.joints_count; jointIdx++) {
 		int nodeIdx = skin.joints[jointIdx];
 		py::dict joint;
 
@@ -316,8 +324,8 @@ py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
 		joints.append(joint);
 	}
 
-	for(size_t nodeIdx = 0; nodeIdx < model.nodes.size(); nodeIdx++) {
-		const tinygltf::Node& node = model.nodes[nodeIdx];
+	for(std::uint32_t nodeIdx = 0; nodeIdx < model.nodes_count; nodeIdx++) {
+		const tg3_node& node = model.nodes[nodeIdx];
 
 		if(node.skin != skinIdx) continue;
 
@@ -327,9 +335,9 @@ py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
 		user["nodeName"] = maybeString(node.name);
 		user["mesh"] = node.mesh;
 
-		if(node.mesh >= 0 && node.mesh < static_cast<int>(model.meshes.size())) {
+		if(node.mesh >= 0 && static_cast<std::uint32_t>(node.mesh) < model.meshes_count) {
 			user["meshName"] = maybeString(
-				model.meshes[static_cast<size_t>(node.mesh)].name
+				model.meshes[static_cast<std::uint32_t>(node.mesh)].name
 			);
 		}
 
@@ -337,26 +345,27 @@ py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
 	}
 
 	out["joints"] = joints;
-	out["jointCount"] = skin.joints.size();
+	out["jointCount"] = skin.joints_count;
 	out["users"] = users;
 	out["userCount"] = py::len(users);
 
-	const auto ibm = model.accessors.size() > static_cast<size_t>(std::max(skin.inverseBindMatrices, 0))
-		? skin.inverseBindMatrices
+	const int ibm = skin.inverse_bind_matrices >= 0 &&
+		static_cast<std::uint32_t>(skin.inverse_bind_matrices) < model.accessors_count
+		? skin.inverse_bind_matrices
 		: -1
 	;
 
 	out["inverseBindMatricesMatchJointCount"] =
 		ibm >= 0 &&
-		model.accessors[static_cast<size_t>(ibm)].count == skin.joints.size()
+		model.accessors[static_cast<std::uint32_t>(ibm)].count == skin.joints_count
 	;
 
 	return out;
 }
 
-py::dict animationInfo(const tinygltf::Model& model, int animationIdx) {
-	const tinygltf::Animation& animation =
-		model.animations[static_cast<size_t>(animationIdx)];
+py::dict animationInfo(const tg3_model& model, int animationIdx) {
+	const tg3_animation& animation =
+		model.animations[static_cast<std::uint32_t>(animationIdx)];
 	py::dict out;
 	py::list samplers;
 	py::list channels;
@@ -367,47 +376,52 @@ py::dict animationInfo(const tinygltf::Model& model, int animationIdx) {
 	out["index"] = animationIdx;
 	out["name"] = maybeString(animation.name);
 
-	for(size_t samplerIdx = 0; samplerIdx < animation.samplers.size(); samplerIdx++) {
-		const tinygltf::AnimationSampler& sampler = animation.samplers[samplerIdx];
+	for(std::uint32_t samplerIdx = 0; samplerIdx < animation.samplers_count; samplerIdx++) {
+		const tg3_animation_sampler& sampler = animation.samplers[samplerIdx];
+		std::string interpolation = sampler.interpolation.len == 0
+			? "LINEAR"
+			: tg3_to_string(sampler.interpolation)
+		;
 		py::dict item;
 
 		item["index"] = samplerIdx;
 		item["input"] = accessorInfo(model, sampler.input);
 		item["output"] = accessorInfo(model, sampler.output);
-		item["interpolation"] = sampler.interpolation.empty() ? "LINEAR" : sampler.interpolation;
+		item["interpolation"] = interpolation;
 
 		if(
 			sampler.input >= 0 &&
-			sampler.input < static_cast<int>(model.accessors.size()) &&
-			!model.accessors[static_cast<size_t>(sampler.input)].maxValues.empty()
+			static_cast<std::uint32_t>(sampler.input) < model.accessors_count &&
+			model.accessors[static_cast<std::uint32_t>(sampler.input)].max_values_count > 0
 		) {
-			const tinygltf::Accessor& input =
-				model.accessors[static_cast<size_t>(sampler.input)];
+			const tg3_accessor& input =
+				model.accessors[static_cast<std::uint32_t>(sampler.input)];
 
-			duration = std::max(duration, input.maxValues[0]);
-			item["endTime"] = input.maxValues[0];
+			duration = std::max(duration, input.max_values[0]);
+			item["endTime"] = input.max_values[0];
 		}
 
-		interpolations.insert(sampler.interpolation.empty() ? "LINEAR" : sampler.interpolation);
+		interpolations.insert(interpolation);
 		samplers.append(item);
 	}
 
-	for(size_t channelIdx = 0; channelIdx < animation.channels.size(); channelIdx++) {
-		const tinygltf::AnimationChannel& channel = animation.channels[channelIdx];
+	for(std::uint32_t channelIdx = 0; channelIdx < animation.channels_count; channelIdx++) {
+		const tg3_animation_channel& channel = animation.channels[channelIdx];
+		std::string targetPath = tg3_to_string(channel.target.path);
 		py::dict item;
 
 		item["index"] = channelIdx;
 		item["sampler"] = channel.sampler;
-		item["targetNode"] = channel.target_node;
-		item["targetNodeName"] = maybeNodeName(model, channel.target_node);
-		item["targetPath"] = channel.target_path;
+		item["targetNode"] = channel.target.node;
+		item["targetNodeName"] = maybeNodeName(model, channel.target.node);
+		item["targetPath"] = targetPath;
 		item["supportedByCurrentLoader"] =
-			channel.target_path == "translation" ||
-			channel.target_path == "rotation" ||
-			channel.target_path == "scale"
+			targetPath == "translation" ||
+			targetPath == "rotation" ||
+			targetPath == "scale"
 		;
 
-		paths.insert(channel.target_path);
+		paths.insert(targetPath);
 		channels.append(item);
 	}
 
@@ -418,9 +432,9 @@ py::dict animationInfo(const tinygltf::Model& model, int animationIdx) {
 	for(const auto& interpolation : interpolations) interpolationList.append(interpolation);
 
 	out["samplers"] = samplers;
-	out["samplerCount"] = animation.samplers.size();
+	out["samplerCount"] = animation.samplers_count;
 	out["channels"] = channels;
-	out["channelCount"] = animation.channels.size();
+	out["channelCount"] = animation.channels_count;
 	out["targetPaths"] = pathList;
 	out["interpolations"] = interpolationList;
 	out["duration"] = duration;
@@ -430,22 +444,36 @@ py::dict animationInfo(const tinygltf::Model& model, int animationIdx) {
 	return out;
 }
 
-py::dict inspectGLTF(const std::string& path, bool loadImages) {
-	std::string err;
-	std::string warn;
-	tinygltf::Model model;
-	tinygltf::TinyGLTF loader;
-	const std::string ext = osgDB::getLowerCaseFileExtension(path);
+py::dict inspectGLTF(const std::string& path, bool /* loadImages -- tinygltf v3.0.1 never decodes
+	image pixel data regardless of this flag (see Texture.cpp's self-decode comment); kept for
+	Python API source compatibility only, no effect here */) {
+	tinygltf3::Model model;
+	tinygltf3::ErrorStack errors;
+	tg3_parse_options opts;
 
-	if(!loadImages) loader.SetImageLoader(skipImageLoad, nullptr);
+	tg3_parse_options_init(&opts);
 
-	bool ok = ext == "glb"
-		? loader.LoadBinaryFromFile(&model, &err, &warn, path)
-		: loader.LoadASCIIFromFile(&model, &err, &warn, path)
-	;
+	// inspectGLTF() doesn't go through osgx::gltf::Reader, so it needs its own fs.read_file
+	// (tg3_parse_file has no fallback beyond TINYGLTF3_ENABLE_FS-style opt-in macros this
+	// project doesn't define) -- reuse the same plain-read implementation ReaderImpl.cpp uses.
+	opts.fs.read_file = &osgx::gltf::detail::tg3_read_file;
+	opts.fs.free_file = &osgx::gltf::detail::tg3_free_file;
 
-	if(!ok || !err.empty()) {
-		throw std::runtime_error("failed to load " + path + ": " + err);
+	tg3_error_code rc = tinygltf3::parse_file(model, errors, path.c_str(), &opts);
+
+	if(rc != TG3_OK || errors.has_error()) {
+		std::string message;
+
+		for(std::uint32_t i = 0; i < errors.count(); i++) {
+			const tg3_error_entry* entry = errors.entry(i);
+
+			if(entry->severity != TG3_SEVERITY_ERROR) continue;
+			if(!message.empty()) message += "; ";
+
+			message += entry->message ? entry->message : "";
+		}
+
+		throw std::runtime_error("failed to load " + path + ": " + message);
 	}
 
 	py::dict out;
@@ -460,42 +488,46 @@ py::dict inspectGLTF(const std::string& path, bool loadImages) {
 	py::list skins;
 	py::list animations;
 
-	if(!warn.empty()) warnings.append(warn);
+	for(std::uint32_t i = 0; i < errors.count(); i++) {
+		const tg3_error_entry* entry = errors.entry(i);
 
-	asset["version"] = model.asset.version;
-	asset["minVersion"] = maybeString(model.asset.minVersion);
-	asset["generator"] = maybeString(model.asset.generator);
-	asset["copyright"] = maybeString(model.asset.copyright);
+		if(entry->severity != TG3_SEVERITY_ERROR && entry->message) warnings.append(entry->message);
+	}
 
-	counts["scenes"] = model.scenes.size();
-	counts["nodes"] = model.nodes.size();
-	counts["meshes"] = model.meshes.size();
-	counts["materials"] = model.materials.size();
-	counts["textures"] = model.textures.size();
-	counts["images"] = model.images.size();
-	counts["skins"] = model.skins.size();
-	counts["animations"] = model.animations.size();
-	counts["accessors"] = model.accessors.size();
-	counts["bufferViews"] = model.bufferViews.size();
-	counts["buffers"] = model.buffers.size();
+	asset["version"] = tg3_to_string(model->asset.version);
+	asset["minVersion"] = maybeString(model->asset.min_version);
+	asset["generator"] = maybeString(model->asset.generator);
+	asset["copyright"] = maybeString(model->asset.copyright);
 
-	for(size_t sceneIdx = 0; sceneIdx < model.scenes.size(); sceneIdx++) {
-		const tinygltf::Scene& scene = model.scenes[sceneIdx];
+	counts["scenes"] = model->scenes_count;
+	counts["nodes"] = model->nodes_count;
+	counts["meshes"] = model->meshes_count;
+	counts["materials"] = model->materials_count;
+	counts["textures"] = model->textures_count;
+	counts["images"] = model->images_count;
+	counts["skins"] = model->skins_count;
+	counts["animations"] = model->animations_count;
+	counts["accessors"] = model->accessors_count;
+	counts["bufferViews"] = model->buffer_views_count;
+	counts["buffers"] = model->buffers_count;
+
+	for(std::uint32_t sceneIdx = 0; sceneIdx < model->scenes_count; sceneIdx++) {
+		const tg3_scene& scene = model->scenes[sceneIdx];
 		py::dict sceneDict;
 		py::list sceneNodes;
 
 		sceneDict["index"] = sceneIdx;
 		sceneDict["name"] = maybeString(scene.name);
 
-		for(int nodeIdx : scene.nodes) sceneNodes.append(nodeIdx);
+		for(std::uint32_t i = 0; i < scene.nodes_count; i++) sceneNodes.append(scene.nodes[i]);
 
 		sceneDict["nodes"] = sceneNodes;
 
 		scenes.append(sceneDict);
 	}
 
-	for(size_t nodeIdx = 0; nodeIdx < model.nodes.size(); nodeIdx++) {
-		const tinygltf::Node& node = model.nodes[nodeIdx];
+	for(std::uint32_t nodeIdx = 0; nodeIdx < model->nodes_count; nodeIdx++) {
+		const tg3_node& node = model->nodes[nodeIdx];
 		py::dict nodeDict;
 		py::list children;
 
@@ -504,32 +536,34 @@ py::dict inspectGLTF(const std::string& path, bool loadImages) {
 		nodeDict["mesh"] = node.mesh;
 		nodeDict["skin"] = node.skin;
 
-		for(int childIdx : node.children) children.append(childIdx);
+		for(std::uint32_t i = 0; i < node.children_count; i++) children.append(node.children[i]);
 
 		nodeDict["children"] = children;
 
-		nodeDict["hasMatrix"] = node.matrix.size() == 16;
-		nodeDict["hasTranslation"] = node.translation.size() == 3;
-		nodeDict["hasRotation"] = node.rotation.size() == 4;
-		nodeDict["hasScale"] = node.scale.size() == 3;
+		// v3 always populates translation/rotation/scale/matrix with spec defaults, plus an
+		// explicit has_matrix flag -- see Scene.cpp's _createNode for the same convention.
+		nodeDict["hasMatrix"] = static_cast<bool>(node.has_matrix);
+		nodeDict["hasTranslation"] = !node.has_matrix;
+		nodeDict["hasRotation"] = !node.has_matrix;
+		nodeDict["hasScale"] = !node.has_matrix;
 
 		nodes.append(nodeDict);
 	}
 
-	for(size_t meshIdx = 0; meshIdx < model.meshes.size(); meshIdx++) {
-		meshes.append(meshInfo(model, static_cast<int>(meshIdx)));
+	for(std::uint32_t meshIdx = 0; meshIdx < model->meshes_count; meshIdx++) {
+		meshes.append(meshInfo(*model.get(), static_cast<int>(meshIdx)));
 	}
 
-	for(size_t materialIdx = 0; materialIdx < model.materials.size(); materialIdx++) {
-		materials.append(materialInfo(model, static_cast<int>(materialIdx)));
+	for(std::uint32_t materialIdx = 0; materialIdx < model->materials_count; materialIdx++) {
+		materials.append(materialInfo(*model.get(), static_cast<int>(materialIdx)));
 	}
 
-	for(size_t skinIdx = 0; skinIdx < model.skins.size(); skinIdx++) {
-		skins.append(skinInfo(model, static_cast<int>(skinIdx)));
+	for(std::uint32_t skinIdx = 0; skinIdx < model->skins_count; skinIdx++) {
+		skins.append(skinInfo(*model.get(), static_cast<int>(skinIdx)));
 	}
 
-	for(size_t animationIdx = 0; animationIdx < model.animations.size(); animationIdx++) {
-		animations.append(animationInfo(model, static_cast<int>(animationIdx)));
+	for(std::uint32_t animationIdx = 0; animationIdx < model->animations_count; animationIdx++) {
+		animations.append(animationInfo(*model.get(), static_cast<int>(animationIdx)));
 	}
 
 	bool hasSpecGloss = false;
@@ -538,30 +572,43 @@ py::dict inspectGLTF(const std::string& path, bool loadImages) {
 	bool hasMorphTargets = false;
 	bool hasPBRTextures = false;
 
-	for(const auto& material : model.materials) {
+	for(std::uint32_t i = 0; i < model->materials_count; i++) {
+		const tg3_material& material = model->materials[i];
+
 		hasSpecGloss = hasSpecGloss ||
-			material.extensions.find("KHR_materials_pbrSpecularGlossiness") != material.extensions.end()
+			osgx::gltf::detail::tg3_find_extension(
+				material.ext, "KHR_materials_pbrSpecularGlossiness"
+			) != nullptr
 		;
 
 		hasPBRTextures = hasPBRTextures ||
-			material.pbrMetallicRoughness.baseColorTexture.index >= 0 ||
-			material.pbrMetallicRoughness.metallicRoughnessTexture.index >= 0 ||
-			material.normalTexture.index >= 0 ||
-			material.occlusionTexture.index >= 0 ||
-			material.emissiveTexture.index >= 0
+			material.pbr_metallic_roughness.base_color_texture.index >= 0 ||
+			material.pbr_metallic_roughness.metallic_roughness_texture.index >= 0 ||
+			material.normal_texture.index >= 0 ||
+			material.occlusion_texture.index >= 0 ||
+			material.emissive_texture.index >= 0
 		;
 	}
 
-	for(const auto& mesh : model.meshes) {
-		for(const auto& primitive : mesh.primitives) {
-			hasJoints0 = hasJoints0 || primitive.attributes.find("JOINTS_0") != primitive.attributes.end();
-			hasWeights0 = hasWeights0 || primitive.attributes.find("WEIGHTS_0") != primitive.attributes.end();
-			hasMorphTargets = hasMorphTargets || !primitive.targets.empty();
+	for(std::uint32_t meshIdx = 0; meshIdx < model->meshes_count; meshIdx++) {
+		const tg3_mesh& mesh = model->meshes[meshIdx];
+
+		for(std::uint32_t primIdx = 0; primIdx < mesh.primitives_count; primIdx++) {
+			const tg3_primitive& primitive = mesh.primitives[primIdx];
+
+			for(std::uint32_t attrIdx = 0; attrIdx < primitive.attributes_count; attrIdx++) {
+				const tg3_str& name = primitive.attributes[attrIdx].key;
+
+				hasJoints0 = hasJoints0 || tg3_str_equals_cstr(name, "JOINTS_0");
+				hasWeights0 = hasWeights0 || tg3_str_equals_cstr(name, "WEIGHTS_0");
+			}
+
+			hasMorphTargets = hasMorphTargets || primitive.targets_count > 0;
 		}
 	}
 
-	intent["hasSkinning"] = !model.skins.empty() || hasJoints0 || hasWeights0;
-	intent["hasAnimation"] = !model.animations.empty();
+	intent["hasSkinning"] = model->skins_count > 0 || hasJoints0 || hasWeights0;
+	intent["hasAnimation"] = model->animations_count > 0;
 	intent["hasMorphTargets"] = hasMorphTargets;
 	intent["hasSpecGloss"] = hasSpecGloss;
 	intent["hasPBRTextures"] = hasPBRTextures;
@@ -573,7 +620,7 @@ py::dict inspectGLTF(const std::string& path, bool loadImages) {
 	out["counts"] = counts;
 	out["intent"] = intent;
 	out["warnings"] = warnings;
-	out["defaultScene"] = model.defaultScene;
+	out["defaultScene"] = model->default_scene;
 	out["scenes"] = scenes;
 	out["nodes"] = nodes;
 	out["meshes"] = meshes;
@@ -629,19 +676,16 @@ osg::ref_ptr<osg::Node> readNodeFileAsync(
 
 	reader.setTextureCache(&s_asyncTextureCache);
 
-	osgx::gltf::Reader::ProgressCallback onProgress = [&](
-		osgx::gltf::Reader::Stage stage,
-		size_t current,
-		size_t total
-	) {
+	osgx::gltf::Reader::ProgressCallback onProgress = [&](const osgx::gltf::Reader::Progress& progress) {
 		pyx::put_nowait(
 			loop,
 			queue,
 			"progress",
 			job_id,
-			std::string(osgx::gltf::Reader::stageName(stage)),
-			current,
-			total
+			std::string(osgx::gltf::Reader::stageName(progress.stage)),
+			progress.current,
+			progress.total,
+			std::string(progress.section)
 		);
 	};
 
@@ -935,7 +979,7 @@ void bind_gltf(py::module_& m_gltf) {
 			"loop"_a,
 			"queue"_a,
 			"job_id"_a,
-			"Load a glTF/GLB file off the GIL, reporting (stage, current, total) progress and "
+			"Load a glTF/GLB file off the GIL, reporting (stage, current, total, section) progress and "
 			"the final node through loop/queue via call_soon_threadsafe. Call via "
 			"asyncio.to_thread(...); see examples/pyosg-async.py for the queue-draining pattern."
 		)

@@ -3,9 +3,7 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
@@ -13,6 +11,7 @@ OSGX_ENABLE_WARNINGS
 #include "Log.hpp"
 #include "Material.hpp"
 #include "Skin.hpp"
+#include "tg3_util.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -28,14 +27,14 @@ OSGX_ENABLE_WARNINGS
 #include "osgx/gltf/Shader.hpp"
 
 #include <algorithm>
-#include <cstdlib>
+#include <cstdint>
 #include <map>
 #include <typeinfo>
 
 namespace osgx::gltf::detail {
 
 MeshBuilder::MeshBuilder(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const osgDB::Options* readOptions,
 	MaterialBuilder& materialBuilder,
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
@@ -47,26 +46,28 @@ _materialBuilder(materialBuilder),
 _arrays(arrays),
 _skins(skins) {}
 
-osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const {
+osg::Group* MeshBuilder::makeMesh(const tg3_mesh& mesh, int skinIdx) const {
+	std::string meshName = tg3_to_string(mesh.name);
+
 	GLTF_NOTIFY(1)
-		<< "makeMesh '" << mesh.name
+		<< "makeMesh '" << meshName
 		<< "' skin=" << skinIdx
-		<< " - " << mesh.primitives.size() << " primitive(s)" << std::endl
+		<< " - " << mesh.primitives_count << " primitive(s)" << std::endl
 	;
 
 	osg::Group* group = new osg::Group();
 
-	group->setName(mesh.name);
+	group->setName(meshName);
 
-	std::size_t primIdx = 0;
+	for(std::uint32_t primIdx = 0; primIdx < mesh.primitives_count; primIdx++) {
+		const tg3_primitive& primitive = mesh.primitives[primIdx];
 
-	for(auto& primitive : mesh.primitives) {
 		GLTF_NOTIFY(2)
 			<< "primitive[" << primIdx << "]"
 			<< " mode=" << primitive.mode
 			<< " indices=" << primitive.indices
 			<< " material=" << primitive.material
-			<< " attrs=" << primitive.attributes.size() << std::endl
+			<< " attrs=" << primitive.attributes_count << std::endl
 		;
 
 		osg::ref_ptr<osg::Geometry> geom = new osg::Geometry();
@@ -84,7 +85,9 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 		int jointsAccessor = -1;
 		int weightsAccessor = -1;
 
-		for(auto& [attrName, accessorIdx] : primitive.attributes) {
+		for(std::uint32_t attrIdx = 0; attrIdx < primitive.attributes_count; attrIdx++) {
+			const tg3_str& attrName = primitive.attributes[attrIdx].key;
+			const int accessorIdx = primitive.attributes[attrIdx].value;
 			const bool nonnegative = accessorIdx >= 0;
 			const std::size_t arrayIndex = nonnegative
 				? static_cast<std::size_t>(accessorIdx)
@@ -94,17 +97,17 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 				nonnegative && arrayIndex < _arrays.size() && _arrays[arrayIndex].valid();
 
 			GLTF_NOTIFY(4)
-				<< "" << attrName
+				<< "" << tg3_to_string(attrName)
 				<< " -> accessor[" << accessorIdx << "]"
 				<< (valid ? " OK" : " NULL/INVALID") << std::endl
 			;
 
 			if(!valid) continue;
 
-			if(attrName == "POSITION") geom->setVertexArray(_arrays[arrayIndex]);
-			else if(attrName == "NORMAL") geom->setNormalArray(_arrays[arrayIndex]);
-			else if(attrName == "COLOR_0") geom->setColorArray(_arrays[arrayIndex]);
-			else if(attrName == "TANGENT") {
+			if(tg3_str_equals_cstr(attrName, "POSITION")) geom->setVertexArray(_arrays[arrayIndex]);
+			else if(tg3_str_equals_cstr(attrName, "NORMAL")) geom->setNormalArray(_arrays[arrayIndex]);
+			else if(tg3_str_equals_cstr(attrName, "COLOR_0")) geom->setColorArray(_arrays[arrayIndex]);
+			else if(tg3_str_equals_cstr(attrName, "TANGENT")) {
 				_arrays[arrayIndex]->setBinding(osg::Array::BIND_PER_VERTEX);
 
 				geom->setVertexAttribArray(
@@ -112,14 +115,14 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 					_arrays[arrayIndex]
 				);
 			}
-			else if(attrName.rfind("TEXCOORD_", 0) == 0) {
-				int uvSet = std::atoi(attrName.c_str() + 9);
+			else if(tg3_starts_with(attrName, "TEXCOORD_")) {
+				int uvSet = tg3_texcoord_suffix(attrName);
 
 				texCoordSets[uvSet] = _arrays[arrayIndex];
 			}
 
-			else if(attrName == "JOINTS_0") jointsAccessor = accessorIdx;
-			else if(attrName == "WEIGHTS_0") weightsAccessor = accessorIdx;
+			else if(tg3_str_equals_cstr(attrName, "JOINTS_0")) jointsAccessor = accessorIdx;
+			else if(tg3_str_equals_cstr(attrName, "WEIGHTS_0")) weightsAccessor = accessorIdx;
 		}
 
 		if(jointsAccessor >= 0 || weightsAccessor >= 0) {
@@ -160,8 +163,8 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 			}
 		}
 
-		// A missing material means glTF's defined default material, not “leave
-		// whatever render state happened to be inherited.” MaterialBuilder also
+		// A missing material means glTF's defined default material, not "leave
+		// whatever render state happened to be inherited." MaterialBuilder also
 		// validates positive indices before looking them up.
 		GLTF_NOTIFY(3) << "applyMaterial " << primitive.material << std::endl;
 
@@ -196,15 +199,15 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 		if(
 			haveIndex &&
 			indexAccessor < _arrays.size() &&
-			indexAccessor < _model.accessors.size() &&
+			indexAccessor < _model.accessors_count &&
 			_arrays[indexAccessor].valid()
 		) {
 			const GLenum glMode = _primitiveMode(primitive.mode);
-			const tinygltf::Accessor& idxAcc = _model.accessors[indexAccessor];
+			const tg3_accessor& idxAcc = _model.accessors[indexAccessor];
 			osg::Array* indexArray = _arrays[indexAccessor];
 
-			switch(idxAcc.componentType) {
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+			switch(idxAcc.component_type) {
+				case TG3_COMPONENT_TYPE_UNSIGNED_BYTE: {
 					auto* src = static_cast<osg::UByteArray*>(indexArray);
 					auto* de = new osg::DrawElementsUByte(
 						glMode,
@@ -218,7 +221,7 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 					break;
 				}
 
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+				case TG3_COMPONENT_TYPE_UNSIGNED_SHORT: {
 					auto* src = static_cast<osg::UShortArray*>(indexArray);
 
 					geom->addPrimitiveSet(new osg::DrawElementsUShort(
@@ -230,7 +233,7 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 					break;
 				}
 
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+				case TG3_COMPONENT_TYPE_UNSIGNED_INT: {
 					auto* src = static_cast<osg::UIntArray*>(indexArray);
 
 					geom->addPrimitiveSet(new osg::DrawElementsUInt(
@@ -245,7 +248,7 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 				default:
 					OSG_WARN
 						<< "unsupported index component type "
-						<< idxAcc.componentType << std::endl
+						<< idxAcc.component_type << std::endl
 					;
 			}
 		}
@@ -263,9 +266,9 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 
 		// SmoothingVisitor assumes triangles; never call it for points or lines.
 		bool isTriangles = (
-			primitive.mode == TINYGLTF_MODE_TRIANGLES ||
-			primitive.mode == TINYGLTF_MODE_TRIANGLE_STRIP ||
-			primitive.mode == TINYGLTF_MODE_TRIANGLE_FAN
+			primitive.mode == TG3_MODE_TRIANGLES ||
+			primitive.mode == TG3_MODE_TRIANGLE_STRIP ||
+			primitive.mode == TG3_MODE_TRIANGLE_FAN
 		);
 
 		bool skipNormals =
@@ -288,8 +291,6 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 		GLTF_NOTIFY(3) << "addChild geode to mesh group" << std::endl;
 
 		group->addChild(geode);
-
-		primIdx++;
 	}
 
 	return group;
@@ -297,13 +298,13 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 
 GLenum MeshBuilder::_primitiveMode(int gltfMode) {
 	switch(gltfMode) {
-		case TINYGLTF_MODE_POINTS: return GL_POINTS;
-		case TINYGLTF_MODE_LINE: return GL_LINES;
-		case TINYGLTF_MODE_LINE_LOOP: return GL_LINE_LOOP;
-		case TINYGLTF_MODE_LINE_STRIP: return GL_LINE_STRIP;
-		case TINYGLTF_MODE_TRIANGLES: return GL_TRIANGLES;
-		case TINYGLTF_MODE_TRIANGLE_STRIP: return GL_TRIANGLE_STRIP;
-		case TINYGLTF_MODE_TRIANGLE_FAN: return GL_TRIANGLE_FAN;
+		case TG3_MODE_POINTS: return GL_POINTS;
+		case TG3_MODE_LINE: return GL_LINES;
+		case TG3_MODE_LINE_LOOP: return GL_LINE_LOOP;
+		case TG3_MODE_LINE_STRIP: return GL_LINE_STRIP;
+		case TG3_MODE_TRIANGLES: return GL_TRIANGLES;
+		case TG3_MODE_TRIANGLE_STRIP: return GL_TRIANGLE_STRIP;
+		case TG3_MODE_TRIANGLE_FAN: return GL_TRIANGLE_FAN;
 		default: return GL_TRIANGLES;
 	}
 }

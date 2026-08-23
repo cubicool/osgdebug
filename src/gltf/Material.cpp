@@ -2,14 +2,13 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
 #include "Material.hpp"
 #include "Log.hpp"
+#include "tg3_util.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -28,12 +27,41 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace osgx::gltf::detail {
 
+namespace {
+
+// KHR_materials_pbrSpecularGlossiness value-tree decode helpers -- same shape as
+// PBRIBL.cpp's decodeString/decodeInt for its own (unrelated) manifest format, just against
+// tg3_value (glTF extension values) instead of tinygltf_json_c.h's tg3json_value.
+double extNumber(const tg3_value& value, const char* key, double fallback) {
+	const tg3_value* found = tg3_object_get(value, key);
+	double result = fallback;
+
+	return found && tg3_as_double(*found, result) ? result : fallback;
+}
+
+// Reads a fixed-length numeric array field (e.g. "diffuseFactor": [r,g,b,a]) into `out`.
+// Leaves `out` untouched if the field is absent, not an array, or the wrong length.
+void extVec(const tg3_value& value, const char* key, float* out, std::uint32_t count) {
+	const tg3_value* found = tg3_object_get(value, key);
+
+	if(!found || found->type != TG3_VALUE_ARRAY || found->array_count != count) return;
+
+	for(std::uint32_t i = 0; i < count; i++) {
+		double component;
+
+		if(tg3_as_double(found->array_data[i], component)) out[i] = static_cast<float>(component);
+	}
+}
+
+}
+
 MaterialBuilder::MaterialBuilder(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::string& referrer,
 	const osgDB::Options* readOptions,
 	TextureLoader& textureLoader
@@ -51,19 +79,18 @@ void MaterialBuilder::applyMaterial(
 	// A primitive without a material uses glTF's defined default material;
 	// it must still receive this loader's material buffer and alpha state.
 	// Returning early here previously left it with inherited/undefined state.
-	tinygltf::Material defaultMaterial;
-	const tinygltf::Material* material = &defaultMaterial;
+	const tg3_material* material = &tg3_default_material();
 
 	if(matIdx >= 0) {
-		const std::size_t materialIndex = static_cast<std::size_t>(matIdx);
+		const std::uint32_t materialIndex = static_cast<std::uint32_t>(matIdx);
 
-		if(materialIndex >= _model.materials.size()) return;
+		if(materialIndex >= _model.materials_count) return;
 
 		material = &_model.materials[materialIndex];
 	}
 
-	const tinygltf::Material& mat = *material;
-	const auto& pbr = mat.pbrMetallicRoughness;
+	const tg3_material& mat = *material;
+	const auto& pbr = mat.pbr_metallic_roughness;
 
 	// sRGB: per the glTF spec, baseColor/diffuse and emissive textures
 	// are authored in sRGB gamma space; normal and ORM (occlusion/
@@ -85,28 +112,30 @@ void MaterialBuilder::applyMaterial(
 		if(it != texCoordSets.end()) geom->setTexCoordArray(textureUnit, it->second);
 	};
 
-	if(pbr.baseColorFactor.size() == 4) baseColorFactor.set(
-		static_cast<float>(pbr.baseColorFactor[0]),
-		static_cast<float>(pbr.baseColorFactor[1]),
-		static_cast<float>(pbr.baseColorFactor[2]),
-		static_cast<float>(pbr.baseColorFactor[3])
+	// base_color_factor is now a fixed-size array, always populated with the spec default
+	// ({1,1,1,1}) by the parser (or by tg3_default_material() above) -- no presence check needed.
+	baseColorFactor.set(
+		static_cast<float>(pbr.base_color_factor[0]),
+		static_cast<float>(pbr.base_color_factor[1]),
+		static_cast<float>(pbr.base_color_factor[2]),
+		static_cast<float>(pbr.base_color_factor[3])
 	);
 
-	bool haveCoreBaseColor = pbr.baseColorTexture.index >= 0;
+	bool haveCoreBaseColor = pbr.base_color_texture.index >= 0;
 
 	if(haveCoreBaseColor) bindTexture(
 		osgx::gltf::shader::BASE_COLOR_TEXTURE_UNIT,
-		pbr.baseColorTexture.index,
-		pbr.baseColorTexture.texCoord,
+		pbr.base_color_texture.index,
+		pbr.base_color_texture.tex_coord,
 		true
 	);
 
-	bool haveNormalMap = mat.normalTexture.index >= 0;
+	bool haveNormalMap = mat.normal_texture.index >= 0;
 
 	if(haveNormalMap) bindTexture(
 		osgx::gltf::shader::NORMAL_TEXTURE_UNIT,
-		mat.normalTexture.index,
-		mat.normalTexture.texCoord,
+		mat.normal_texture.index,
+		mat.normal_texture.tex_coord,
 		false
 	);
 
@@ -119,12 +148,12 @@ void MaterialBuilder::applyMaterial(
 	// (09-ibl.py) gate their AO read on the hasOcclusion uniform
 	// (exported below) rather than trusting an "unused" R channel
 	// when no occlusionTexture is present at all.
-	bool haveOcclusion = mat.occlusionTexture.index >= 0;
+	bool haveOcclusion = mat.occlusion_texture.index >= 0;
 	bool sameOcclusionImage =
 		haveOcclusion &&
-		mat.occlusionTexture.index == pbr.metallicRoughnessTexture.index
+		mat.occlusion_texture.index == pbr.metallic_roughness_texture.index
 	;
-	bool haveMetallicRoughnessMap = pbr.metallicRoughnessTexture.index >= 0;
+	bool haveMetallicRoughnessMap = pbr.metallic_roughness_texture.index >= 0;
 
 	if(haveOcclusion && !sameOcclusionImage) {
 		std::string bakeKey = _env._referrer + "|orm-occlusion|" + std::to_string(matIdx);
@@ -132,11 +161,11 @@ void MaterialBuilder::applyMaterial(
 
 		if(!ormTex.valid()) {
 			osg::ref_ptr<osg::Image> occImg =
-				_textureLoader.loadRawImage(mat.occlusionTexture.index);
+				_textureLoader.loadRawImage(mat.occlusion_texture.index);
 			osg::ref_ptr<osg::Image> mrImg =
-				_textureLoader.loadRawImage(pbr.metallicRoughnessTexture.index);
+				_textureLoader.loadRawImage(pbr.metallic_roughness_texture.index);
 
-			if(mat.occlusionTexture.texCoord != pbr.metallicRoughnessTexture.texCoord) {
+			if(mat.occlusion_texture.tex_coord != pbr.metallic_roughness_texture.tex_coord) {
 				GLTF_NOTIFY(3)
 					<< "material " << matIdx
 					<< ": occlusionTexture and metallicRoughnessTexture use"
@@ -149,7 +178,7 @@ void MaterialBuilder::applyMaterial(
 
 			_bakeOcclusionIntoOrm(
 				occImg,
-				static_cast<float>(mat.occlusionTexture.strength),
+				static_cast<float>(mat.occlusion_texture.strength),
 				mrImg,
 				bakedOrm
 			);
@@ -157,15 +186,15 @@ void MaterialBuilder::applyMaterial(
 			int samplerIdx = -1;
 
 			if(
-				pbr.metallicRoughnessTexture.index >= 0 &&
-				pbr.metallicRoughnessTexture.index < static_cast<int>(_model.textures.size())
+				pbr.metallic_roughness_texture.index >= 0 &&
+				static_cast<std::uint32_t>(pbr.metallic_roughness_texture.index) < _model.textures_count
 			) samplerIdx = _model.textures[
-				static_cast<std::size_t>(pbr.metallicRoughnessTexture.index)
+				static_cast<std::uint32_t>(pbr.metallic_roughness_texture.index)
 			].sampler;
 
-			else if(mat.occlusionTexture.index < static_cast<int>(_model.textures.size()))
+			else if(static_cast<std::uint32_t>(mat.occlusion_texture.index) < _model.textures_count)
 				samplerIdx = _model.textures[
-					static_cast<std::size_t>(mat.occlusionTexture.index)
+					static_cast<std::uint32_t>(mat.occlusion_texture.index)
 				].sampler;
 
 			ormTex = new osg::Texture2D(bakedOrm);
@@ -182,7 +211,7 @@ void MaterialBuilder::applyMaterial(
 			ormTex
 		);
 
-		auto occTexCoordIt = texCoordSets.find(mat.occlusionTexture.texCoord);
+		auto occTexCoordIt = texCoordSets.find(mat.occlusion_texture.tex_coord);
 
 		if(occTexCoordIt != texCoordSets.end()) geom->setTexCoordArray(
 			osgx::gltf::shader::ORM_TEXTURE_UNIT,
@@ -190,17 +219,17 @@ void MaterialBuilder::applyMaterial(
 		);
 	}
 
-	else if(pbr.metallicRoughnessTexture.index >= 0) bindTexture(
+	else if(pbr.metallic_roughness_texture.index >= 0) bindTexture(
 		osgx::gltf::shader::ORM_TEXTURE_UNIT,
-		pbr.metallicRoughnessTexture.index,
-		pbr.metallicRoughnessTexture.texCoord,
+		pbr.metallic_roughness_texture.index,
+		pbr.metallic_roughness_texture.tex_coord,
 		false
 	);
 
-	if(mat.emissiveTexture.index >= 0) bindTexture(
+	if(mat.emissive_texture.index >= 0) bindTexture(
 		osgx::gltf::shader::EMISSIVE_TEXTURE_UNIT,
-		mat.emissiveTexture.index,
-		mat.emissiveTexture.texCoord,
+		mat.emissive_texture.index,
+		mat.emissive_texture.tex_coord,
 		true
 	);
 
@@ -215,59 +244,36 @@ void MaterialBuilder::applyMaterial(
 	// so a direct bind previously fed the shader's Cook-Torrance path
 	// garbage roughness/metallic values.
 	if(!haveCoreBaseColor) {
-		auto extIt = mat.extensions.find("KHR_materials_pbrSpecularGlossiness");
+		const tg3_extension* ext =
+			tg3_find_extension(mat.ext, "KHR_materials_pbrSpecularGlossiness");
 
-		if(extIt != mat.extensions.end()) {
-			const tinygltf::Value& sg = extIt->second;
+		if(ext) {
+			const tg3_value& sg = ext->value;
 
 			osg::Vec4 diffuseFactor(1, 1, 1, 1);
 
-			if(sg.Has("diffuseFactor")) {
-				const tinygltf::Value& df = sg.Get("diffuseFactor");
-
-				if(df.IsArray() && df.ArrayLen() == 4) diffuseFactor.set(
-					static_cast<float>(df.Get(0).GetNumberAsDouble()),
-					static_cast<float>(df.Get(1).GetNumberAsDouble()),
-					static_cast<float>(df.Get(2).GetNumberAsDouble()),
-					static_cast<float>(df.Get(3).GetNumberAsDouble())
-				);
-			}
+			extVec(sg, "diffuseFactor", diffuseFactor.ptr(), 4);
 
 			baseColorFactor = diffuseFactor;
 
 			osg::Vec3 specularFactor(1, 1, 1);
 
-			if(sg.Has("specularFactor")) {
-				const tinygltf::Value& sf = sg.Get("specularFactor");
+			extVec(sg, "specularFactor", specularFactor.ptr(), 3);
 
-				if(sf.IsArray() && sf.ArrayLen() == 3) specularFactor.set(
-					static_cast<float>(sf.Get(0).GetNumberAsDouble()),
-					static_cast<float>(sf.Get(1).GetNumberAsDouble()),
-					static_cast<float>(sf.Get(2).GetNumberAsDouble())
-				);
-			}
-
-			float glossinessFactor = 1.0f;
-
-			if(sg.Has("glossinessFactor"))
-				glossinessFactor = static_cast<float>(sg.Get("glossinessFactor").GetNumberAsDouble());
+			float glossinessFactor = static_cast<float>(extNumber(sg, "glossinessFactor", 1.0));
 
 			int diffuseIdx = -1, diffuseTexCoord = 0;
 
-			if(sg.Has("diffuseTexture")) {
-				const tinygltf::Value& dt = sg.Get("diffuseTexture");
-
-				diffuseIdx = dt.Has("index") ? dt.Get("index").GetNumberAsInt()	: -1;
-				diffuseTexCoord = dt.Has("texCoord") ? dt.Get("texCoord").GetNumberAsInt() : 0;
+			if(const tg3_value* dt = tg3_object_get(sg, "diffuseTexture")) {
+				diffuseIdx = static_cast<int>(extNumber(*dt, "index", -1.0));
+				diffuseTexCoord = static_cast<int>(extNumber(*dt, "texCoord", 0.0));
 			}
 
 			int specGlossIdx = -1, specGlossTexCoord = 0;
 
-			if(sg.Has("specularGlossinessTexture")) {
-				const tinygltf::Value& sgt = sg.Get("specularGlossinessTexture");
-
-				specGlossIdx = sgt.Has("index") ? sgt.Get("index").GetNumberAsInt() : -1;
-				specGlossTexCoord = sgt.Has("texCoord") ? sgt.Get("texCoord").GetNumberAsInt() : 0;
+			if(const tg3_value* sgt = tg3_object_get(sg, "specularGlossinessTexture")) {
+				specGlossIdx = static_cast<int>(extNumber(*sgt, "index", -1.0));
+				specGlossTexCoord = static_cast<int>(extNumber(*sgt, "texCoord", 0.0));
 			}
 
 			// gltfSkipSpecGlossBake opts out of the metal-rough bake
@@ -369,11 +375,14 @@ void MaterialBuilder::applyMaterial(
 
 					int samplerIdx = -1;
 
-					if(diffuseIdx >= 0 && diffuseIdx < static_cast<int>(_model.textures.size()))
-						samplerIdx = _model.textures[static_cast<std::size_t>(diffuseIdx)].sampler;
+					if(diffuseIdx >= 0 && static_cast<std::uint32_t>(diffuseIdx) < _model.textures_count)
+						samplerIdx = _model.textures[static_cast<std::uint32_t>(diffuseIdx)].sampler;
 
-					else if(specGlossIdx >= 0 && specGlossIdx < static_cast<int>(_model.textures.size()))
-						samplerIdx = _model.textures[static_cast<std::size_t>(specGlossIdx)].sampler;
+					else if(
+						specGlossIdx >= 0 &&
+						static_cast<std::uint32_t>(specGlossIdx) < _model.textures_count
+					)
+						samplerIdx = _model.textures[static_cast<std::uint32_t>(specGlossIdx)].sampler;
 
 					// Baked images are already linear (converted, not
 					// merely re-encoded), so bind them with
@@ -463,8 +472,8 @@ void MaterialBuilder::applyMaterial(
 		.baseColor = osg::Vec4(
 			baseColorFactor.x(), baseColorFactor.y(), baseColorFactor.z(), baseColorFactor.w()
 		),
-		.roughness = static_cast<float>(pbr.roughnessFactor),
-		.metallic = static_cast<float>(pbr.metallicFactor),
+		.roughness = static_cast<float>(pbr.roughness_factor),
+		.metallic = static_cast<float>(pbr.metallic_factor),
 		.hasBaseColorMap = haveCoreBaseColor,
 		.hasMetallicRoughnessMap = haveMetallicRoughnessMap,
 		.hasOcclusion = haveOcclusion,
@@ -478,8 +487,8 @@ void MaterialBuilder::applyMaterial(
 	// (MASK) or write the source alpha (BLEND). alphaMode is encoded as:
 	// 0 = OPAQUE, 1 = MASK, 2 = BLEND. The glTF default alphaCutoff is 0.5.
 	float alphaMode = osgx::gltf::shader::ALPHA_MODE_OPAQUE;
-	if(mat.alphaMode == "MASK") alphaMode = osgx::gltf::shader::ALPHA_MODE_MASK;
-	else if(mat.alphaMode == "BLEND") alphaMode = osgx::gltf::shader::ALPHA_MODE_BLEND;
+	if(tg3_str_equals_cstr(mat.alpha_mode, "MASK")) alphaMode = osgx::gltf::shader::ALPHA_MODE_MASK;
+	else if(tg3_str_equals_cstr(mat.alpha_mode, "BLEND")) alphaMode = osgx::gltf::shader::ALPHA_MODE_BLEND;
 
 	auto* stateSet = geom->getOrCreateStateSet();
 	stateSet->addUniform(new osg::Uniform(
@@ -488,9 +497,9 @@ void MaterialBuilder::applyMaterial(
 	));
 	stateSet->addUniform(new osg::Uniform(
 		osgx::gltf::shader::ALPHA_CUTOFF_UNIFORM,
-		static_cast<float>(mat.alphaCutoff)
+		static_cast<float>(mat.alpha_cutoff)
 	));
-	if(mat.alphaMode == "BLEND") {
+	if(tg3_str_equals_cstr(mat.alpha_mode, "BLEND")) {
 		// glTF BLEND uses conventional non-premultiplied source-over alpha.
 		// Render it after opaque geometry and leave depth testing enabled while
 		// preventing a transparent surface from occluding later transparent draws.
@@ -516,7 +525,7 @@ void MaterialBuilder::applyMaterial(
 	// matching back-face normal flip belongs in whatever fragment shader
 	// consumes this geometry (gl_FrontFacing-based) -- not this loader's
 	// concern, since the loader doesn't ship its own PBR shader.
-	if(mat.doubleSided) {
+	if(mat.double_sided) {
 		geom->getOrCreateStateSet()->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
 	}
 }

@@ -13,14 +13,14 @@ OSGX_ENABLE_WARNINGS
 #include <string>
 
 namespace osgDB { class Options; }
-namespace tinygltf { class Model; }
+struct tg3_model;
 
 namespace osgx::gltf::detail {
 
 class TextureCache;
 
 osg::Node* buildScene(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::string& referrer,
 	const osgDB::Options* readOptions,
 	TextureCache* textureCache,

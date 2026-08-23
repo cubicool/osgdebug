@@ -2,9 +2,7 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
@@ -16,6 +14,7 @@ OSGX_ENABLE_WARNINGS
 #include "Mesh.hpp"
 #include "Skin.hpp"
 #include "Texture.hpp"
+#include "tg3_util.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -29,6 +28,7 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace osgx::gltf::detail {
@@ -36,7 +36,7 @@ namespace osgx::gltf::detail {
 class SceneBuilder {
 public:
 	SceneBuilder(
-		const tinygltf::Model& model,
+		const tg3_model& model,
 		const std::string& referrer,
 		const osgDB::Options* readOptions,
 		TextureCache* textureCache,
@@ -48,7 +48,7 @@ public:
 	_materialBuilder(model, referrer, readOptions, _textureLoader),
 	_progress(progress),
 	_meshBuilder(model, readOptions, _materialBuilder, _arrays, _skins) {
-		_nodeTransforms.resize(model.nodes.size());
+		_nodeTransforms.resize(model.nodes_count);
 
 		_arrays = extractArrays(model);
 		_skins = prepareSkins(model, _arrays);
@@ -68,9 +68,11 @@ public:
 			osg::Vec3d(0, 0, 1)
 		));
 
-		for(auto& scene : _model.scenes) {
-			for(int idx : scene.nodes) {
-				if(osg::Node* node = _createNode(idx)) root->addChild(node);
+		for(std::uint32_t sceneIndex = 0; sceneIndex < _model.scenes_count; sceneIndex++) {
+			const tg3_scene& scene = _model.scenes[sceneIndex];
+
+			for(std::uint32_t nodeSlot = 0; nodeSlot < scene.nodes_count; nodeSlot++) {
+				if(osg::Node* node = _createNode(scene.nodes[nodeSlot])) root->addChild(node);
 			}
 		}
 
@@ -87,7 +89,7 @@ public:
 	}
 
 private:
-	const tinygltf::Model& _model;
+	const tg3_model& _model;
 	const osgDB::Options* _readOptions;
 	TextureLoader _textureLoader;
 	MaterialBuilder _materialBuilder;
@@ -96,53 +98,55 @@ private:
 	std::vector<osg::ref_ptr<Skin>> _skins;
 	MeshBuilder _meshBuilder;
 	std::vector<osg::observer_ptr<osg::MatrixTransform>> _nodeTransforms;
-	size_t _nodesBuilt = 0;
+	std::uint64_t _nodesBuilt = 0;
 
 	osg::Node* _createNode(int nodeIdx, unsigned depth = 0) {
-		if(nodeIdx < 0 || nodeIdx >= static_cast<int>(_model.nodes.size())) return nullptr;
+		if(nodeIdx < 0 || static_cast<std::uint32_t>(nodeIdx) >= _model.nodes_count) return nullptr;
 
-		const size_t nodeIndex = static_cast<size_t>(nodeIdx);
-		const tinygltf::Node& node = _model.nodes[nodeIndex];
+		const std::uint32_t nodeIndex = static_cast<std::uint32_t>(nodeIdx);
+		const tg3_node& node = _model.nodes[nodeIndex];
+		std::string nodeName = tg3_to_string(node.name);
 
 		GLTF_NOTIFY(depth)
-			<< "createNode '" << node.name << "'"
+			<< "createNode '" << nodeName << "'"
 			<< " node=" << nodeIdx
 			<< " mesh=" << node.mesh
 			<< " skin=" << node.skin
-			<< " children=" << node.children.size() << std::endl
+			<< " children=" << node.children_count << std::endl
 		;
 
-		// One tick per node regardless of depth. model.nodes.size() includes
+		// One tick per node regardless of depth. model.nodes_count includes
 		// unreferenced nodes, so it is an upper-bound denominator.
 		_nodesBuilt++;
 
-		if(_progress) _progress(
+		if(_progress) _progress(Reader::Progress{
 			Reader::Stage::BuildingNodes,
 			_nodesBuilt,
-			_model.nodes.size()
-		);
+			_model.nodes_count,
+			{}
+		});
 
 		osg::MatrixTransform* transform = new osg::MatrixTransform();
 
-		if(node.matrix.size() == 16) transform->setMatrix(osg::Matrixd(node.matrix.data()));
+		// v3 always populates translation/rotation/scale with spec defaults (and matrix with
+		// an identity diagonal) regardless of whether the JSON specified them -- has_matrix is
+		// the real, explicit "was a matrix given" signal, replacing the old size()==16/3/3/4
+		// presence-check idiom entirely.
+		if(node.has_matrix) {
+			transform->setMatrix(osg::Matrixd(node.matrix));
+		}
+		else {
+			osg::Matrixd scale = osg::Matrixd::scale(node.scale[0], node.scale[1], node.scale[2]);
+			osg::Matrixd rotation;
 
-		if(transform->getMatrix().isIdentity()) {
-			osg::Matrixd scale, rotation, translation;
-
-			if(node.scale.size() == 3) scale = osg::Matrixd::scale(
-				node.scale[0],
-				node.scale[1],
-				node.scale[2]
-			);
-
-			if(node.rotation.size() == 4) rotation.makeRotate(osg::Quat(
+			rotation.makeRotate(osg::Quat(
 				node.rotation[0],
 				node.rotation[1],
 				node.rotation[2],
 				node.rotation[3]
 			));
 
-			if(node.translation.size() == 3) translation = osg::Matrixd::translate(
+			osg::Matrixd translation = osg::Matrixd::translate(
 				node.translation[0],
 				node.translation[1],
 				node.translation[2]
@@ -154,7 +158,7 @@ private:
 		_nodeTransforms[nodeIndex] = transform;
 
 		if(node.skin >= 0) {
-			const size_t skinIndex = static_cast<size_t>(node.skin);
+			const std::size_t skinIndex = static_cast<std::size_t>(node.skin);
 
 			if(skinIndex < _skins.size() && _skins[skinIndex].valid()) {
 				_skins[skinIndex]->skinnedNodes.push_back(transform);
@@ -162,21 +166,21 @@ private:
 		}
 
 		if(node.mesh >= 0) {
-			const size_t meshIndex = static_cast<size_t>(node.mesh);
+			const std::uint32_t meshIndex = static_cast<std::uint32_t>(node.mesh);
 
-			if(meshIndex < _model.meshes.size()) transform->addChild(_meshBuilder.makeMesh(
+			if(meshIndex < _model.meshes_count) transform->addChild(_meshBuilder.makeMesh(
 				_model.meshes[meshIndex],
 				node.skin
 			));
 		}
 
-		for(int childIdx : node.children) {
-			if(osg::Node* child = _createNode(childIdx, depth + 1)) {
+		for(std::uint32_t childSlot = 0; childSlot < node.children_count; childSlot++) {
+			if(osg::Node* child = _createNode(node.children[childSlot], depth + 1)) {
 				transform->addChild(child);
 			}
 		}
 
-		transform->setName(node.name);
+		transform->setName(nodeName);
 
 		return transform;
 	}
@@ -198,7 +202,7 @@ private:
 };
 
 osg::Node* buildScene(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::string& referrer,
 	const osgDB::Options* readOptions,
 	TextureCache* textureCache,

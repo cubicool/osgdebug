@@ -15,7 +15,7 @@ OSGX_ENABLE_WARNINGS
 
 namespace osg { class Image; }
 namespace osgDB { class Options; }
-namespace tinygltf { class Model; }
+struct tg3_model;
 
 namespace osgx::gltf::detail {
 
@@ -32,7 +32,7 @@ private:
 class TextureLoader {
 public:
 	TextureLoader(
-		const tinygltf::Model& model,
+		const tg3_model& model,
 		const std::string& referrer,
 		const osgDB::Options* readOptions,
 		TextureCache* cache
@@ -51,7 +51,7 @@ public:
 	void cache(const std::string& key, osg::Texture2D* texture) const;
 
 private:
-	const tinygltf::Model& _model;
+	const tg3_model& _model;
 	const std::string& _referrer;
 	const osgDB::Options* _readOptions;
 	TextureCache* _cache;

@@ -11,10 +11,10 @@ OSGX_ENABLE_WARNINGS
 
 #include <vector>
 
-namespace tinygltf { class Model; }
+struct tg3_model;
 
 namespace osgx::gltf::detail {
 
-std::vector<osg::ref_ptr<osg::Array>> extractArrays(const tinygltf::Model& model);
+std::vector<osg::ref_ptr<osg::Array>> extractArrays(const tg3_model& model);
 
 }

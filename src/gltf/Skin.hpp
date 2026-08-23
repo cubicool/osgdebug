@@ -17,7 +17,7 @@ OSGX_ENABLE_WARNINGS
 #include <string>
 #include <vector>
 
-namespace tinygltf { class Model; }
+struct tg3_model;
 
 namespace osgx::gltf::detail {
 
@@ -64,12 +64,12 @@ private:
 };
 
 std::vector<osg::ref_ptr<Skin>> prepareSkins(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays
 );
 
 void resolveSkinJointNodes(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::vector<osg::observer_ptr<osg::MatrixTransform>>& nodeTransforms,
 	const std::vector<osg::ref_ptr<Skin>>& skins
 );

@@ -2,9 +2,7 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
@@ -22,9 +20,9 @@ namespace {
 
 template<typename OSGArray, int ComponentType, int AccessorType>
 OSGArray* makeTypedArray(
-	const tinygltf::Buffer& buffer,
-	const tinygltf::BufferView& bufferView,
-	const tinygltf::Accessor& accessor
+	const tg3_buffer& buffer,
+	const tg3_buffer_view& bufferView,
+	const tg3_accessor& accessor
 ) {
 	if(accessor.count > std::numeric_limits<unsigned int>::max()) return nullptr;
 
@@ -32,15 +30,15 @@ OSGArray* makeTypedArray(
 
 	if(accessor.count == 0) return array;
 
-	const std::int32_t componentSize = tinygltf::GetComponentSizeInBytes(ComponentType);
-	const std::int32_t componentCount = tinygltf::GetNumComponentsInType(AccessorType);
+	const std::int32_t componentSize = tg3_component_size(ComponentType);
+	const std::int32_t componentCount = tg3_num_components(AccessorType);
 	const std::size_t elementSize = static_cast<std::size_t>(componentSize * componentCount);
-	const std::size_t sourceStride = bufferView.byteStride == 0
+	const std::size_t sourceStride = bufferView.byte_stride == 0
 		? elementSize
-		: bufferView.byteStride
+		: bufferView.byte_stride
 	;
 	const unsigned char* source =
-		buffer.data.data() + bufferView.byteOffset + accessor.byteOffset;
+		buffer.data.data + bufferView.byte_offset + accessor.byte_offset;
 
 	if constexpr(std::is_same_v<typename OSGArray::value_type, osg::Matrixf>) {
 		for(std::size_t i = 0; i < accessor.count; i++, source += sourceStride) {
@@ -50,11 +48,11 @@ OSGArray* makeTypedArray(
 			(*array)[i].set(values);
 		}
 	}
-	else if(bufferView.byteStride == 0) {
+	else if(bufferView.byte_stride == 0) {
 		std::memcpy(&(*array)[0], source, elementSize * accessor.count);
 	}
 	else {
-		for(std::size_t i = 0; i < accessor.count; i++, source += bufferView.byteStride) {
+		for(std::size_t i = 0; i < accessor.count; i++, source += bufferView.byte_stride) {
 			std::memcpy(&(*array)[i], source, elementSize);
 		}
 	}
@@ -70,31 +68,31 @@ template<
 	typename Vec4Array
 >
 osg::Array* makeVectorArray(
-	const tinygltf::Buffer& buffer,
-	const tinygltf::BufferView& bufferView,
-	const tinygltf::Accessor& accessor
+	const tg3_buffer& buffer,
+	const tg3_buffer_view& bufferView,
+	const tg3_accessor& accessor
 ) {
 	switch(accessor.type) {
-		case TINYGLTF_TYPE_SCALAR:
-			return makeTypedArray<ScalarArray, ComponentType, TINYGLTF_TYPE_SCALAR>(
+		case TG3_TYPE_SCALAR:
+			return makeTypedArray<ScalarArray, ComponentType, TG3_TYPE_SCALAR>(
 				buffer,
 				bufferView,
 				accessor
 			);
-		case TINYGLTF_TYPE_VEC2:
-			return makeTypedArray<Vec2Array, ComponentType, TINYGLTF_TYPE_VEC2>(
+		case TG3_TYPE_VEC2:
+			return makeTypedArray<Vec2Array, ComponentType, TG3_TYPE_VEC2>(
 				buffer,
 				bufferView,
 				accessor
 			);
-		case TINYGLTF_TYPE_VEC3:
-			return makeTypedArray<Vec3Array, ComponentType, TINYGLTF_TYPE_VEC3>(
+		case TG3_TYPE_VEC3:
+			return makeTypedArray<Vec3Array, ComponentType, TG3_TYPE_VEC3>(
 				buffer,
 				bufferView,
 				accessor
 			);
-		case TINYGLTF_TYPE_VEC4:
-			return makeTypedArray<Vec4Array, ComponentType, TINYGLTF_TYPE_VEC4>(
+		case TG3_TYPE_VEC4:
+			return makeTypedArray<Vec4Array, ComponentType, TG3_TYPE_VEC4>(
 				buffer,
 				bufferView,
 				accessor
@@ -104,76 +102,76 @@ osg::Array* makeVectorArray(
 }
 
 osg::Array* makeArray(
-	const tinygltf::Buffer& buffer,
-	const tinygltf::BufferView& bufferView,
-	const tinygltf::Accessor& accessor
+	const tg3_buffer& buffer,
+	const tg3_buffer_view& bufferView,
+	const tg3_accessor& accessor
 ) {
-	switch(accessor.componentType) {
-		case TINYGLTF_COMPONENT_TYPE_BYTE:
+	switch(accessor.component_type) {
+		case TG3_COMPONENT_TYPE_BYTE:
 			return makeVectorArray<
-				TINYGLTF_COMPONENT_TYPE_BYTE,
+				TG3_COMPONENT_TYPE_BYTE,
 				osg::ByteArray,
 				osg::Vec2bArray,
 				osg::Vec3bArray,
 				osg::Vec4bArray
 			>(buffer, bufferView, accessor);
 
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+		case TG3_COMPONENT_TYPE_UNSIGNED_BYTE:
 			return makeVectorArray<
-				TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE,
+				TG3_COMPONENT_TYPE_UNSIGNED_BYTE,
 				osg::UByteArray,
 				osg::Vec2ubArray,
 				osg::Vec3ubArray,
 				osg::Vec4ubArray
 			>(buffer, bufferView, accessor);
 
-		case TINYGLTF_COMPONENT_TYPE_SHORT:
+		case TG3_COMPONENT_TYPE_SHORT:
 			return makeVectorArray<
-				TINYGLTF_COMPONENT_TYPE_SHORT,
+				TG3_COMPONENT_TYPE_SHORT,
 				osg::ShortArray,
 				osg::Vec2sArray,
 				osg::Vec3sArray,
 				osg::Vec4sArray
 			>(buffer, bufferView, accessor);
 
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+		case TG3_COMPONENT_TYPE_UNSIGNED_SHORT:
 			return makeVectorArray<
-				TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT,
+				TG3_COMPONENT_TYPE_UNSIGNED_SHORT,
 				osg::UShortArray,
 				osg::Vec2usArray,
 				osg::Vec3usArray,
 				osg::Vec4usArray
 			>(buffer, bufferView, accessor);
 
-		case TINYGLTF_COMPONENT_TYPE_INT:
+		case TG3_COMPONENT_TYPE_INT:
 			return makeVectorArray<
-				TINYGLTF_COMPONENT_TYPE_INT,
+				TG3_COMPONENT_TYPE_INT,
 				osg::IntArray,
 				osg::Vec2iArray,
 				osg::Vec3iArray,
 				osg::Vec4iArray
 			>(buffer, bufferView, accessor);
 
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+		case TG3_COMPONENT_TYPE_UNSIGNED_INT:
 			return makeVectorArray<
-				TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT,
+				TG3_COMPONENT_TYPE_UNSIGNED_INT,
 				osg::UIntArray,
 				osg::Vec2uiArray,
 				osg::Vec3uiArray,
 				osg::Vec4uiArray
 			>(buffer, bufferView, accessor);
 
-		case TINYGLTF_COMPONENT_TYPE_FLOAT:
-			if(accessor.type == TINYGLTF_TYPE_MAT4) {
+		case TG3_COMPONENT_TYPE_FLOAT:
+			if(accessor.type == TG3_TYPE_MAT4) {
 				return makeTypedArray<
 					osg::MatrixfArray,
-					TINYGLTF_COMPONENT_TYPE_FLOAT,
-					TINYGLTF_TYPE_MAT4
+					TG3_COMPONENT_TYPE_FLOAT,
+					TG3_TYPE_MAT4
 				>(buffer, bufferView, accessor);
 			}
 
 			return makeVectorArray<
-				TINYGLTF_COMPONENT_TYPE_FLOAT,
+				TG3_COMPONENT_TYPE_FLOAT,
 				osg::FloatArray,
 				osg::Vec2Array,
 				osg::Vec3Array,
@@ -186,31 +184,31 @@ osg::Array* makeArray(
 
 }
 
-std::vector<osg::ref_ptr<osg::Array>> extractArrays(const tinygltf::Model& model) {
+std::vector<osg::ref_ptr<osg::Array>> extractArrays(const tg3_model& model) {
 	std::vector<osg::ref_ptr<osg::Array>> arrays;
 
-	arrays.reserve(model.accessors.size());
+	arrays.reserve(model.accessors_count);
 
 	GLTF_NOTIFY(0)
-		<< "extractArrays - " << model.accessors.size() << " accessor(s)" << std::endl
+		<< "extractArrays - " << model.accessors_count << " accessor(s)" << std::endl
 	;
 
-	for(std::size_t accessorIndex = 0; accessorIndex < model.accessors.size(); accessorIndex++) {
-		const tinygltf::Accessor& accessor = model.accessors[accessorIndex];
+	for(std::uint32_t accessorIndex = 0; accessorIndex < model.accessors_count; accessorIndex++) {
+		const tg3_accessor& accessor = model.accessors[accessorIndex];
 
 		GLTF_NOTIFY(1)
 			<< "accessor[" << accessorIndex << "]"
-			<< " componentType=" << accessor.componentType
+			<< " componentType=" << accessor.component_type
 			<< " type=" << accessor.type
 			<< " count=" << accessor.count
-			<< " bufferView=" << accessor.bufferView << std::endl
+			<< " bufferView=" << accessor.buffer_view << std::endl
 		;
 
 		// Accessors without a bufferView are valid, for example when sparse base data is implicitly
 		// zero. Preserve a null entry so OSG-array indices continue to match glTF accessor indices.
 		if(
-			accessor.bufferView < 0 ||
-			accessor.bufferView >= static_cast<int>(model.bufferViews.size())
+			accessor.buffer_view < 0 ||
+			static_cast<std::uint32_t>(accessor.buffer_view) >= model.buffer_views_count
 		) {
 			GLTF_NOTIFY(2) << "-> no bufferView, skipping" << std::endl;
 			arrays.push_back({});
@@ -218,18 +216,17 @@ std::vector<osg::ref_ptr<osg::Array>> extractArrays(const tinygltf::Model& model
 			continue;
 		}
 
-		const std::size_t bufferViewIndex = static_cast<std::size_t>(accessor.bufferView);
-		const tinygltf::BufferView& bufferView = model.bufferViews[bufferViewIndex];
+		const tg3_buffer_view& bufferView =
+			model.buffer_views[static_cast<std::uint32_t>(accessor.buffer_view)];
 
-		if(bufferView.buffer < 0 || bufferView.buffer >= static_cast<int>(model.buffers.size())) {
+		if(bufferView.buffer < 0 || static_cast<std::uint32_t>(bufferView.buffer) >= model.buffers_count) {
 			GLTF_NOTIFY(2) << "-> invalid buffer, skipping" << std::endl;
 			arrays.push_back({});
 
 			continue;
 		}
 
-		const std::size_t bufferIndex = static_cast<std::size_t>(bufferView.buffer);
-		const tinygltf::Buffer& buffer = model.buffers[bufferIndex];
+		const tg3_buffer& buffer = model.buffers[static_cast<std::uint32_t>(bufferView.buffer)];
 		osg::ref_ptr<osg::Array> array = makeArray(buffer, bufferView, accessor);
 
 		if(array) {

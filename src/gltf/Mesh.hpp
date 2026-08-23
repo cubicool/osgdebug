@@ -13,10 +13,8 @@ OSGX_ENABLE_WARNINGS
 #include <vector>
 
 namespace osgDB { class Options; }
-namespace tinygltf {
-class Model;
-struct Mesh;
-}
+struct tg3_model;
+struct tg3_mesh;
 
 namespace osgx::gltf::detail {
 
@@ -26,17 +24,17 @@ struct Skin;
 class MeshBuilder {
 public:
 	MeshBuilder(
-		const tinygltf::Model& model,
+		const tg3_model& model,
 		const osgDB::Options* readOptions,
 		MaterialBuilder& materialBuilder,
 		const std::vector<osg::ref_ptr<osg::Array>>& arrays,
 		const std::vector<osg::ref_ptr<Skin>>& skins
 	);
 
-	osg::Group* makeMesh(const tinygltf::Mesh& mesh, int skinIndex) const;
+	osg::Group* makeMesh(const tg3_mesh& mesh, int skinIndex) const;
 
 private:
-	const tinygltf::Model& _model;
+	const tg3_model& _model;
 	const osgDB::Options* _readOptions;
 	MaterialBuilder& _materialBuilder;
 	const std::vector<osg::ref_ptr<osg::Array>>& _arrays;

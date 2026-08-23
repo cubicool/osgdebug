@@ -2,13 +2,12 @@
 
 OSGX_DISABLE_WARNINGS
 
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
+#include "tiny_gltf_v3.h"
 
 OSGX_ENABLE_WARNINGS
 
 #include "Skin.hpp"
+#include "tg3_util.hpp"
 
 #include "Log.hpp"
 
@@ -22,6 +21,7 @@ OSGX_ENABLE_WARNINGS
 #include "osgx/gltf/Shader.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <unordered_map>
 
@@ -128,31 +128,31 @@ void SkinPaletteCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 }
 
 std::vector<osg::ref_ptr<Skin>> prepareSkins(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays
 ) {
 	std::vector<osg::ref_ptr<Skin>> skins;
 
-	skins.reserve(model.skins.size());
+	skins.reserve(model.skins_count);
 
-	for(std::size_t skinIndex = 0; skinIndex < model.skins.size(); skinIndex++) {
-		const tinygltf::Skin& source = model.skins[skinIndex];
+	for(std::uint32_t skinIndex = 0; skinIndex < model.skins_count; skinIndex++) {
+		const tg3_skin& source = model.skins[skinIndex];
 		osg::ref_ptr<Skin> skin = new Skin();
 
 		skin->index = static_cast<int>(skinIndex);
-		skin->name = source.name;
-		skin->joints = source.joints;
+		skin->name = tg3_to_string(source.name);
+		skin->joints.assign(source.joints, source.joints + source.joints_count);
 		skin->skeleton = source.skeleton;
-		skin->inverseBindMatrices.resize(source.joints.size(), osg::Matrixf::identity());
-		skin->jointNodes.resize(source.joints.size());
+		skin->inverseBindMatrices.resize(source.joints_count, osg::Matrixf::identity());
+		skin->jointNodes.resize(source.joints_count);
 
 		if(
-			source.inverseBindMatrices >= 0 &&
-			source.inverseBindMatrices < static_cast<int>(arrays.size()) &&
-			arrays[static_cast<std::size_t>(source.inverseBindMatrices)]
+			source.inverse_bind_matrices >= 0 &&
+			static_cast<std::uint32_t>(source.inverse_bind_matrices) < arrays.size() &&
+			arrays[static_cast<std::size_t>(source.inverse_bind_matrices)]
 		) {
 			const std::size_t accessorIndex =
-				static_cast<std::size_t>(source.inverseBindMatrices);
+				static_cast<std::size_t>(source.inverse_bind_matrices);
 			osg::Array* array = arrays[accessorIndex];
 			auto* inverseBindMatrices = dynamic_cast<osg::MatrixfArray*>(array);
 
@@ -179,14 +179,14 @@ std::vector<osg::ref_ptr<Skin>> prepareSkins(
 			else {
 				GLTF_NOTIFY(1)
 					<< "skin[" << skinIndex << "] inverseBindMatrices accessor "
-					<< source.inverseBindMatrices << " is not a MatrixfArray" << std::endl
+					<< source.inverse_bind_matrices << " is not a MatrixfArray" << std::endl
 				;
 			}
 		}
-		else if(source.inverseBindMatrices >= 0) {
+		else if(source.inverse_bind_matrices >= 0) {
 			GLTF_NOTIFY(1)
 				<< "skin[" << skinIndex << "] inverseBindMatrices accessor "
-				<< source.inverseBindMatrices << " is unavailable" << std::endl
+				<< source.inverse_bind_matrices << " is unavailable" << std::endl
 			;
 		}
 
@@ -206,7 +206,7 @@ std::vector<osg::ref_ptr<Skin>> prepareSkins(
 }
 
 void resolveSkinJointNodes(
-	const tinygltf::Model& model,
+	const tg3_model& model,
 	const std::vector<osg::observer_ptr<osg::MatrixTransform>>& nodeTransforms,
 	const std::vector<osg::ref_ptr<Skin>>& skins
 ) {
@@ -214,9 +214,11 @@ void resolveSkinJointNodes(
 	// expose parent pointers, so derive them from node.children.
 	std::unordered_map<int, int> nodeParent;
 
-	for(std::size_t nodeIndex = 0; nodeIndex < model.nodes.size(); nodeIndex++) {
-		for(int childIndex : model.nodes[nodeIndex].children) {
-			nodeParent[childIndex] = static_cast<int>(nodeIndex);
+	for(std::uint32_t nodeIndex = 0; nodeIndex < model.nodes_count; nodeIndex++) {
+		const tg3_node& node = model.nodes[nodeIndex];
+
+		for(std::uint32_t childSlot = 0; childSlot < node.children_count; childSlot++) {
+			nodeParent[node.children[childSlot]] = static_cast<int>(nodeIndex);
 		}
 	}
 
