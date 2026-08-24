@@ -11,6 +11,7 @@ set(OSGX_EXAMPLES
 	"manipulator"
 	"notifyfilter"
 	"picking"
+	"pixel-text"
 	"platform"
 	"shadow"
 	"shapes"

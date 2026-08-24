@@ -194,6 +194,7 @@ add_library(osgx ${OSGX_LIBRARY_TYPE}
 	src/Manipulators.cpp
 	src/PBR.cpp
 	src/Picking.cpp
+	src/PixelText.cpp
 	src/Shadow.cpp
 	src/Shapes.cpp
 	src/Shader.cpp
@@ -217,6 +218,7 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Manipulators.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/PBR.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Picking.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/PixelText.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shadow.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shapes.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shader.hpp>"
@@ -473,6 +475,7 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 		"ext/python/osgx-picking.cpp"
 		"ext/python/osgx-shapes.cpp"
 		"ext/python/osgx-gizmos.cpp"
+		"ext/python/osgx-pixel-text.cpp"
 	)
 
 	# PUBLIC, not PRIVATE: ext/python/osgx.cpp (compiled into the separate osgx_python target

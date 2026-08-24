@@ -8,6 +8,7 @@
 #include "Manipulators.hpp"
 #include "CameraIntents.hpp"
 #include "Grid.hpp"
+#include "PixelText.hpp"
 #include "Shapes.hpp"
 #include "Shader.hpp"
 #include "PBR.hpp"

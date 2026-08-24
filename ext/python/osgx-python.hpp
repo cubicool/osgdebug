@@ -40,6 +40,7 @@ void bind_debug(py::module_& m_debug);
 void bind_picking(py::module_& m_picking);
 void bind_shapes(py::module_& m);
 void bind_gizmos(py::module_& m);
+void bind_pixel_text(py::module_& m);
 
 #ifdef OSGX_IMGUI
 void bind_imgui(py::module_& m_imgui);
