@@ -92,6 +92,13 @@ void MaterialBuilder::applyMaterial(
 	const tg3_material& mat = *material;
 	const auto& pbr = mat.pbr_metallic_roughness;
 
+	// One osgx::Material StateAttribute collects every map/factor this function decides on below;
+	// it's applied to the StateSet exactly once, at the very end, replacing what used to be up to
+	// four separate setTextureAttributeAndModes() calls plus a trailing osgx::attachMaterialFactors()
+	// -- and, unlike that split, has*Map can no longer disagree with what's actually bound: it's
+	// osgx::Material's own texture ref_ptrs, checked at apply() time, not a separately-tracked bool.
+	osg::ref_ptr<osgx::Material> materialAttr = new osgx::Material();
+
 	// sRGB: per the glTF spec, baseColor/diffuse and emissive textures
 	// are authored in sRGB gamma space; normal and ORM (occlusion/
 	// roughness/metallic) textures are linear data, not color, and
@@ -105,7 +112,10 @@ void MaterialBuilder::applyMaterial(
 
 		const unsigned int textureUnit = static_cast<unsigned int>(unit);
 
-		geom->getOrCreateStateSet()->setTextureAttributeAndModes(textureUnit, tex);
+		if(unit == osgx::BASE_COLOR_TEXTURE_UNIT) materialAttr->setBaseColorMap(tex);
+		else if(unit == osgx::NORMAL_TEXTURE_UNIT) materialAttr->setNormalMap(tex);
+		else if(unit == osgx::ORM_TEXTURE_UNIT) materialAttr->setMetallicRoughnessMap(tex);
+		else if(unit == osgx::EMISSIVE_TEXTURE_UNIT) materialAttr->setEmissiveMap(tex);
 
 		auto it = texCoordSets.find(texCoord);
 
@@ -153,7 +163,6 @@ void MaterialBuilder::applyMaterial(
 		haveOcclusion &&
 		mat.occlusion_texture.index == pbr.metallic_roughness_texture.index
 	;
-	bool haveMetallicRoughnessMap = pbr.metallic_roughness_texture.index >= 0;
 
 	if(haveOcclusion && !sameOcclusionImage) {
 		std::string bakeKey = _env._referrer + "|orm-occlusion|" + std::to_string(matIdx);
@@ -206,10 +215,7 @@ void MaterialBuilder::applyMaterial(
 			_textureLoader.cache(bakeKey, ormTex);
 		}
 
-		geom->getOrCreateStateSet()->setTextureAttributeAndModes(
-			osgx::gltf::shader::ORM_TEXTURE_UNIT,
-			ormTex
-		);
+		materialAttr->setMetallicRoughnessMap(ormTex);
 
 		auto occTexCoordIt = texCoordSets.find(mat.occlusion_texture.tex_coord);
 
@@ -411,23 +417,13 @@ void MaterialBuilder::applyMaterial(
 					_textureLoader.cache(bakeKey + "|orm", ormTex);
 				}
 
-				geom->getOrCreateStateSet()->setTextureAttributeAndModes(
-					osgx::gltf::shader::BASE_COLOR_TEXTURE_UNIT,
-					bcTex
-				);
-				geom->getOrCreateStateSet()->setTextureAttributeAndModes(
-					osgx::gltf::shader::ORM_TEXTURE_UNIT,
-					ormTex
-				);
-
-				// The bake always produces a real (at-least-1x1) baseColor
-				// + ORM texture even for factor-only spec-gloss materials
-				// - see _bakeSpecGlossToMetalRough's comment -- so both
-				// slots are genuinely populated from here on, regardless
-				// of what the core pbrMetallicRoughness JSON block did or
-				// didn't declare.
-				haveCoreBaseColor = true;
-				haveMetallicRoughnessMap = true;
+				// The bake always produces a real (at-least-1x1) baseColor + ORM image even for
+				// factor-only spec-gloss materials (see _bakeSpecGlossToMetalRough's comment), so
+				// both setters above always receive a genuine texture, regardless of what the core
+				// pbrMetallicRoughness JSON block did or didn't declare -- materialAttr's has*Map
+				// flags (derived from these same ref_ptrs at apply() time) come along for free.
+				materialAttr->setBaseColorMap(bcTex);
+				materialAttr->setMetallicRoughnessMap(ormTex);
 
 				int bakeTexCoord = (diffuseIdx >= 0) ? diffuseTexCoord : specGlossTexCoord;
 				auto texCoordIt = texCoordSets.find(bakeTexCoord);
@@ -453,33 +449,27 @@ void MaterialBuilder::applyMaterial(
 		}
 	}
 
-	// Export the material as a single osgx_gltf_Material buffer for downstream PBR shaders
-	// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field - this is
+	// Finish and apply materialAttr as a single osgx_gltf_Material buffer for downstream PBR
+	// shaders (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field - this is
 	// this plugin's own extension to the material interface, not part of OSG's osg_*
 	// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
 	// with an unrelated shader's own material uniforms.
 	//
-	// haveOcclusion/haveMetallicRoughnessMap/haveCoreBaseColor/haveNormalMap are gates so
-	// a factor-only material (no texture at all - e.g. Fox's roughnessFactor=0.58 with
-	// no metallicRoughnessTexture) doesn't get its authored factor silently discarded by
-	// an unconditional texture() read of an unbound unit.
-	//
-	// The std430 buffer layout/binding this builds is osgx::attachMaterialFactors()'s job now
-	// (PBR.hpp/PBR.cpp) -- generic, not glTF-specific, so any non-glTF geometry feeding the same
-	// deferred G-buffer pipeline builds this exact buffer the same way instead of hand-duplicating
-	// the field layout (see examples/osgx-gbuffer-blueprint.cpp's buildShapeNode()).
-	osgx::attachMaterialFactors(*geom->getOrCreateStateSet(), osgx::MaterialFactors{
-		.baseColor = osg::Vec4(
-			baseColorFactor.x(), baseColorFactor.y(), baseColorFactor.z(), baseColorFactor.w()
-		),
-		.roughness = static_cast<float>(pbr.roughness_factor),
-		.metallic = static_cast<float>(pbr.metallic_factor),
-		.hasBaseColorMap = haveCoreBaseColor,
-		.hasMetallicRoughnessMap = haveMetallicRoughnessMap,
-		.hasOcclusion = haveOcclusion,
-		.hasNormalMap = haveNormalMap
-	});
+	// hasBaseColorMap/hasMetallicRoughnessMap/hasNormalMap are no longer set here at all -- they're
+	// osgx::Material's own derived state, gating a factor-only material (no texture at all - e.g.
+	// Fox's roughnessFactor=0.58 with no metallicRoughnessTexture) from having its authored factor
+	// silently discarded by an unconditional texture() read of an unbound unit, same as before,
+	// just computed from whichever setXMap() calls above actually landed a real texture rather than
+	// from a separately-tracked bool that could disagree with that. hasOcclusion has no texture of
+	// its own to derive from (see osgx::Material's class comment, PBR.hpp), so it's still explicit.
+	materialAttr->setBaseColor(
+		osg::Vec4(baseColorFactor.x(), baseColorFactor.y(), baseColorFactor.z(), baseColorFactor.w())
+	);
+	materialAttr->setRoughness(static_cast<float>(pbr.roughness_factor));
+	materialAttr->setMetallic(static_cast<float>(pbr.metallic_factor));
+	materialAttr->setHasOcclusion(haveOcclusion);
 
+	geom->getOrCreateStateSet()->setAttributeAndModes(materialAttr.get());
 
 	// Alpha coverage is a core glTF material property, but this loader deliberately
 	// does not impose a particular PBR shader. Export its values as namespaced

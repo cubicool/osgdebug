@@ -5,6 +5,8 @@ OSGX_DISABLE_WARNINGS
 
 #include <osg/BufferIndexBinding>
 #include <osg/BufferObject>
+#include <osg/State>
+#include <osg/Texture2D>
 
 OSGX_ENABLE_WARNINGS
 
@@ -18,32 +20,136 @@ std::string snippets() {
 	return std::string(D_GGX) + G_SCHLICK + G_SMITH + F_SCHLICK + F_SCHLICK_ROUGHNESS;
 }
 
-osg::ref_ptr<osg::FloatArray> attachMaterialFactors(
-	osg::StateSet& stateSet,
-	const MaterialFactors& factors
-) {
-	// Field order/padding must match MATERIAL_INPUTS' `osgx_gltf_Material` std430 block
-	// (Shader.hpp) exactly -- see MaterialFactors' own comment (PBR.hpp).
-	auto buffer = osgx::make_ref<osgx::FloatArray>(
-		factors.baseColor.r(), factors.baseColor.g(), factors.baseColor.b(), factors.baseColor.a(),
-		factors.roughness, factors.metallic,
-		factors.hasBaseColorMap ? 1.0f : 0.0f,
-		factors.hasMetallicRoughnessMap ? 1.0f : 0.0f,
-		factors.hasOcclusion ? 1.0f : 0.0f,
-		factors.hasNormalMap ? 1.0f : 0.0f,
-		0.0f, 0.0f
+Material::Material() {
+	_initBuffer();
+}
+
+Material::~Material() {}
+
+Material::Material(const Material& material, const osg::CopyOp& copyop):
+osg::StateAttribute(material, copyop),
+_baseColor(material._baseColor),
+_roughness(material._roughness),
+_metallic(material._metallic),
+_hasOcclusion(material._hasOcclusion),
+_baseColorMap(static_cast<osg::Texture2D*>(copyop(material._baseColorMap.get()))),
+_normalMap(static_cast<osg::Texture2D*>(copyop(material._normalMap.get()))),
+_metallicRoughnessMap(static_cast<osg::Texture2D*>(copyop(material._metallicRoughnessMap.get()))),
+_emissiveMap(static_cast<osg::Texture2D*>(copyop(material._emissiveMap.get()))) {
+	_initBuffer();
+}
+
+// Field order/padding must match MATERIAL_INPUTS' `osgx_gltf_Material` std430 block (Shader.hpp)
+// exactly. Built once here (not per-write) so every setter can mutate it in place via dirty()
+// instead of standing up a new osg::ShaderStorageBufferObject/GL buffer on every call.
+void Material::_initBuffer() {
+	_buffer = osgx::make_ref<osgx::FloatArray>(static_cast<std::size_t>(12));
+	_buffer->setBufferObject(new osg::ShaderStorageBufferObject());
+
+	_binding = new osg::ShaderStorageBufferBinding(
+		MATERIAL_BINDING, _buffer, 0, static_cast<GLsizeiptr>(_buffer->getTotalDataSize())
 	);
 
-	buffer->setBufferObject(new osg::ShaderStorageBufferObject());
+	_writeFactors();
+}
 
-	stateSet.setAttributeAndModes(
-		new osg::ShaderStorageBufferBinding(
-			MATERIAL_BINDING, buffer, 0, static_cast<GLsizeiptr>(buffer->getTotalDataSize())
-		),
-		osg::StateAttribute::ON
-	);
+void Material::_writeFactors() {
+	(*_buffer)[0] = _baseColor.r();
+	(*_buffer)[1] = _baseColor.g();
+	(*_buffer)[2] = _baseColor.b();
+	(*_buffer)[3] = _baseColor.a();
+	(*_buffer)[4] = _roughness;
+	(*_buffer)[5] = _metallic;
+	(*_buffer)[6] = _baseColorMap.valid() ? 1.0f : 0.0f;
+	(*_buffer)[7] = _metallicRoughnessMap.valid() ? 1.0f : 0.0f;
+	(*_buffer)[8] = _hasOcclusion ? 1.0f : 0.0f;
+	(*_buffer)[9] = _normalMap.valid() ? 1.0f : 0.0f;
+	// [10], [11]: trailing std430 padding, left at 0.
 
-	return buffer;
+	_buffer->dirty();
+}
+
+int Material::compare(const osg::StateAttribute& sa) const {
+	COMPARE_StateAttribute_Types(Material, sa)
+
+	COMPARE_StateAttribute_Parameter(_baseColorMap)
+	COMPARE_StateAttribute_Parameter(_normalMap)
+	COMPARE_StateAttribute_Parameter(_metallicRoughnessMap)
+	COMPARE_StateAttribute_Parameter(_emissiveMap)
+	COMPARE_StateAttribute_Parameter(_hasOcclusion)
+	COMPARE_StateAttribute_Parameter(_baseColor)
+	COMPARE_StateAttribute_Parameter(_roughness)
+	COMPARE_StateAttribute_Parameter(_metallic)
+
+	return 0;
+}
+
+// Read-only over this object's state -- see the class comment (PBR.hpp) for why that matters
+// across multiple graphics contexts. Textures bind through osg::State's own per-unit tracking
+// (applyTextureAttribute), so a texture already current at that unit from elsewhere is a no-op;
+// the factor buffer binds through the usual osg::Array/BufferObject per-context sync.
+void Material::apply(osg::State& state) const {
+	if(_baseColorMap.valid())
+		state.applyTextureAttribute(BASE_COLOR_TEXTURE_UNIT, _baseColorMap.get());
+
+	if(_normalMap.valid())
+		state.applyTextureAttribute(NORMAL_TEXTURE_UNIT, _normalMap.get());
+
+	if(_metallicRoughnessMap.valid())
+		state.applyTextureAttribute(ORM_TEXTURE_UNIT, _metallicRoughnessMap.get());
+
+	if(_emissiveMap.valid())
+		state.applyTextureAttribute(EMISSIVE_TEXTURE_UNIT, _emissiveMap.get());
+
+	state.applyAttribute(_binding.get());
+}
+
+void Material::setBaseColor(const osg::Vec4& baseColor) {
+	_baseColor = baseColor;
+
+	_writeFactors();
+}
+
+void Material::setRoughness(float roughness) {
+	_roughness = roughness;
+
+	_writeFactors();
+}
+
+void Material::setMetallic(float metallic) {
+	_metallic = metallic;
+
+	_writeFactors();
+}
+
+void Material::setHasOcclusion(bool hasOcclusion) {
+	_hasOcclusion = hasOcclusion;
+
+	_writeFactors();
+}
+
+void Material::setBaseColorMap(osg::Texture2D* texture) {
+	_baseColorMap = texture;
+
+	_writeFactors();
+}
+
+void Material::setNormalMap(osg::Texture2D* texture) {
+	_normalMap = texture;
+
+	_writeFactors();
+}
+
+void Material::setMetallicRoughnessMap(osg::Texture2D* texture) {
+	_metallicRoughnessMap = texture;
+
+	_writeFactors();
+}
+
+void Material::setEmissiveMap(osg::Texture2D* texture) {
+	_emissiveMap = texture;
+
+	_writeFactors();
 }
 
 void OrbitLightRig::operator()(osg::Node* node, osg::NodeVisitor* nv) {

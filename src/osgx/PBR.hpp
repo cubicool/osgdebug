@@ -8,6 +8,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Array>
 #include <osg/NodeCallback>
 #include <osg/NodeVisitor>
+#include <osg/StateAttribute>
 #include <osg/StateSet>
 #include <osg/Uniform>
 #include <osg/Vec4>
@@ -17,6 +18,11 @@ OSGX_ENABLE_WARNINGS
 #include <cmath>
 #include <string>
 #include <vector>
+
+namespace osg {
+	class ShaderStorageBufferBinding;
+	class Texture2D;
+}
 
 namespace osgx {
 
@@ -112,47 +118,119 @@ struct osgx_Material {
 };
 )GLSL";
 
-// Binding point for the factor buffer MaterialFactors/attachMaterialFactors() below build. Lives
-// here (generic osgx::), not under osgx::gltf -- osgx::gltf::shader::MATERIAL_BINDING (Shader.hpp)
-// is now just an alias for this constant, so a caller reading GET_MATERIAL never has to care
-// whether the buffer at this binding was populated by the glTF loader (Material.cpp) or by a
-// hand-authored MaterialFactors (see examples/osgx-gbuffer-blueprint.cpp's buildShapeNode() for a
-// non-glTF consumer) -- same binding, same buffer shape, either way. See TODO.md's "Generic vs.
-// glTF-specific layering" section for the principle this is following.
+// Binding point for the factor buffer osgx::Material (below) builds. Lives here (generic osgx::),
+// not under osgx::gltf -- osgx::gltf::shader::MATERIAL_BINDING (Shader.hpp) is now just an alias
+// for this constant, so a caller reading GET_MATERIAL never has to care whether the buffer at this
+// binding was populated by the glTF loader (Material.cpp) or by a hand-authored osgx::Material
+// (see examples/osgx-gbuffer-blueprint.cpp's buildShapeNode() for a non-glTF consumer) -- same
+// binding, same buffer shape, either way. See TODO.md's "Generic vs. glTF-specific layering"
+// section for the principle this is following.
 inline constexpr unsigned int MATERIAL_BINDING = 0;
 
-// Plain factor-only material description -- the C++-side counterpart to MATERIAL_INPUTS'
-// `osgx_gltf_Material` SSBO block (Shader.hpp) and the GET_MATERIAL snippet that decodes it
-// (PBRIBL.cpp). Plays the same role for a material buffer that VertexLayout (Shapes.hpp) plays
-// for vertex attribute locations: a small aggregate describing what the CALLER has, so the exact
-// std430 field order/padding of the buffer it feeds isn't private knowledge every producer has to
-// duplicate by hand. `has*Map` gates whether GET_MATERIAL samples a texture for that channel at
-// all -- leave a flag false and attachMaterialFactors() neither requires nor touches any texture
-// unit for it; a caller that DOES want texturing still binds its own osg::Texture2D at the
-// conventional unit (BASE_COLOR_TEXTURE_UNIT etc., Shader.hpp) separately. This struct only ever
-// carries the buffer's scalar factors/flags, never texture objects.
-struct MaterialFactors {
-	osg::Vec4 baseColor{1.0f, 1.0f, 1.0f, 1.0f};
-	float roughness = 1.0f;
-	float metallic = 1.0f;
-	bool hasBaseColorMap = false;
-	bool hasMetallicRoughnessMap = false;
-	bool hasOcclusion = false;
-	bool hasNormalMap = false;
-};
+// Texture units osgx::Material's four maps bind at, and osgx::gltf's loader populates directly
+// (Material.cpp) for the same reason MATERIAL_BINDING lives here rather than under osgx::gltf::
+// shader:: -- osgx::gltf::shader::BASE_COLOR_TEXTURE_UNIT etc. (Shader.hpp) are now just aliases.
+inline constexpr int BASE_COLOR_TEXTURE_UNIT = 0;
+inline constexpr int NORMAL_TEXTURE_UNIT = 1;
+inline constexpr int ORM_TEXTURE_UNIT = 2;
+inline constexpr int EMISSIVE_TEXTURE_UNIT = 3;
 
-// Builds the std430-laid-out osg::FloatArray GET_MATERIAL expects (must match MATERIAL_INPUTS'
-// `osgx_gltf_Material` block field-for-field: baseColorFactor(vec4), roughnessFactor,
-// metallicFactor, the four has*Map flags, then 2 floats of trailing padding) and binds it to
-// `stateSet` at MATERIAL_BINDING via a fresh osg::ShaderStorageBufferObject/Binding -- the exact
-// steps the glTF loader's Material.cpp and any non-glTF geometry both need, now written once. The
-// returned array is the live buffer backing that binding, in case a caller wants to mutate factors
-// later (osg::FloatArray writes are picked up by OSG's buffer-object dirty tracking same as any
-// other Array); most one-shot callers can simply discard the return value.
-osg::ref_ptr<osg::FloatArray> attachMaterialFactors(
-	osg::StateSet& stateSet,
-	const MaterialFactors& factors
-);
+// Custom osg::StateAttribute wrapping a PBR material's scalar factors and up to four texture maps
+// into ONE state-graph object: `stateSet.setAttributeAndModes(new osgx::Material(...))` replaces
+// the old attachMaterialFactors() free function plus however many manual
+// setTextureAttributeAndModes() calls a caller previously had to keep in sync with it by hand
+// (osgx::gltf's own loader -- Material.cpp -- was the worst offender: the has*Map flags it built
+// were a SEPARATE set of locals from whatever texture binds actually happened, so a load failure
+// partway through could silently leave them lying about what was bound). Modeled on osg::Material
+// (a StateAttribute wrapping glMaterial state) more than on osgEarth::PBRTexture (a StateAttribute
+// wrapping just texture refs, paired with a separate plain PBRMaterial value struct) -- osgx::
+// Material owns BOTH the scalar factors and the maps together, since MATERIAL_INPUTS/GET_MATERIAL
+// (Shader.hpp/PBRIBL.cpp) already treat them as one interface.
+//
+// has*Map (the flags GET_MATERIAL gates every texture read behind) are no longer separate bools a
+// caller can drift out of sync with reality -- they're derived directly from whether the
+// corresponding ref_ptr is set, so binding a texture and marking "this material has that map" are
+// literally the same operation, by construction. hasOcclusion is the one exception: occlusion is
+// read from the metallic-roughness map's own R channel, not a dedicated texture/unit of its own
+// (see Material.cpp's ORM-baking comments), so it stays an explicit flag -- setHasOcclusion().
+//
+// Deliberately claims its own osg::StateAttribute::Type (CAPABILITY) rather than reusing an
+// existing one the way osgEarth::PBRTexture reuses TEXTURE -- osg::State keys its per-context
+// "last applied attribute" bookkeeping by (Type, member), so two unrelated StateAttribute classes
+// sharing a Type would silently fight over the same slot if both ever landed on the same StateSet
+// (a real osg::Texture at unit 0 alongside a same-Type custom attribute, for instance).
+// osgEarth::PBRTexture only gets away with reusing TEXTURE because it also gives up on compare()
+// (unconditionally returns -1, opting out of state-sorting dedup entirely) -- osgx::Material does
+// neither: real dedup means two drawables sharing an equal material (same texture pointers --
+// osgx::gltf's TextureLoader already caches/shares those -- and equal factors) skip a redundant
+// apply() entirely.
+//
+// apply() is deliberately read-only over this object's state -- it binds whatever's already set,
+// nothing more. Every setter rebuilds the factor buffer's contents immediately (in place, via
+// osg::Array::dirty() -- no new GL buffer object, no custom per-context dirty flag) rather than
+// leaving that work for apply() to discover lazily; apply() can then run concurrently from
+// multiple graphics contexts (osgViewer::CompositeViewer, an offscreen bake pass alongside the
+// main view) with no shared mutable state to race over, the same guarantee osg::Material::apply()
+// gets for free by only ever touching glMaterialfv with already-known values.
+class Material : public osg::StateAttribute {
+	public:
+		static constexpr Type MATERIAL_TYPE = CAPABILITY;
+
+		Material();
+		Material(const Material& material, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
+
+		META_StateAttribute(osgx, Material, MATERIAL_TYPE)
+
+		int compare(const osg::StateAttribute& sa) const override;
+		void apply(osg::State& state) const override;
+
+		void setBaseColor(const osg::Vec4& baseColor);
+		const osg::Vec4& getBaseColor() const { return _baseColor; }
+
+		void setRoughness(float roughness);
+		float getRoughness() const { return _roughness; }
+
+		void setMetallic(float metallic);
+		float getMetallic() const { return _metallic; }
+
+		// See the class comment -- occlusion has no dedicated unit of its own, so unlike the four
+		// map setters below, this doesn't derive from a ref_ptr.
+		void setHasOcclusion(bool hasOcclusion);
+		bool getHasOcclusion() const { return _hasOcclusion; }
+
+		void setBaseColorMap(osg::Texture2D* texture);
+		osg::Texture2D* getBaseColorMap() const { return _baseColorMap.get(); }
+
+		void setNormalMap(osg::Texture2D* texture);
+		osg::Texture2D* getNormalMap() const { return _normalMap.get(); }
+
+		// glTF's combined occlusion/roughness/metallic texture, bound at ORM_TEXTURE_UNIT.
+		void setMetallicRoughnessMap(osg::Texture2D* texture);
+		osg::Texture2D* getMetallicRoughnessMap() const { return _metallicRoughnessMap.get(); }
+
+		void setEmissiveMap(osg::Texture2D* texture);
+		osg::Texture2D* getEmissiveMap() const { return _emissiveMap.get(); }
+
+	protected:
+		virtual ~Material();
+
+	private:
+		void _initBuffer();
+		void _writeFactors();
+
+		osg::Vec4 _baseColor{1.0f, 1.0f, 1.0f, 1.0f};
+		float _roughness = 1.0f;
+		float _metallic = 1.0f;
+		bool _hasOcclusion = false;
+
+		osg::ref_ptr<osg::Texture2D> _baseColorMap;
+		osg::ref_ptr<osg::Texture2D> _normalMap;
+		osg::ref_ptr<osg::Texture2D> _metallicRoughnessMap;
+		osg::ref_ptr<osg::Texture2D> _emissiveMap;
+
+		osg::ref_ptr<osg::FloatArray> _buffer;
+		osg::ref_ptr<osg::ShaderStorageBufferBinding> _binding;
+};
 
 // All five snippets, concatenated in dependency order (G_SMITH calls osgx_G_Schlick, so
 // G_SCHLICK must precede it). Convenience for callers that want the whole BRDF toolkit;

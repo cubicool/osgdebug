@@ -94,22 +94,26 @@ std::filesystem::path findModelFile(std::string_view filename) {
 // PBRIBLGBuffer::create()'s geometry pass -- a first concrete step toward TODO.md's "Generic vs.
 // glTF-specific layering" goal: the shader-side contract (osgx_gltf_Material/GET_MATERIAL) was
 // already glTF-INDEPENDENT (every field is a plain factor, gated behind has*Map flags this call
-// leaves false), it just had no non-glTF C++-side producer yet. osgx::attachMaterialFactors()
-// (PBR.hpp/PBR.cpp) is that producer now -- the exact same one the glTF loader's own Material.cpp
-// calls for a factor-only material (e.g. Fox's roughnessFactor=0.58 with no textures at all) --
-// so PBRIBLGBuffer::create()'s Program (which always declares MATERIAL_INPUTS/GET_MATERIAL) has
+// leaves false), it just had no non-glTF C++-side producer yet. osgx::Material (PBR.hpp/PBR.cpp)
+// is that producer now -- the exact same StateAttribute the glTF loader's own Material.cpp builds
+// for a factor-only material (e.g. Fox's roughnessFactor=0.58 with no textures at all) -- so
+// PBRIBLGBuffer::create()'s Program (which always declares MATERIAL_INPUTS/GET_MATERIAL) has
 // something valid to read regardless of what built the geometry. No textures are bound at any
 // unit: every texture read in GET_MATERIAL/AlphaCoverage is already conditioned on its own
-// has*Map flag being false here, and osgx_gltf_Emissive() (the one unconditional sample) safely
-// reads GL's well-defined (0,0,0,1) incomplete-texture fallback for an unbound sampler -- exactly
-// the same as any real glTF material with no emissive texture.
+// has*Map flag being false here (osgx::Material derives them from its unset texture ref_ptrs), and
+// osgx_gltf_Emissive() (the one unconditional sample) safely reads GL's well-defined (0,0,0,1)
+// incomplete-texture fallback for an unbound sampler -- exactly the same as any real glTF material
+// with no emissive texture.
 void attachFlatMaterial(
 	osg::Geometry* geometry, const osg::Vec4& baseColor, float roughness, float metallic
 ) {
-	osgx::attachMaterialFactors(
-		*geometry->getOrCreateStateSet(),
-		osgx::MaterialFactors{.baseColor = baseColor, .roughness = roughness, .metallic = metallic}
-	);
+	auto* material = new osgx::Material();
+
+	material->setBaseColor(baseColor);
+	material->setRoughness(roughness);
+	material->setMetallic(metallic);
+
+	geometry->getOrCreateStateSet()->setAttributeAndModes(material);
 
 	auto* ss = geometry->getOrCreateStateSet();
 

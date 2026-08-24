@@ -25,16 +25,18 @@ inline constexpr char JOINT_WEIGHTS_ATTRIBUTE_NAME[] = "osgx_gltf_JointWeights";
 
 // Alias, not a separate constant -- osgx::MATERIAL_BINDING (PBR.hpp) is now the canonical value,
 // since the buffer it names (MATERIAL_INPUTS' `osgx_gltf_Material` block) has a glTF-independent
-// C++-side builder too (osgx::attachMaterialFactors()). Keeping the name here means existing code
-// under osgx::gltf::shader:: doesn't need to change, just what it points at.
+// C++-side builder too (osgx::Material). Keeping the name here means existing code under
+// osgx::gltf::shader:: doesn't need to change, just what it points at.
 inline constexpr unsigned int MATERIAL_BINDING = osgx::MATERIAL_BINDING;
 inline constexpr unsigned int JOINT_MATRICES_BINDING = 2;
 
-// Texture units populated per primitive by the loader.
-inline constexpr int BASE_COLOR_TEXTURE_UNIT = 0;
-inline constexpr int NORMAL_TEXTURE_UNIT = 1;
-inline constexpr int ORM_TEXTURE_UNIT = 2;
-inline constexpr int EMISSIVE_TEXTURE_UNIT = 3;
+// Aliases, not separate constants -- osgx::{BASE_COLOR,NORMAL,ORM,EMISSIVE}_TEXTURE_UNIT (PBR.hpp)
+// are now the canonical values, since osgx::Material (also PBR.hpp) binds its four maps at these
+// same units independent of glTF. Same reasoning as MATERIAL_BINDING just above.
+inline constexpr int BASE_COLOR_TEXTURE_UNIT = osgx::BASE_COLOR_TEXTURE_UNIT;
+inline constexpr int NORMAL_TEXTURE_UNIT = osgx::NORMAL_TEXTURE_UNIT;
+inline constexpr int ORM_TEXTURE_UNIT = osgx::ORM_TEXTURE_UNIT;
+inline constexpr int EMISSIVE_TEXTURE_UNIT = osgx::EMISSIVE_TEXTURE_UNIT;
 
 inline constexpr char BASE_COLOR_SAMPLER[] = "osgx_gltf_textures.baseColor";
 inline constexpr char NORMAL_SAMPLER[] = "osgx_gltf_textures.normal";

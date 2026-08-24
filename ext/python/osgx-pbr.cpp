@@ -4,6 +4,8 @@
 OSGX_DISABLE_WARNINGS
 
 #include <osg/Shader>
+#include <osg/StateAttribute>
+#include <osg/Texture2D>
 
 OSGX_ENABLE_WARNINGS
 
@@ -39,29 +41,47 @@ void bind_pbr(py::module_& m_pbr) {
 	m_pbr.attr("TONEMAP_HOOK_DEFAULT") = osgx::TONEMAP_HOOK_DEFAULT;
 	m_pbr.attr("MATERIAL_BINDING") = osgx::MATERIAL_BINDING;
 
-	py::class_<osgx::MaterialFactors>(m_pbr, "MaterialFactors")
+	// osgx::MaterialFactors/attachMaterialFactors() are gone -- collapsed into osgx::Material, a
+	// real osg::StateAttribute (PBR.hpp/PBR.cpp). Bound the same way osgx-callbacks.cpp already
+	// binds osgx::NodeCallbacksGroup et al. against a real pyosg-registered OSG base
+	// (osg::StateAttribute is bound in pyosg/osg/State.cpp) -- cross-module inheritance works here
+	// because both modules link the identical vendored pybind11 (same ABI tag), so pybind11's
+	// process-wide type registry (populated at import time, not link time) already has
+	// osg::StateAttribute by the time this module's own init runs. Requires `import osg` (pyosg)
+	// to have already happened in this interpreter -- pybind11 has no way to resolve a base class
+	// it hasn't seen registered yet.
+	py::class_<osgx::Material, osg::StateAttribute, osg::ref_ptr<osgx::Material>>(m_pbr, "Material")
 		.def(py::init<>())
-		.def_readwrite("baseColor", &osgx::MaterialFactors::baseColor)
-		.def_readwrite("roughness", &osgx::MaterialFactors::roughness)
-		.def_readwrite("metallic", &osgx::MaterialFactors::metallic)
-		.def_readwrite("hasBaseColorMap", &osgx::MaterialFactors::hasBaseColorMap)
-		.def_readwrite(
-			"hasMetallicRoughnessMap", &osgx::MaterialFactors::hasMetallicRoughnessMap
+		.def_property(
+			"baseColor", &osgx::Material::getBaseColor, &osgx::Material::setBaseColor,
+			"RGBA base color factor, multiplied against baseColorMap when one is set."
 		)
-		.def_readwrite("hasOcclusion", &osgx::MaterialFactors::hasOcclusion)
-		.def_readwrite("hasNormalMap", &osgx::MaterialFactors::hasNormalMap)
+		.def_property(
+			"roughness", &osgx::Material::getRoughness, &osgx::Material::setRoughness
+		)
+		.def_property(
+			"metallic", &osgx::Material::getMetallic, &osgx::Material::setMetallic
+		)
+		.def_property(
+			"hasOcclusion", &osgx::Material::getHasOcclusion, &osgx::Material::setHasOcclusion,
+			"Whether metallicRoughnessMap's R channel carries real per-pixel occlusion -- unlike "
+			"the other has*Map flags, this has no dedicated texture of its own to derive from."
+		)
+		.def_property(
+			"baseColorMap", &osgx::Material::getBaseColorMap, &osgx::Material::setBaseColorMap
+		)
+		.def_property(
+			"normalMap", &osgx::Material::getNormalMap, &osgx::Material::setNormalMap
+		)
+		.def_property(
+			"metallicRoughnessMap",
+			&osgx::Material::getMetallicRoughnessMap, &osgx::Material::setMetallicRoughnessMap,
+			"glTF's combined occlusion/roughness/metallic texture."
+		)
+		.def_property(
+			"emissiveMap", &osgx::Material::getEmissiveMap, &osgx::Material::setEmissiveMap
+		)
 	;
-
-	m_pbr.def(
-		"attachMaterialFactors",
-		&osgx::attachMaterialFactors,
-		"stateSet"_a,
-		"factors"_a,
-		"Build and attach the MATERIAL_INPUTS std430 factor buffer used by the deferred glTF "
-		"PBR pipeline. Texture maps, when their corresponding has*Map flag is true, remain the "
-		"caller's responsibility to bind at their conventional texture units. Returns the live "
-		"osg.FloatArray backing the binding."
-	);
 
 	m_pbr.def("snippets", &osgx::snippets);
 
