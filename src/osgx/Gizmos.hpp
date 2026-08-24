@@ -52,14 +52,14 @@ private:
 	class UpdateCallback: public osg::NodeCallback {
 	public:
 		UpdateCallback(const osgx::LightSet& lights, float minMarkerRadius, float spotConeLength):
-		_lights(lights),
+		_lights(const_cast<osgx::LightSet*>(&lights)),
 		_minMarkerRadius(minMarkerRadius),
 		_spotConeLength(spotConeLength) {}
 
 		void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 
 	private:
-		osgx::LightSet _lights;
+		osg::ref_ptr<osgx::LightSet> _lights;
 		float _minMarkerRadius;
 		float _spotConeLength;
 	};

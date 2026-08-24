@@ -10,18 +10,16 @@
 // prefiltered-cubemap pipeline, which would need an HDR asset and a bake pass; out of scope for
 // "load nothing, just press a key").
 //
-// Press 'n' to cycle through one light of each type; the console prints which one is active. The
-// gizmos (a wireframe plane+arrow overlay for directional, depth-tested wireframe spheres/cones
-// for point/sphere/spot) read osgx::LightSet's uniforms live every frame, so cycling the demo
-// is nothing more than calling LightSet's setters -- the gizmos and the shaded object update
-// themselves.
+// The gizmos (a wireframe plane+arrow overlay for directional, depth-tested wireframe
+// spheres/cones for point/sphere/spot) read osgx::LightSet's uniforms live every frame. Every
+// light occupies its own LightSet slot, so the ImGui "Enabled" checkbox in each section proves
+// that a configured slot can be toggled independently without changing the other lights.
 //
 // When built against osgx::imgui (OSGX_IMGUI -- automatic whenever the library it's linked
 // against, osgx::osgx, was itself built with OSGX_WITH_IMGUI; no extra CMake wiring needed here),
 // an ImGui window adds one section per light type with live sliders for every parameter that
-// type's LightSet setter actually takes. Each section's "Activate" button switches which one is
-// currently live (LightSet's slot 0); the others just sit there as "prepared" values you can
-// switch to. Without OSGX_IMGUI, only the 'n'-key cycling is available.
+// type's LightSet setter actually takes, including an independent enabled toggle. Without
+// OSGX_IMGUI, the example simply shows all four configured lights.
 
 #include "osgx/osgx.hpp"
 #include "osgx/ImGui.hpp"
@@ -44,11 +42,7 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
-#include <array>
-#include <cstddef>
-#include <iostream>
 #include <memory>
-#include <string_view>
 
 namespace {
 
@@ -158,27 +152,12 @@ osg::ref_ptr<osg::Program> makeProgram() {
 	return program;
 }
 
-// One light of each type, cycled with 'n' or an ImGui section's "Activate" button. Positions/
-// angles are sized against the icosahedron's radius=1.2 (see main()) so every one reads clearly
+// One live instance of each type. Positions/angles are sized against the cube's half extent=1.2
+// (see main()) so every one reads clearly
 // without further tuning. Kept deliberately close to the object (~2-3x its radius, not further) --
 // TrackballManipulator's default "home" view fits the WHOLE scene bound, gizmos included, so a
 // light placed far out pushes the camera back and makes the object itself look small/distant even
 // though nothing is actually wrong.
-enum class Demo: std::size_t {
-	Directional,
-	Point,
-	Sphere,
-	Spot,
-	Count
-};
-
-constexpr std::array<std::string_view, static_cast<std::size_t>(Demo::Count)> DEMO_NAMES = {
-	"Directional",
-	"Point",
-	"Sphere (point + sourceRadius)",
-	"Spot"
-};
-
 // Spot's initial apex-to-target distance, in world units -- SPOT_DISTANCE below sizes
 // LightGizmos' spotConeLength (main()) to match, so the cone gizmo reaches the object
 // instead of stopping short of it (LightMarkers' own default spotConeLength=1.0 is unit-scene-
@@ -186,13 +165,8 @@ constexpr std::array<std::string_view, static_cast<std::size_t>(Demo::Count)> DE
 // range (see LightsState below) as the light is dragged around live.
 constexpr float SPOT_DISTANCE = 3.5f;
 
-// Persistent, live-editable parameters for every light type -- backs both the ImGui sliders
-// (OSGX_IMGUI) and the 'n'-key defaults. Only `activeDemo`'s own fields are ever written into
-// LightSet slot 0 (see applyState() below); the rest just sit here as "prepared" values, so
-// switching the active type doesn't lose whatever you'd already dialed in on the others.
+// Persistent, live-editable parameters for all four independently configured LightSet slots.
 struct LightsState {
-	Demo activeDemo = Demo::Directional;
-
 	// Axis-aligned on purpose, for unambiguous verification: travel direction (0,0,-1) means the
 	// light source is directly above (+Z), so exactly one cube face -- the top (+Z-normal) face --
 	// should receive direct light; every other face should show only the flat ambient fill.
@@ -203,15 +177,18 @@ struct LightsState {
 	osg::Vec3 directionalDirection{0.0f, 0.0f, -1.0f};
 	osg::Vec3 directionalColor{0.90f, 0.15f, 0.15f}; // red
 	float directionalIntensity = 3.0f;
+	bool directionalEnabled = true;
 
 	osg::Vec3 pointPosition{1.5f, -1.1f, 1.2f};
 	osg::Vec3 pointColor{0.15f, 0.85f, 0.25f}; // green
 	float pointIntensity = 12.0f;
+	bool pointEnabled = true;
 
 	osg::Vec3 spherePosition{1.5f, -1.1f, 1.2f};
 	osg::Vec3 sphereColor{0.20f, 0.45f, 0.95f}; // blue
 	float sphereIntensity = 12.0f;
 	float sphereRadius = 0.7f;
+	bool sphereEnabled = true;
 
 	osg::Vec3 spotPosition{1.8f, -1.8f, 1.8f};
 	osg::Vec3 spotDirection{-1.0f, 1.0f, -1.0f}; // aimed at the origin
@@ -220,43 +197,28 @@ struct LightsState {
 	float spotInnerDegrees = 15.0f;
 	float spotOuterDegrees = 32.0f;
 	float spotSourceRadius = 0.0f;
+	bool spotEnabled = true;
 };
 
 void applyState(const osgx::LightSet& lights, const LightsState& state) {
-	lights.setCount(1);
-
-	switch(state.activeDemo) {
-	case Demo::Directional:
-		lights.setDirectional(0, state.directionalDirection, state.directionalColor, state.directionalIntensity);
-
-		break;
-
-	case Demo::Point:
-		lights.setPoint(0, state.pointPosition, state.pointColor, state.pointIntensity);
-
-		break;
-
-	case Demo::Sphere:
-		lights.setPoint(0, state.spherePosition, state.sphereColor, state.sphereIntensity, state.sphereRadius);
-
-		break;
-
-	case Demo::Spot:
-		lights.setSpot(
-			0,
-			state.spotPosition,
-			state.spotDirection,
-			state.spotColor,
-			state.spotIntensity,
-			osg::DegreesToRadians(state.spotInnerDegrees),
-			osg::DegreesToRadians(state.spotOuterDegrees),
-			state.spotSourceRadius
-		);
-
-		break;
-
-	default: break;
-	}
+	lights.setCount(4);
+	lights.setDirectional(0, state.directionalDirection, state.directionalColor, state.directionalIntensity);
+	lights.setEnabled(0, state.directionalEnabled);
+	lights.setPoint(1, state.pointPosition, state.pointColor, state.pointIntensity);
+	lights.setEnabled(1, state.pointEnabled);
+	lights.setPoint(2, state.spherePosition, state.sphereColor, state.sphereIntensity, state.sphereRadius);
+	lights.setEnabled(2, state.sphereEnabled);
+	lights.setSpot(
+		3,
+		state.spotPosition,
+		state.spotDirection,
+		state.spotColor,
+		state.spotIntensity,
+		osg::DegreesToRadians(state.spotInnerDegrees),
+		osg::DegreesToRadians(state.spotOuterDegrees),
+		state.spotSourceRadius
+	);
+	lights.setEnabled(3, state.spotEnabled);
 }
 
 }
@@ -272,7 +234,7 @@ int main() {
 	geode->addDrawable(shape);
 	ss->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
 	ss->setAttributeAndModes(makeProgram(), osg::StateAttribute::ON);
-	// Neutral gray (R=G=B) -- any color tint the shape shows is entirely the active light's own
+	// Neutral gray (R=G=B) -- any color tint the shape shows is entirely the direct lights' own
 	// color, not mixed with a pre-tinted albedo.
 	ss->addUniform(new osg::Uniform("albedo", osg::Vec3(0.5f, 0.5f, 0.5f)));
 	ss->addUniform(new osg::Uniform("roughness", 0.35f));
@@ -280,7 +242,9 @@ int main() {
 	ss->addUniform(new osg::Uniform("ambientColor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 	ss->addUniform(new osg::Uniform("ambientIntensity", 0.05f));
 
-	auto lights = osgx::LightSet::create(ss);
+	auto lights = osgx::make_ref<osgx::LightSet>();
+
+	ss->setAttributeAndModes(lights);
 
 	// A shared_ptr, not a `mutable` lambda -- LambdaKeyHandler::_wrap() (Callbacks.hpp) invokes the
 	// stored callable through a const call path, so a `mutable` lambda's non-const operator() can't
@@ -289,24 +253,16 @@ int main() {
 	// shared_ptr, which sidesteps that without needing `mutable` anywhere.
 	auto state = std::make_shared<LightsState>();
 
-	applyState(lights, *state);
+	applyState(*lights, *state);
 
 	// minMarkerRadius bumped up from the library default (0.05, sized for a unit-scale scene) so
 	// the point/sphere marker reads clearly against a radius-1.2 object; spotConeLength set to
 	// SPOT_DISTANCE so the cone gizmo reaches the object instead of stopping short of it the way
 	// the library default (unit-scene-scale) would here.
-	auto gizmos = osgx::make_ref<osgx::LightGizmos>(lights, geode, 0.15f, SPOT_DISTANCE);
+	auto gizmos = osgx::make_ref<osgx::LightGizmos>(*lights, geode, 0.15f, SPOT_DISTANCE);
 
 	root->addChild(geode);
 	root->addChild(gizmos);
-
-	auto printActive = [state]() {
-		std::cout << "osgx-lights: showing "
-			<< DEMO_NAMES[static_cast<std::size_t>(state->activeDemo)] << std::endl;
-	};
-
-	std::cout << "osgx-lights: showing " << DEMO_NAMES[static_cast<std::size_t>(state->activeDemo)]
-		<< " (press 'n' for next)" << std::endl;
 
 	auto viewer = osgViewer::Viewer();
 
@@ -316,17 +272,6 @@ int main() {
 	// even when OSGX_IMGUI is off.
 	viewer.setThreadingModel(osgViewer::Viewer::SingleThreaded);
 #endif
-
-	viewer.addEventHandler(new osgx::LambdaKeyHandler('n', [lights, state, printActive](auto&, auto&) {
-		auto next = (static_cast<std::size_t>(state->activeDemo) + 1) % static_cast<std::size_t>(Demo::Count);
-
-		state->activeDemo = static_cast<Demo>(next);
-
-		applyState(lights, *state);
-		printActive();
-
-		return true;
-	}));
 
 	viewer.setSceneData(root);
 
@@ -345,26 +290,6 @@ int main() {
 	viewer.addEventHandler(new osgViewer::StatsHandler());
 
 #ifdef OSGX_IMGUI
-	// activateButton() draws the "Activate"/"Active" button shared by every section below, and
-	// applies+prints immediately on click -- switching light types must take effect right away even
-	// though nothing else in the newly-active section re-applies it this frame, and even if that
-	// section happens to be collapsed (Panel::draw() only calls a collapsed section's fn -- see
-	// ImGui.cpp's CollapsingHeader-gated dispatch -- once it's open).
-	auto activateButton = [lights, state, printActive](Demo demo) {
-		bool active = state->activeDemo == demo;
-
-		if(active) ImGui::BeginDisabled();
-
-		if(ImGui::Button(active ? "Active" : "Activate")) {
-			state->activeDemo = demo;
-
-			applyState(lights, *state);
-			printActive();
-		}
-
-		if(active) ImGui::EndDisabled();
-	};
-
 	auto* gui = new osgx::imgui::Widget(viewer);
 
 	// Every section's fn() runs directly in Panel's window ID stack -- Panel::draw() (ImGui.cpp)
@@ -375,65 +300,57 @@ int main() {
 	// "Color" picker across all four sections fought over one shared popup-open/drag state --
 	// confirmed live: dragging one section's slider visibly disturbed another's, and only one
 	// Color swatch would ever open its picker.
-	gui->addSection("Directional", [lights, state, activateButton](osg::RenderInfo&) {
+	gui->addSection("Directional", [lights, state](osg::RenderInfo&) {
 		ImGui::PushID("Directional");
-		activateButton(Demo::Directional);
+		bool changed = ImGui::Checkbox("Enabled", &state->directionalEnabled);
 		ImGui::SameLine();
 		ImGui::TextDisabled("no position, no falloff -- parallel rays");
-
-		bool changed = false;
 
 		changed |= ImGui::SliderFloat3("Direction", state->directionalDirection.ptr(), -1.0f, 1.0f);
 		changed |= ImGui::ColorEdit3("Color", state->directionalColor.ptr());
 		changed |= ImGui::SliderFloat("Intensity", &state->directionalIntensity, 0.0f, 10.0f);
 
-		if(changed && state->activeDemo == Demo::Directional) applyState(lights, *state);
+		if(changed) applyState(*lights, *state);
 
 		ImGui::PopID();
 	}, osgx::imgui::SectionOptions::create(false, true));
 
-	gui->addSection("Point", [lights, state, activateButton](osg::RenderInfo&) {
+	gui->addSection("Point", [lights, state](osg::RenderInfo&) {
 		ImGui::PushID("Point");
-		activateButton(Demo::Point);
+		bool changed = ImGui::Checkbox("Enabled", &state->pointEnabled);
 		ImGui::SameLine();
 		ImGui::TextDisabled("inverse-square falloff, ideal (zero-size) specular highlight");
-
-		bool changed = false;
 
 		changed |= ImGui::SliderFloat3("Position", state->pointPosition.ptr(), -5.0f, 5.0f);
 		changed |= ImGui::ColorEdit3("Color", state->pointColor.ptr());
 		changed |= ImGui::SliderFloat("Intensity", &state->pointIntensity, 0.0f, 60.0f);
 
-		if(changed && state->activeDemo == Demo::Point) applyState(lights, *state);
+		if(changed) applyState(*lights, *state);
 
 		ImGui::PopID();
 	}, osgx::imgui::SectionOptions::create(false, true));
 
-	gui->addSection("Sphere", [lights, state, activateButton](osg::RenderInfo&) {
+	gui->addSection("Sphere", [lights, state](osg::RenderInfo&) {
 		ImGui::PushID("Sphere");
-		activateButton(Demo::Sphere);
+		bool changed = ImGui::Checkbox("Enabled", &state->sphereEnabled);
 		ImGui::SameLine();
 		ImGui::TextDisabled("a Point light with sourceRadius > 0 -- not a separate light type");
-
-		bool changed = false;
 
 		changed |= ImGui::SliderFloat3("Position", state->spherePosition.ptr(), -5.0f, 5.0f);
 		changed |= ImGui::ColorEdit3("Color", state->sphereColor.ptr());
 		changed |= ImGui::SliderFloat("Intensity", &state->sphereIntensity, 0.0f, 60.0f);
 		changed |= ImGui::SliderFloat("Source Radius", &state->sphereRadius, 0.0f, 2.0f);
 
-		if(changed && state->activeDemo == Demo::Sphere) applyState(lights, *state);
+		if(changed) applyState(*lights, *state);
 
 		ImGui::PopID();
 	}, osgx::imgui::SectionOptions::create(false, true));
 
-	gui->addSection("Spot", [lights, state, activateButton](osg::RenderInfo&) {
+	gui->addSection("Spot", [lights, state](osg::RenderInfo&) {
 		ImGui::PushID("Spot");
-		activateButton(Demo::Spot);
+		bool changed = ImGui::Checkbox("Enabled", &state->spotEnabled);
 		ImGui::SameLine();
 		ImGui::TextDisabled("cone-attenuated point light; sourceRadius still applies");
-
-		bool changed = false;
 
 		changed |= ImGui::SliderFloat3("Position", state->spotPosition.ptr(), -5.0f, 5.0f);
 		changed |= ImGui::SliderFloat3("Direction", state->spotDirection.ptr(), -1.0f, 1.0f);
@@ -451,7 +368,7 @@ int main() {
 			state->spotOuterDegrees = state->spotInnerDegrees + 1.0f;
 		}
 
-		if(changed && state->activeDemo == Demo::Spot) applyState(lights, *state);
+		if(changed) applyState(*lights, *state);
 
 		ImGui::PopID();
 	}, osgx::imgui::SectionOptions::create(false, true));

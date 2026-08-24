@@ -158,12 +158,13 @@ void OrbitLightRig::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 	if(orbits.size() > static_cast<std::size_t>(MAX_LIGHTS)) {
 		throw std::out_of_range("OrbitLightRig has more orbits than LightSet supports");
 	}
+	if(!lights) throw std::logic_error("OrbitLightRig has no LightSet");
 
 	for(std::size_t i = 0; i < orbits.size(); i++) {
 		const auto& o = orbits[i];
 		float a = t * o.speed + o.phase;
 
-		lights.setPosition(
+		lights->setPosition(
 			i,
 			osg::Vec3(
 				center.x() + std::cos(a) * o.radius,
@@ -187,6 +188,7 @@ constexpr std::size_t TYPE_OFFSET = 7; // int
 constexpr std::size_t DIR_OFFSET = 8; // vec3
 constexpr std::size_t SOURCE_RADIUS_OFFSET = 11; // float
 constexpr std::size_t SPOT_ANGLES_OFFSET = 12; // vec2
+constexpr std::size_t ENABLED_OFFSET = 14; // int
 
 // The `type` field is declared `int` on the GLSL side (LIGHT_UNIFORMS) but stored in this
 // float-typed backing array -- std::bit_cast reinterprets the bit pattern without UB (unlike a
@@ -197,37 +199,51 @@ int floatBitsToInt(float value) { return std::bit_cast<int>(value); }
 
 }
 
-LightSet LightSet::create(osg::StateSet* ss) {
-	if(!ss) throw std::invalid_argument("LightSet::create requires a StateSet");
+LightSet::LightSet() {
+	_lights = new osg::FloatArray(static_cast<unsigned int>(MAX_LIGHTS * LIGHT_STRUCT_FLOATS));
 
-	LightSet result;
+	std::fill(_lights->begin(), _lights->end(), 0.0f);
+	_lights->setBufferObject(new osg::ShaderStorageBufferObject());
 
-	result.ss = ss;
-	result._lights = new osg::FloatArray(static_cast<unsigned int>(MAX_LIGHTS * LIGHT_STRUCT_FLOATS));
-
-	std::fill(result._lights->begin(), result._lights->end(), 0.0f);
-	result._lights->setBufferObject(new osg::ShaderStorageBufferObject());
-
-	ss->setAttributeAndModes(
-		new osg::ShaderStorageBufferBinding(
-			LIGHT_BINDING,
-			result._lights,
-			0,
-			static_cast<GLsizeiptr>(result._lights->getTotalDataSize())
-		),
-		osg::StateAttribute::ON
+	_binding = new osg::ShaderStorageBufferBinding(
+		LIGHT_BINDING, _lights, 0, static_cast<GLsizeiptr>(_lights->getTotalDataSize())
 	);
-	ss->addUniform(new osg::Uniform("osgx_lightCount", 0));
+	_lightCount = new osg::Uniform("osgx_lightCount", 0);
+	setDataVariance(osg::Object::DYNAMIC);
+}
 
-	return result;
+LightSet::LightSet(const LightSet& lights, const osg::CopyOp& copyop):
+osg::StateAttribute(lights, copyop),
+_lights(static_cast<osg::FloatArray*>(copyop(lights._lights.get()))),
+_lightCount(static_cast<osg::Uniform*>(copyop(lights._lightCount.get()))) {
+	_binding = new osg::ShaderStorageBufferBinding(
+		LIGHT_BINDING, _lights, 0, static_cast<GLsizeiptr>(_lights->getTotalDataSize())
+	);
+	setDataVariance(osg::Object::DYNAMIC);
+}
+
+LightSet::~LightSet() {}
+
+int LightSet::compare(const osg::StateAttribute& sa) const {
+	COMPARE_StateAttribute_Types(LightSet, sa)
+
+	COMPARE_StateAttribute_Parameter(_lights)
+	COMPARE_StateAttribute_Parameter(_lightCount)
+
+	return 0;
+}
+
+void LightSet::apply(osg::State& state) const {
+	state.applyAttribute(_binding.get());
+	state.applyShaderCompositionUniform(_lightCount.get());
 }
 
 bool LightSet::valid() const {
-	return ss.valid() && _lights.valid() && ss->getUniform("osgx_lightCount");
+	return _lights.valid() && _binding.valid() && _lightCount.valid();
 }
 
 float* LightSet::lightFloats(std::size_t index, std::size_t offset) const {
-	if(!valid()) throw std::logic_error("LightSet has not been created");
+	if(!valid()) throw std::logic_error("LightSet is invalid");
 	if(index >= static_cast<std::size_t>(MAX_LIGHTS)) throw std::out_of_range("LightSet index out of range");
 
 	return &(*_lights)[index * LIGHT_STRUCT_FLOATS + offset];
@@ -244,6 +260,7 @@ void LightSet::setPoint(
 	auto* colorFloats = lightFloats(index, detail::COLOR_OFFSET);
 	auto* typeFloats = lightFloats(index, detail::TYPE_OFFSET);
 	auto* radiusFloats = lightFloats(index, detail::SOURCE_RADIUS_OFFSET);
+	auto* enabledFloats = lightFloats(index, detail::ENABLED_OFFSET);
 
 	posIntensity[0] = position.x();
 	posIntensity[1] = position.y();
@@ -254,6 +271,7 @@ void LightSet::setPoint(
 	colorFloats[2] = color.z();
 	typeFloats[0] = detail::intBitsToFloat(static_cast<int>(LightType::Point));
 	radiusFloats[0] = sourceRadius;
+	enabledFloats[0] = detail::intBitsToFloat(1);
 
 	_lights->dirty();
 }
@@ -269,6 +287,7 @@ void LightSet::setDirectional(
 	auto* typeFloats = lightFloats(index, detail::TYPE_OFFSET);
 	auto* dirFloats = lightFloats(index, detail::DIR_OFFSET);
 	auto* radiusFloats = lightFloats(index, detail::SOURCE_RADIUS_OFFSET);
+	auto* enabledFloats = lightFloats(index, detail::ENABLED_OFFSET);
 
 	posIntensity[0] = 0.0f;
 	posIntensity[1] = 0.0f;
@@ -282,6 +301,7 @@ void LightSet::setDirectional(
 	dirFloats[1] = direction.y();
 	dirFloats[2] = direction.z();
 	radiusFloats[0] = 0.0f;
+	enabledFloats[0] = detail::intBitsToFloat(1);
 
 	_lights->dirty();
 }
@@ -302,6 +322,7 @@ void LightSet::setSpot(
 	auto* dirFloats = lightFloats(index, detail::DIR_OFFSET);
 	auto* radiusFloats = lightFloats(index, detail::SOURCE_RADIUS_OFFSET);
 	auto* spotFloats = lightFloats(index, detail::SPOT_ANGLES_OFFSET);
+	auto* enabledFloats = lightFloats(index, detail::ENABLED_OFFSET);
 
 	posIntensity[0] = position.x();
 	posIntensity[1] = position.y();
@@ -317,15 +338,24 @@ void LightSet::setSpot(
 	radiusFloats[0] = sourceRadius;
 	spotFloats[0] = std::cos(innerConeAngle);
 	spotFloats[1] = std::cos(outerConeAngle);
+	enabledFloats[0] = detail::intBitsToFloat(1);
 
 	_lights->dirty();
 }
 
 void LightSet::setCount(int count) const {
-	if(!valid()) throw std::logic_error("LightSet has not been created");
+	if(!valid()) throw std::logic_error("LightSet is invalid");
 	if(count < 0 || count > MAX_LIGHTS) throw std::out_of_range("LightSet count out of range");
 
-	ss->getUniform("osgx_lightCount")->set(count);
+	_lightCount->set(count);
+}
+
+void LightSet::setEnabled(std::size_t index, bool enabled) const {
+	auto* f = lightFloats(index, detail::ENABLED_OFFSET);
+
+	f[0] = detail::intBitsToFloat(enabled ? 1 : 0);
+
+	_lights->dirty();
 }
 
 void LightSet::setPosition(std::size_t index, const osg::Vec3& position, float intensity) const {
@@ -340,11 +370,11 @@ void LightSet::setPosition(std::size_t index, const osg::Vec3& position, float i
 }
 
 int LightSet::getCount() const {
-	if(!valid()) throw std::logic_error("LightSet has not been created");
+	if(!valid()) throw std::logic_error("LightSet is invalid");
 
 	int count = 0;
 
-	ss->getUniform("osgx_lightCount")->get(count);
+	_lightCount->get(count);
 
 	return count;
 }
@@ -365,6 +395,12 @@ LightType LightSet::getType(std::size_t index) const {
 	auto* f = lightFloats(index, detail::TYPE_OFFSET);
 
 	return static_cast<LightType>(detail::floatBitsToInt(f[0]));
+}
+
+bool LightSet::getEnabled(std::size_t index) const {
+	auto* f = lightFloats(index, detail::ENABLED_OFFSET);
+
+	return detail::floatBitsToInt(f[0]) != 0;
 }
 
 osg::Vec3 LightSet::getDirection(std::size_t index) const {

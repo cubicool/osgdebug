@@ -154,11 +154,12 @@ inline constexpr int EMISSIVE_TEXTURE_UNIT = 3;
 // read from the metallic-roughness map's own R channel, not a dedicated texture/unit of its own
 // (see Material.cpp's ORM-baking comments), so it stays an explicit flag -- setHasOcclusion().
 //
-// Deliberately claims its own osg::StateAttribute::Type (CAPABILITY) rather than reusing an
-// existing one the way osgEarth::PBRTexture reuses TEXTURE -- osg::State keys its per-context
-// "last applied attribute" bookkeeping by (Type, member), so two unrelated StateAttribute classes
-// sharing a Type would silently fight over the same slot if both ever landed on the same StateSet
-// (a real osg::Texture at unit 0 alongside a same-Type custom attribute, for instance).
+// Deliberately claims the reserved osg::StateAttribute::CAPABILITY Type rather than reusing an
+// existing built-in one the way osgEarth::PBRTexture reuses TEXTURE. CAPABILITY/member 0 is this
+// class's key; osg::LightSet below uses CAPABILITY/member 1. osg::State keys its per-context "last
+// applied attribute" bookkeeping by that (Type, member) pair, so unrelated custom attributes must
+// not share both parts of it (a real osg::Texture at unit 0 alongside a same-key custom attribute,
+// for instance, would silently fight over one slot).
 // osgEarth::PBRTexture only gets away with reusing TEXTURE because it also gives up on compare()
 // (unconditionally returns -1, opting out of state-sorting dedup entirely) -- osgx::Material does
 // neither: real dedup means two drawables sharing an equal material (same texture pointers --
@@ -340,7 +341,8 @@ vec3 osgx_PointLightRadiance(vec4 posIntensity, vec3 color, vec3 worldPos, out v
 //   vec3  dir            offset 32  (ray travel direction, KHR_lights_punctual convention)
 //   float sourceRadius   offset 44  (0 = ideal point/spot; >0 = "sphere" specular widening)
 //   vec2  spotAngles     offset 48  (cos(inner), cos(outer))
-//   ...   padding        offset 56  (rounds the struct to a multiple of 16)
+//   int   enabled        offset 56  (0 = off; non-zero = contributes light)
+//   float _pad0          offset 60  (rounds the struct to a multiple of 16)
 //
 // type/dir/sourceRadius/spotAngles are additive -- a caller that only ever calls setPoint() with
 // sourceRadius=0 gets exactly today's point-light behavior. A per-light `type` (LightType in C++
@@ -364,7 +366,8 @@ struct osgx_Light {
 	vec3 dir;
 	float sourceRadius;
 	vec2 spotAngles;
-	vec2 _pad0;
+	int enabled;
+	float _pad0;
 };
 
 // binding = 3 here must match LIGHT_BINDING in C++ -- same hardcode-and-cross-reference
@@ -531,6 +534,9 @@ vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 
 	for(int i = 0; i < osgx_lightCount; i++) {
 		osgx_Light light = osgx_lights[i];
+
+		if(light.enabled == 0) continue;
+
 		vec3 L;
 		vec3 radiance;
 
@@ -767,28 +773,37 @@ enum class LightType: int {
 	Spot = 2
 };
 
-// The static-position counterpart to OrbitLightRig below: owns/creates the LIGHT_UNIFORMS buffer
-// buffer (+ its osgx_lightCount uniform) on a StateSet once and exposes typed setters/getters,
-// instead of a caller hand-writing the packed osgx_Light struct array themselves. A caller wiring
-// a fixed rig (wall torches, sconces, a sun, a flashlight) uses this directly; OrbitLightRig can
-// still animate a light's position on top of the SAME LightSet for the subset of lights that
-// should orbit -- the two are complementary, not alternatives.
-struct LightSet {
-	osg::ref_ptr<osg::StateSet> ss;
+// The static-position counterpart to OrbitLightRig below: one StateAttribute that owns the
+// LIGHT_UNIFORMS SSBO AND its osgx_lightCount uniform, instead of asking every caller to keep a
+// buffer binding and a separate StateSet uniform in sync. apply() binds the SSBO and sends the
+// count through osg::State::applyShaderCompositionUniform(), OSG's own StateAttribute-to-uniform
+// bridge (used by osg::ShaderAttribute, osg::TexEnv, and osg::TexGen). A caller wiring a fixed rig
+// (wall torches, sconces, a sun, a flashlight) uses this directly; OrbitLightRig can still animate
+// a light's position on top of the SAME LightSet for the subset of lights that should orbit -- the
+// two are complementary, not alternatives.
+//
+// CAPABILITY/member 1 deliberately differs from Material's CAPABILITY/member 0 -- see Material's
+// class comment for why the full (Type, member) pair is the State cache key.
+struct LightSet: public osg::StateAttribute {
+	static constexpr Type LIGHT_SET_TYPE = CAPABILITY;
+	static constexpr unsigned int LIGHT_SET_MEMBER = 1;
 
-	// Allocates the buffer (size MAX_LIGHTS, zero-initialized) and installs it plus
-	// "osgx_lightCount" on `ss` -- osgx_lightCount starts at 0, so a freshly created LightSet
-	// lights nothing until setCount() and at least one setPoint/setDirectional/setSpot are called.
-	static LightSet create(osg::StateSet* ss);
+	LightSet();
+	LightSet(const LightSet& lights, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
 
-	// Whether this is a LightSet returned by create() whose StateSet and backing buffer are still
-	// available. A default-constructed LightSet is invalid until assigned the result of create().
+	META_StateAttribute(osgx, LightSet, LIGHT_SET_TYPE)
+
+	unsigned int getMember() const override { return LIGHT_SET_MEMBER; }
+	int compare(const osg::StateAttribute& sa) const override;
+	void apply(osg::State& state) const override;
+
+	// Whether this LightSet still has its buffer binding and count uniform. A normal constructed
+	// LightSet is valid immediately and can be attached directly with setAttributeAndModes().
 	bool valid() const;
 
-	// `const` -- these mutate the buffer/StateSet `ss`/`lights` point at, not any member of
-	// LightSet itself (both are handles, same reasoning as a `shared_ptr`'s pointee-mutating
-	// operations being const). Lets a LightSet captured by value into a `const`-qualified lambda
-	// (e.g. an ordinary, non-`mutable` event-handler callback) still call these directly.
+	// `const` -- these mutate the buffer/uniform this LightSet owns, not its object identity. Lets
+	// an osg::ref_ptr<LightSet> captured by value into a `const`-qualified lambda (e.g. an ordinary,
+	// non-`mutable` event-handler callback) still call these directly.
 	// Every index must be less than MAX_LIGHTS; otherwise the setter/getter throws std::out_of_range.
 	//
 	// `sourceRadius` > 0 switches this light's specular term to the representative-point path
@@ -827,6 +842,11 @@ struct LightSet {
 	// `count` must be in [0, MAX_LIGHTS]; otherwise throws std::out_of_range.
 	void setCount(int count) const;
 
+	// Enables or disables an already configured light without changing its data. Typed setup
+	// methods enable their slot, so the established setCount()+setPoint()/setDirectional()/setSpot()
+	// workflow continues to activate lights as before.
+	void setEnabled(std::size_t index, bool enabled) const;
+
 	// Sets ONLY a light's posIntensity field, leaving color/type/dir/spotAngles/sourceRadius
 	// untouched -- the one primitive OrbitLightRig below needs to animate a light already
 	// configured via setPoint/setSpot, without re-specifying everything else every frame.
@@ -839,25 +859,30 @@ struct LightSet {
 	osg::Vec4 getPosIntensity(std::size_t index) const;
 	osg::Vec3 getColor(std::size_t index) const;
 	LightType getType(std::size_t index) const;
+	bool getEnabled(std::size_t index) const;
 	osg::Vec3 getDirection(std::size_t index) const;
 	osg::Vec2 getSpotAngles(std::size_t index) const;
 	float getSourceRadius(std::size_t index) const;
 
-private:
-	// Backing store for every light's packed osgx_Light struct (MAX_LIGHTS * LIGHT_STRUCT_FLOATS
-	// floats, std430 layout -- see LIGHT_UNIFORMS' struct comment), bound to `ss` as a single
-	// ShaderStorageBufferObject at LIGHT_BINDING. It stays private so it cannot be replaced
-	// independently of that StateSet binding.
-	osg::ref_ptr<osg::FloatArray> _lights;
+	protected:
+	virtual ~LightSet();
 
-	float* lightFloats(std::size_t index, std::size_t offset) const;
+	private:
+	// Backing store for every light's packed osgx_Light struct (MAX_LIGHTS * LIGHT_STRUCT_FLOATS
+	// floats, std430 layout -- see LIGHT_UNIFORMS' struct comment), bound through _binding at
+	// LIGHT_BINDING. It stays private so it cannot be replaced independently of that binding.
+		osg::ref_ptr<osg::FloatArray> _lights;
+		osg::ref_ptr<osg::ShaderStorageBufferBinding> _binding;
+		osg::ref_ptr<osg::Uniform> _lightCount;
+
+		float* lightFloats(std::size_t index, std::size_t offset) const;
 };
 
 // Animates a handful of point lights orbiting a center point, writing world-space position+
 // intensity into an existing LightSet's posIntensity field (via LightSet::setPosition) every
 // update traversal -- the motion is what confirms N/V/specular are wired correctly rather than
 // just a static flat-shaded color. Install as the update callback on whichever node the lit shape
-// hangs from; `lights` must already be a created LightSet (LightSet::create()) with at least
+// hangs from; `lights` must already be an attached LightSet with at least
 // orbits.size() lights configured via setPoint/setSpot (for their color/type/etc. -- this callback
 // only ever touches position/intensity).
 //
@@ -868,7 +893,7 @@ struct OrbitLightRig: public osg::NodeCallback {
 		float radius, height, speed, phase, intensity;
 	};
 
-	LightSet lights;
+	osg::ref_ptr<LightSet> lights;
 	osg::Vec3 center{0.0f, 0.0f, 0.0f};
 	float intensity = 1.0f; // global scale, e.g. a --light-intensity CLI flag
 

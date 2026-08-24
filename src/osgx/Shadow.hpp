@@ -209,6 +209,9 @@ vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 
 	for(int i = 0; i < osgx_lightCount; i++) {
 		osgx_Light light = osgx_lights[i];
+
+		if(light.enabled == 0) continue;
+
 		vec3 L;
 		vec3 radiance;
 

@@ -254,10 +254,12 @@ int main() {
 	// gray-stone default so it reads clearly against the shadow it receives.
 	floor->getOrCreateStateSet()->addUniform(new osg::Uniform("albedo", osg::Vec3(0.72f, 0.68f, 0.60f)));
 
-	auto lights = osgx::LightSet::create(mainSS);
+	auto lights = osgx::make_ref<osgx::LightSet>();
 
-	lights.setCount(1);
-	lights.setDirectional(0, lightDir, lightColor, lightIntensity);
+	mainSS->setAttributeAndModes(lights);
+
+	lights->setCount(1);
+	lights->setDirectional(0, lightDir, lightColor, lightIntensity);
 
 	osgx::ShadowMapOptions shadowOptions;
 
@@ -288,7 +290,7 @@ int main() {
 	// scene's own cubes/floor are already close to unit scale, unlike osgx-lights.cpp's object.
 	// `mainGroup` (not `root`) so the gizmo sizes itself off the actual shaded scene, not the
 	// shadow camera/gizmo overlay's own unrelated bounds.
-	auto gizmos = osgx::make_ref<osgx::LightGizmos>(lights, mainGroup.get());
+	auto gizmos = osgx::make_ref<osgx::LightGizmos>(*lights, mainGroup.get());
 
 	root->addChild(shadowMap.camera.get());
 	root->addChild(mainGroup.get());
@@ -357,13 +359,13 @@ int main() {
 			// ShadowMap::reposition()) is degenerate for a zero-length direction, so
 			// hold the last valid direction instead of feeding it one.
 			if(lightDir.length2() > 1e-8f) {
-				lights.setDirectional(0, lightDir, lightColor, lightIntensity);
+				lights->setDirectional(0, lightDir, lightColor, lightIntensity);
 
 				shadowMap.reposition(lightDir, sceneBoundCenter, sceneBoundRadius, shadowOptions);
 			}
 
 			else {
-				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
+				lights->setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
 			}
 		}
 	}, osgx::imgui::SectionOptions::create(false, true));

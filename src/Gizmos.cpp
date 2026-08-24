@@ -240,7 +240,7 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::LightSet& lights, 
 
 	struct DirectionalOverlayCallback: public osg::NodeCallback {
 		DirectionalOverlayCallback(const osgx::LightSet& lights, osg::Vec3 center, float planeHalf, float normalLen, float back, float wide):
-		_lights(lights), _center(center), _planeHalf(planeHalf), _normalLen(normalLen), _arrowBack(back), _arrowWidth(wide) {}
+		_lights(const_cast<osgx::LightSet*>(&lights)), _center(center), _planeHalf(planeHalf), _normalLen(normalLen), _arrowBack(back), _arrowWidth(wide) {}
 
 		void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
 			auto* geode2 = dynamic_cast<osg::Geode*>(node);
@@ -257,16 +257,19 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::LightSet& lights, 
 
 			geom2->removePrimitiveSet(0, geom2->getNumPrimitiveSets());
 
-			int count = std::clamp(_lights.getCount(), 0, osgx::MAX_LIGHTS);
+			int count = std::clamp(_lights->getCount(), 0, osgx::MAX_LIGHTS);
 
 			for(int i = 0; i < count; i++) {
 				auto index = static_cast<std::size_t>(i);
-				osgx::LightType type = _lights.getType(index);
+
+				if(!_lights->getEnabled(index)) continue;
+
+				osgx::LightType type = _lights->getType(index);
 
 				if(type != osgx::LightType::Directional) continue;
 
-				osg::Vec3 direction = _lights.getDirection(index);
-				osg::Vec3 lightColorValue = _lights.getColor(index);
+				osg::Vec3 direction = _lights->getDirection(index);
+				osg::Vec3 lightColorValue = _lights->getColor(index);
 
 				// `direction` is the ray TRAVEL direction (light -> surface; see LIGHT_UNIFORMS'
 				// comment in PBR.hpp and osgx_DirectionalLightRadiance's `L = -normalize(direction)`
@@ -320,7 +323,7 @@ osg::ref_ptr<osg::Camera> buildDirectionalOverlay(const osgx::LightSet& lights, 
 			traverse(node, nv);
 		}
 
-		osgx::LightSet _lights;
+		osg::ref_ptr<osgx::LightSet> _lights;
 		osg::Vec3 _center;
 		float _planeHalf, _normalLen, _arrowBack, _arrowWidth;
 	};
@@ -349,7 +352,7 @@ LightMarkers::LightMarkers(const osgx::LightSet& lights, float minMarkerRadius, 
 
 void LightMarkers::UpdateCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 	if(auto* markers = dynamic_cast<LightMarkers*>(node); markers && _lights.valid())
-		markers->rebuild(_lights, _minMarkerRadius, _spotConeLength);
+		markers->rebuild(*_lights, _minMarkerRadius, _spotConeLength);
 
 	traverse(node, nv);
 }
@@ -394,6 +397,9 @@ void LightMarkers::rebuild(const osgx::LightSet& lights, float minMarkerRadius, 
 
 	for(int i = 0; i < count; i++) {
 		auto index = static_cast<std::size_t>(i);
+
+		if(!lights.getEnabled(index)) continue;
+
 		osgx::LightType type = lights.getType(index);
 		osg::Vec4 posIntensity = lights.getPosIntensity(index);
 		osg::Vec3 color = lights.getColor(index);

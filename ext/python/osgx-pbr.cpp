@@ -160,10 +160,8 @@ void bind_pbr(py::module_& m_pbr) {
 		.value("Spot", osgx::LightType::Spot)
 	;
 
-	py::class_<osgx::LightSet>(m_pbr, "LightSet")
+	py::class_<osgx::LightSet, osg::StateAttribute, osg::ref_ptr<osgx::LightSet>>(m_pbr, "LightSet")
 		.def(py::init<>())
-		.def_readwrite("ss", &osgx::LightSet::ss)
-		.def_static("create", &osgx::LightSet::create)
 		.def("valid", &osgx::LightSet::valid)
 		.def(
 			"setPoint",
@@ -188,11 +186,19 @@ void bind_pbr(py::module_& m_pbr) {
 			"sourceRadius"_a=0.0f
 		)
 		.def("setCount", &osgx::LightSet::setCount)
+		.def("setEnabled", &osgx::LightSet::setEnabled, "index"_a, "enabled"_a)
 		.def("setPosition", &osgx::LightSet::setPosition, "index"_a, "position"_a, "intensity"_a)
 		.def("getCount", &osgx::LightSet::getCount)
 		.def("getPosIntensity", &osgx::LightSet::getPosIntensity, "index"_a)
 		.def("getColor", &osgx::LightSet::getColor, "index"_a)
-		.def("getType", &osgx::LightSet::getType, "index"_a)
+		.def(
+			"getType",
+			static_cast<osgx::LightType (osgx::LightSet::*)(std::size_t) const>(
+				&osgx::LightSet::getType
+			),
+			"index"_a
+		)
+		.def("getEnabled", &osgx::LightSet::getEnabled, "index"_a)
 		.def("getDirection", &osgx::LightSet::getDirection, "index"_a)
 		.def("getSpotAngles", &osgx::LightSet::getSpotAngles, "index"_a)
 		.def("getSourceRadius", &osgx::LightSet::getSourceRadius, "index"_a)

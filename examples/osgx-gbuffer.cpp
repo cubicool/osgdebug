@@ -561,17 +561,19 @@ int main(int argc, char** argv) {
 	// lighting pass camera's own StateSet, since that's where osgx_DirectLighting() actually
 	// runs; the geometry pass has no lighting math to feed it to.
 	auto* lightingSS = dynamic_cast<osg::Camera*>(lighting.node.get())->getOrCreateStateSet();
-	auto lights = osgx::LightSet::create(lightingSS);
+	auto lights = osgx::make_ref<osgx::LightSet>();
+
+	lightingSS->setAttributeAndModes(lights);
 
 	// Intensity ~3.0 (not 2.0) -- also matching 11-sketchfab.py's own tuned key-light magnitude.
-	lights.setCount(1);
-	lights.setDirectional(0, lightDir, lightColor, lightIntensity);
+	lights->setCount(1);
+	lights->setDirectional(0, lightDir, lightColor, lightIntensity);
 
 	// minMarkerRadius/spotConeLength stay at their unit-scene-scale library defaults --
 	// LightMarkers never draws anything for a directional light anyway (see Gizmos.hpp); only the
 	// LightGizmos overlay (plane + direction arrow) matters here, and it sizes itself off
 	// `model`'s own real bound at construction time.
-	auto gizmos = osgx::make_ref<osgx::LightGizmos>(lights, model.get());
+	auto gizmos = osgx::make_ref<osgx::LightGizmos>(*lights, model.get());
 	// Order 2 -- after BOTH lighting.node (POST_RENDER, order 0) and debugCamera (POST_RENDER,
 	// order 1), and unlike either of those, never nodeMask-toggled by VisualizeModeHandler -- the
 	// gizmo overlay draws last every frame regardless of which view mode is active, which is what
@@ -670,13 +672,13 @@ int main(int argc, char** argv) {
 			// ShadowMap::reposition()) is degenerate for a zero-length direction, so
 			// hold the last valid direction instead of feeding it one.
 			if(lightDir.length2() > 1e-8f) {
-				lights.setDirectional(0, lightDir, lightColor, lightIntensity);
+				lights->setDirectional(0, lightDir, lightColor, lightIntensity);
 
 				shadowMap.reposition(lightDir, boundCenter, boundRadius, shadowOptions);
 			}
 
 			else {
-				lights.setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
+				lights->setDirectional(0, osg::Vec3(0.0f, 0.0f, -1.0f), lightColor, lightIntensity);
 			}
 		}
 	}, osgx::imgui::SectionOptions::create(false, true));
