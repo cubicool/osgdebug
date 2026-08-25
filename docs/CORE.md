@@ -251,7 +251,7 @@ reasoning as `Shadow.hpp` above.
 See `examples/osgx-gbuffer.cpp` for the full deferred pipeline (`PBRIBLGBuffer` +
 `PBRIBLLightingScene`, both built on this), live SSAO wired into `PBRIBLLightingPassOptions::aoTexture`
 with live ImGui radius/bias sliders, and a channel-by-channel G-buffer visualizer (press `0`-`6`,
-`6` being SSAO's own output). Python: `osgx.gbuffer.GBuffer`/`osgx.gbuffer.SSAO`.
+`6` being SSAO's own output). Python: `osgx.GBuffer`/`osgx.SSAO`.
 
 ## Namespaces
 

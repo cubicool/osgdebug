@@ -8,7 +8,7 @@ from OpenSceneGraph import *
 
 
 def test_material_defaults():
-	m = osgx.pbr.Material()
+	m = osgx.Material()
 
 	assert m.baseColor == osg.Vec4(1.0, 1.0, 1.0, 1.0)
 	assert m.roughness == 1.0
@@ -22,7 +22,7 @@ def test_material_defaults():
 
 
 def test_material_factor_properties_round_trip():
-	m = osgx.pbr.Material()
+	m = osgx.Material()
 
 	m.baseColor = osg.Vec4(0.2, 0.4, 0.6, 1.0)
 	m.roughness = 0.35
@@ -42,7 +42,7 @@ def test_material_map_properties_round_trip_identity():
 	# Setting a map preserves the EXACT osg.Texture2D identity, not a copy -- proves the
 	# ref_ptr<Texture2D> holder round-trips through the property (see PBR.hpp/PBR.cpp), same
 	# guarantee osgx-callbacks.cpp's SlotCache-backed proxies give for callback elements.
-	m = osgx.pbr.Material()
+	m = osgx.Material()
 
 	baseColorMap = osg.Texture2D()
 	normalMap = osg.Texture2D()
@@ -68,10 +68,10 @@ def test_material_map_properties_round_trip_identity():
 def test_material_is_a_real_state_attribute():
 	# The whole point of collapsing MaterialFactors/attachMaterialFactors() into osgx::Material
 	# was making it a genuine osg::StateAttribute -- this is the cross-module inheritance proof:
-	# osg.StateAttribute is bound in pyosg, osgx.pbr.Material is bound in a separate .so, and
+	# osg.StateAttribute is bound in pyosg, osgx.Material is bound in a separate .so, and
 	# isinstance() only works here because both modules share pybind11's process-wide type
 	# registry at import time (see PBR.hpp's class comment / TODO.md's 2026-08-23 entry).
-	m = osgx.pbr.Material()
+	m = osgx.Material()
 
 	assert isinstance(m, osg.StateAttribute)
 
@@ -85,7 +85,7 @@ def test_material_attaches_to_a_state_set_and_round_trips_by_identity():
 	# side (osg::StateSet::_attributeList, keyed by TypeMemberPair) genuinely holds and returns
 	# this exact object through its own ref_ptr<StateAttribute>, the same path real rendering
 	# uses to find it during State::apply() (PBR.hpp/PBR.cpp's Material::apply()/compare()).
-	m = osgx.pbr.Material()
+	m = osgx.Material()
 
 	m.baseColor = osg.Vec4(0.1, 0.2, 0.3, 1.0)
 

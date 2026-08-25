@@ -20,14 +20,14 @@ def test_shape_drawable_color():
 	assert sd.color == osg.Vec4(1.0, 0.2, 0.2, 1.0)
 
 def test_pick_readback_sync_construction():
-	rb = osgx.picking.PickReadbackSync(
+	rb = osgx.PickReadbackSync(
 		1, make_image(), 800, 600,
-		rule=osgx.picking.PickRule.SPIRAL,
-		mode=osgx.picking.PickReadbackSync.Mode.CLICK,
+		rule=osgx.PickRule.SPIRAL,
+		mode=osgx.PickReadbackSync.Mode.CLICK,
 	)
 
 	assert isinstance(rb, osg.NodeCallback)
-	assert isinstance(rb, osgx.picking.PickReadback)
+	assert isinstance(rb, osgx.PickReadback)
 	# PickReadback's `virtual osg::Object` base (see osgx/Picking.hpp) is what makes this
 	# multiple-inheritance shape work at all -- confirm it's really reachable.
 	assert isinstance(rb, osg.Object)
@@ -42,38 +42,38 @@ def test_pick_readback_sync_construction():
 
 def test_pick_readback_async_construction():
 	tex = osg.Texture2D()
-	rba = osgx.picking.PickReadbackAsync(tex, 1, 1, mode=osgx.picking.PickReadbackAsync.Mode.CONTINUOUS)
+	rba = osgx.PickReadbackAsync(tex, 1, 1, mode=osgx.PickReadbackAsync.Mode.CONTINUOUS)
 
 	assert isinstance(rba, osg.Camera.DrawCallback)
-	assert isinstance(rba, osgx.picking.PickReadback)
+	assert isinstance(rba, osgx.PickReadback)
 
 def test_pick_callbacks_accept_pick_readback_base():
 	# The actual point of PickReadback's virtual-Object fix: PickCameraSync/PickHoverCallback/
 	# PickHandler all take a plain `PickReadback*` in C++ -- prove a PickReadbackSync Python
 	# object satisfies that despite being a totally separate multiple-inheritance branch.
-	rb = osgx.picking.PickReadbackSync(1, make_image(), 800, 600)
+	rb = osgx.PickReadbackSync(1, make_image(), 800, 600)
 	cam = osg.Camera()
 
-	sync = osgx.picking.PickCameraSync(cam, False, 0, 0, rb)
-	hover = osgx.picking.PickHoverCallback(rb)
-	handler = osgx.picking.PickHandler(rb, False, False)
+	sync = osgx.PickCameraSync(cam, False, 0, 0, rb)
+	hover = osgx.PickHoverCallback(rb)
+	handler = osgx.PickHandler(rb, False, False)
 
 	assert sync is not None
 	assert hover is not None
 	assert handler is not None
 
 def test_make_pick_camera_overloads():
-	cam_image = osgx.picking.makePickCamera(64, 64, make_image())
+	cam_image = osgx.makePickCamera(64, 64, make_image())
 
 	assert isinstance(cam_image, osg.Camera)
 
-	cam_tex = osgx.picking.makePickCamera(64, 64, osg.Texture2D())
+	cam_tex = osgx.makePickCamera(64, 64, osg.Texture2D())
 
 	assert isinstance(cam_tex, osg.Camera)
 
 def test_decode_pick_id():
-	assert osgx.picking.decodePickID(bytes([5, 0, 0, 0])) == 5
-	assert osgx.picking.decodePickID(bytes([0, 1, 0, 0])) == 256
+	assert osgx.decodePickID(bytes([5, 0, 0, 0])) == 5
+	assert osgx.decodePickID(bytes([0, 1, 0, 0])) == 256
 
 def test_pick_rules_spiral_and_center():
 	# 3x3 region, row-major, Y=0 at bottom-left. Put ID 5 one ring out from center (index 3,
@@ -85,12 +85,12 @@ def test_pick_rules_spiral_and_center():
 
 	region = bytes(region)
 
-	assert osgx.picking.pickCenter(region, 3) == 0
-	assert osgx.picking.spiralPick(region, 3) == 5
+	assert osgx.pickCenter(region, 3) == 0
+	assert osgx.spiralPick(region, 3) == 5
 
 def test_pick_rule_buffer_too_small_raises():
 	try:
-		osgx.picking.pickCenter(bytes([0, 0, 0, 0]), 3) # needs 3*3*4=36 bytes, only got 4
+		osgx.pickCenter(bytes([0, 0, 0, 0]), 3) # needs 3*3*4=36 bytes, only got 4
 
 		assert False, "expected an exception for an undersized buffer"
 	except RuntimeError:

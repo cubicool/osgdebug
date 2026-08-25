@@ -16,30 +16,13 @@ PYBIND11_MODULE(osgx, m) {
 	osgx_python::bind_core(m);
 	osgx_python::bind_callbacks(m);
 
-	auto m_pbr = m.def_submodule("pbr", "osgx::pbr - BRDF math GLSL snippets + direct-light rig");
-
-	osgx_python::bind_pbr(m_pbr);
-
-	auto m_shadow = m.def_submodule(
-		"shadow",
-		"osgx::shadow - directional shadow mapping for osgx::LightSet-lit scenes"
-	);
-
-	osgx_python::bind_shadow(m_shadow);
-
-	auto m_gbuffer = m.def_submodule(
-		"gbuffer",
-		"osgx::gbuffer - generic deferred G-buffer camera setup and SSAO"
-	);
-
-	osgx_python::bind_gbuffer(m_gbuffer);
-
-	auto m_ibl = m.def_submodule(
-		"ibl",
-		"osgx::ibl - prefiltered cubemap + BRDF LUT + SH9/baked-Lambertian diffuse"
-	);
-
-	osgx_python::bind_ibl(m_ibl);
+	// pbr/shadow/gbuffer/ibl/picking used to live in their own osgx::{foo}:: C++ namespaces; those
+	// collapsed into plain osgx:: this week, so their bindings now go straight onto the top-level
+	// module too instead of a submodule that no longer corresponds to anything in C++.
+	osgx_python::bind_pbr(m);
+	osgx_python::bind_shadow(m);
+	osgx_python::bind_gbuffer(m);
+	osgx_python::bind_ibl(m);
 
 	auto m_debug = m.def_submodule("debug", "osgx::debug - GL_KHR_debug integration + GPU/CPU profiler");
 
@@ -57,9 +40,7 @@ PYBIND11_MODULE(osgx, m) {
 	osgx_python::bind_platform(m_platform);
 #endif
 
-	auto m_picking = m.def_submodule("picking", "osgx::picking - texture-based object-ID picking");
-
-	osgx_python::bind_picking(m_picking);
+	osgx_python::bind_picking(m);
 
 	osgx_python::bind_shapes(m);
 	osgx_python::bind_gizmos(m);

@@ -12,8 +12,8 @@ from OpenSceneGraph import *
 def test_light_set_is_a_real_state_attribute_with_its_own_member():
 	# LightSet shares CAPABILITY with Material, but claims member 1 so both shader-facing bundles
 	# can coexist on one StateSet without fighting over OSG's (Type, member) state-cache key.
-	lights = osgx.pbr.LightSet()
-	material = osgx.pbr.Material()
+	lights = osgx.LightSet()
+	material = osgx.Material()
 
 	assert isinstance(lights, osg.StateAttribute)
 	assert lights.type == osg.StateAttribute.CAPABILITY
@@ -23,7 +23,7 @@ def test_light_set_is_a_real_state_attribute_with_its_own_member():
 
 def test_light_set_attaches_a_complete_default_light_set():
 	ss = osg.StateSet()
-	lights = osgx.pbr.LightSet()
+	lights = osgx.LightSet()
 
 	ss.attributes.append(lights)
 
@@ -34,14 +34,14 @@ def test_light_set_attaches_a_complete_default_light_set():
 	# The Python StateSet attribute proxy exposes member 0 only, while LightSet deliberately uses
 	# member 1. append() still takes the real C++ setAttributeAndModes() path and confirms the
 	# attribute can be installed alongside Material rather than replacing it.
-	ss.attributes.append(osgx.pbr.Material())
+	ss.attributes.append(osgx.Material())
 	ss.attributes.append(lights)
 
 	assert lights.valid()
 
 
 def test_light_set_typed_setters_and_getters_round_trip():
-	lights = osgx.pbr.LightSet()
+	lights = osgx.LightSet()
 
 	lights.setCount(3)
 	lights.setPoint(0, osg.Vec3(1.0, 2.0, 3.0), osg.Vec3(0.2, 0.4, 0.6), 7.0, 0.5)
@@ -58,18 +58,18 @@ def test_light_set_typed_setters_and_getters_round_trip():
 	)
 
 	assert lights.getCount() == 3
-	assert lights.getType(0) == osgx.pbr.LightType.Point
+	assert lights.getType(0) == osgx.LightType.Point
 	assert lights.getEnabled(0)
 	assert lights.getPosIntensity(0) == osg.Vec4(1.0, 2.0, 3.0, 7.0)
 	assert lights.getColor(0) == osg.Vec3(0.2, 0.4, 0.6)
 	assert lights.getSourceRadius(0) == pytest.approx(0.5)
 
-	assert lights.getType(1) == osgx.pbr.LightType.Directional
+	assert lights.getType(1) == osgx.LightType.Directional
 	assert lights.getEnabled(1)
 	assert lights.getDirection(1) == osg.Vec3(0.0, 0.0, -1.0)
 	assert lights.getSourceRadius(1) == 0.0
 
-	assert lights.getType(2) == osgx.pbr.LightType.Spot
+	assert lights.getType(2) == osgx.LightType.Spot
 	assert lights.getEnabled(2)
 	assert lights.getPosIntensity(2) == osg.Vec4(-1.0, 0.0, 2.0, 9.0)
 	assert lights.getDirection(2) == osg.Vec3(0.0, 1.0, 0.0)
@@ -83,13 +83,13 @@ def test_light_set_typed_setters_and_getters_round_trip():
 
 
 def test_light_set_rejects_out_of_range_count_and_index():
-	lights = osgx.pbr.LightSet()
+	lights = osgx.LightSet()
 
 	with pytest.raises(IndexError):
 		lights.setCount(-1)
 
 	with pytest.raises(IndexError):
-		lights.setCount(osgx.pbr.MAX_LIGHTS + 1)
+		lights.setCount(osgx.MAX_LIGHTS + 1)
 
 	with pytest.raises(IndexError):
-		lights.setPosition(osgx.pbr.MAX_LIGHTS, osg.Vec3(), 1.0)
+		lights.setPosition(osgx.MAX_LIGHTS, osg.Vec3(), 1.0)
