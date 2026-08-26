@@ -1,4 +1,9 @@
 #include "osgx/Grid.hpp"
+#include "osgx/Array.hpp"
+#include "osgx/Shader.hpp"
+
+#include <cmath>
+#include <stdexcept>
 
 namespace osgx {
 
@@ -25,10 +30,7 @@ void main(void) {
 }
 )GLSL";
 
-constexpr const char* GRID_FRAGMENT_SHADER = R"GLSL(
-#version 430 core
-
-in vec2 gridPos;
+constexpr const char* GRID_SHADER_LIBRARY = R"GLSL(
 
 uniform vec2 u_canvasSize;
 
@@ -55,11 +57,9 @@ const int EDGE_NUDGE = 2;
 uniform int u_edgeMode;
 uniform int u_lineMode;
 
-out vec4 fragColor;
-
 // Antialiased coverage (0..1) of gridlines spaced `interval` apart in `pos`'s units, with the
 // line drawn `lineWidthPx` screen-pixels wide regardless of view distance/angle.
-float gridLine(vec2 pos, float interval, float lineWidthPx) {
+float osgx_GridLine(vec2 pos, float interval, float lineWidthPx) {
 	vec2 coord = pos / interval;
 	vec2 deriv = fwidth(coord);
 
@@ -116,7 +116,7 @@ float gridLine(vec2 pos, float interval, float lineWidthPx) {
 // `lineWidth` is in the same units as `pos`/`interval`, so perspective naturally makes lines
 // thinner; once they approach sub-pixel size, they are widened in derivative space and faded by
 // coverage.
-float pristineGridLine(vec2 pos, float interval, float lineWidth) {
+float osgx_PristineGridLine(vec2 pos, float interval, float lineWidth) {
 	vec2 uv = pos / interval;
 	vec2 uvDDX = dFdx(uv);
 	vec2 uvDDY = dFdy(uv);
@@ -150,45 +150,67 @@ float pristineGridLine(vec2 pos, float interval, float lineWidth) {
 	return clamp(grid2.x * (1.0 - grid2.y) + grid2.y, 0.0, 1.0);
 }
 
-void main(void) {
+vec4 osgx_GridColor(vec2 gridPos) {
 	vec4 color = u_colorBg;
 
 	float thin = u_lineMode == 0 ?
-		gridLine(gridPos, u_gridInterval, u_lineWidthPx) :
-		pristineGridLine(gridPos, u_gridInterval, u_lineWidth);
+		osgx_GridLine(gridPos, u_gridInterval, u_lineWidthPx) :
+		osgx_PristineGridLine(gridPos, u_gridInterval, u_lineWidth);
 
 	color = mix(color, u_colorLine, thin);
 
 	if(u_gridIntervalStrong > 0.0) {
 		float strong = u_lineMode == 0 ?
-			gridLine(gridPos, u_gridIntervalStrong, u_lineWidthPx * 1.5) :
-			pristineGridLine(gridPos, u_gridIntervalStrong, u_lineWidth * 1.5);
+			osgx_GridLine(gridPos, u_gridIntervalStrong, u_lineWidthPx * 1.5) :
+			osgx_PristineGridLine(gridPos, u_gridIntervalStrong, u_lineWidth * 1.5);
 
 		color = mix(color, u_colorLineStrong, strong);
 	}
 
-	fragColor = color;
+	return color;
+}
+)GLSL";
+
+constexpr const char* GRID_FRAGMENT_SHADER = R"GLSL(
+#version 430 core
+
+#pragma osgx::grid GRID
+
+in vec2 gridPos;
+
+out vec4 fragColor;
+
+void main(void) {
+	fragColor = osgx_GridColor(gridPos);
 }
 )GLSL";
 
 }
 
+void registerGridShaderLibs() {
+	static constexpr ShaderLib libs[] = {
+		{"GRID", "osgx_GridColor", GRID_SHADER_LIBRARY}
+	};
+
+	::osgx::registerShaderLibs("osgx::grid", libs);
+}
+
 void Grid::_build(const osg::Vec3& corner, const osg::Vec3& widthVec, const osg::Vec3& heightVec) {
-	auto vertices = make_ref<osg::Vec3Array>();
+	auto vertices = make_ref<Vec3Array>();
 
 	vertices->push_back(corner);
 	vertices->push_back(corner + widthVec);
 	vertices->push_back(corner + widthVec + heightVec);
 	vertices->push_back(corner + heightVec);
 
-	auto texCoords = make_ref<osg::Vec2Array>();
+	auto texCoords = make_ref<Vec2Array>();
 
 	texCoords->push_back(osg::Vec2(0.0f, 0.0f));
 	texCoords->push_back(osg::Vec2(1.0f, 0.0f));
 	texCoords->push_back(osg::Vec2(1.0f, 1.0f));
 	texCoords->push_back(osg::Vec2(0.0f, 1.0f));
 
-	auto normals = make_ref<osg::Vec3Array>();
+	auto normals = make_ref<Vec3Array>();
 	auto normal = widthVec ^ heightVec;
 
 	normal.normalize();
@@ -200,49 +222,113 @@ void Grid::_build(const osg::Vec3& corner, const osg::Vec3& widthVec, const osg:
 	// GL_QUADS is invalid in a core-profile context (including the 4.6 core
 	// profile used by pyosg-lighting). A four-vertex triangle fan describes the
 	// same rectangle without falling back to that removed legacy primitive.
-	addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::TRIANGLE_FAN, 0, 4));
+	addPrimitiveSet(new DrawArrays(osg::PrimitiveSet::TRIANGLE_FAN, 0, 4));
 
 	_installState();
+}
+
+osg::ref_ptr<Grid> Grid::createSphere(float radius, unsigned int slices, unsigned int stacks) {
+	auto grid = make_ref<Grid>();
+
+	grid->_buildSphere(radius, slices, stacks);
+
+	return grid;
+}
+
+void Grid::_buildSphere(float radius, unsigned int slices, unsigned int stacks) {
+	if(radius <= 0.0f) throw std::invalid_argument("Grid sphere radius must be positive");
+	if(slices < 3) throw std::invalid_argument("Grid sphere needs at least three slices");
+	if(stacks < 2) throw std::invalid_argument("Grid sphere needs at least two stacks");
+
+	auto vertices = make_ref<Vec3Array>();
+	auto texCoords = make_ref<Vec2Array>();
+	auto normals = make_ref<Vec3Array>();
+	auto elements = make_ref<DrawElementsUInt>(osg::PrimitiveSet::TRIANGLES);
+
+	vertices->reserve(static_cast<std::size_t>(slices + 1) * (stacks + 1));
+	texCoords->reserve(vertices->capacity());
+	normals->reserve(vertices->capacity());
+	elements->reserve(static_cast<std::size_t>(slices) * stacks * 6);
+
+	for(unsigned int stack = 0; stack <= stacks; stack++) {
+		const auto v = static_cast<float>(stack) / static_cast<float>(stacks);
+		const auto phi = v * static_cast<float>(osg::PI);
+		const auto sinPhi = std::sin(phi);
+		const auto cosPhi = std::cos(phi);
+
+		for(unsigned int slice = 0; slice <= slices; slice++) {
+			const auto u = static_cast<float>(slice) / static_cast<float>(slices);
+			const auto theta = u * static_cast<float>(2.0 * osg::PI);
+			const osg::Vec3 normal(
+				sinPhi * std::cos(theta),
+				sinPhi * std::sin(theta),
+				cosPhi
+			);
+
+			vertices->push_back(normal * radius);
+			texCoords->push_back(osg::Vec2(u, v));
+			normals->push_back(normal);
+		}
+	}
+
+	for(unsigned int stack = 0; stack < stacks; stack++) {
+		for(unsigned int slice = 0; slice < slices; slice++) {
+			const auto a = stack * (slices + 1) + slice;
+			const auto b = a + 1;
+			const auto c = a + slices + 1;
+			const auto d = c + 1;
+
+			elements->append(a, c, b, b, c, d);
+		}
+	}
+
+	setVertexArray(vertices);
+	setTexCoordArray(0, texCoords);
+	setNormalArray(normals, osg::Array::BIND_PER_VERTEX);
+	removePrimitiveSet(0, getNumPrimitiveSets());
+	addPrimitiveSet(elements);
+	dirtyDisplayList();
+	dirtyBound();
 }
 
 void Grid::_installState() {
 	auto* ss = getOrCreateStateSet();
 	auto program = make_ref<osg::Program>();
 
+	registerGridShaderLibs();
+
 	program->addShader(new osg::Shader(osg::Shader::VERTEX, GRID_VERTEX_SHADER));
-	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, GRID_FRAGMENT_SHADER));
+	program->addShader(new osg::Shader(osg::Shader::FRAGMENT, resolveShaderLibs(GRID_FRAGMENT_SHADER)));
 
 	ss->setAttributeAndModes(program, osg::StateAttribute::ON);
-	ss->setMode(GL_BLEND, osg::StateAttribute::ON);
+	configureStateSet(ss);
+	_bindUniforms();
+}
+
+void Grid::configureStateSet(osg::StateSet* stateSet) {
+	if(!stateSet) throw std::invalid_argument("Grid StateSet cannot be null");
+
+	registerGridShaderLibs();
+
+	stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
 	// Enabling GL_BLEND alone leaves GL's default blend func (ONE, ZERO), which just
 	// overwrites the destination regardless of alpha; SRC_ALPHA/ONE_MINUS_SRC_ALPHA is what
 	// actually makes the zero-alpha background pixels transparent.
-	ss->setAttributeAndModes(
+	stateSet->setAttributeAndModes(
 		new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
 		osg::StateAttribute::ON
 	);
 
-	_canvasSize = new osg::Uniform("u_canvasSize", osg::Vec2(300.0f, 300.0f));
-	_gridInterval = new osg::Uniform("u_gridInterval", 5.0f);
-	_gridIntervalStrong = new osg::Uniform("u_gridIntervalStrong", 10.0f);
-	_lineWidthPx = new osg::Uniform("u_lineWidthPx", 1.0f);
-	_lineWidth = new osg::Uniform("u_lineWidth", 0.5f);
-	_edgeMode = new osg::Uniform("u_edgeMode", static_cast<int>(EDGE_ASIS));
-	_lineMode = new osg::Uniform("u_lineMode", static_cast<int>(LINE_SCREEN_PIXELS));
-	_colorBg = new osg::Uniform("u_colorBg", osg::Vec4(0.10f, 0.10f, 0.12f, 0.0f));
-	_colorLine = new osg::Uniform("u_colorLine", osg::Vec4(0.45f, 0.45f, 0.50f, 1.0f));
-	_colorLineStrong = new osg::Uniform("u_colorLineStrong", osg::Vec4(0.85f, 0.85f, 0.90f, 1.0f));
-
-	ss->addUniform(_canvasSize);
-	ss->addUniform(_gridInterval);
-	ss->addUniform(_gridIntervalStrong);
-	ss->addUniform(_lineWidthPx);
-	ss->addUniform(_lineWidth);
-	ss->addUniform(_edgeMode);
-	ss->addUniform(_lineMode);
-	ss->addUniform(_colorBg);
-	ss->addUniform(_colorLine);
-	ss->addUniform(_colorLineStrong);
+	stateSet->addUniform(new osg::Uniform("u_canvasSize", osg::Vec2(300.0f, 300.0f)));
+	stateSet->addUniform(new osg::Uniform("u_gridInterval", 5.0f));
+	stateSet->addUniform(new osg::Uniform("u_gridIntervalStrong", 10.0f));
+	stateSet->addUniform(new osg::Uniform("u_lineWidthPx", 1.0f));
+	stateSet->addUniform(new osg::Uniform("u_lineWidth", 0.5f));
+	stateSet->addUniform(new osg::Uniform("u_edgeMode", static_cast<int>(EDGE_ASIS)));
+	stateSet->addUniform(new osg::Uniform("u_lineMode", static_cast<int>(LINE_SCREEN_PIXELS)));
+	stateSet->addUniform(new osg::Uniform("u_colorBg", osg::Vec4(0.10f, 0.10f, 0.12f, 0.0f)));
+	stateSet->addUniform(new osg::Uniform("u_colorLine", osg::Vec4(0.45f, 0.45f, 0.50f, 1.0f)));
+	stateSet->addUniform(new osg::Uniform("u_colorLineStrong", osg::Vec4(0.85f, 0.85f, 0.90f, 1.0f)));
 }
 
 void Grid::_bindUniforms() {

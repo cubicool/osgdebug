@@ -10,11 +10,18 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Geometry>
 #include <osg/Program>
 #include <osg/Shader>
+#include <osg/StateSet>
 #include <osg/Uniform>
 
 OSGX_ENABLE_WARNINGS
 
 namespace osgx {
+
+// Registers the `#pragma osgx::grid GRID` fragment-library block. The block declares Grid's
+// uniforms and exposes `osgx_GridColor(vec2 gridPos)`; callers provide their own vertex-coordinate
+// mapping and fragment `main()`, so it works equally with Grid's own quad, a UV sphere, or a
+// Polyhedron's face-local UV chart.
+void registerGridShaderLibs();
 
 // ================================================================================================
 // Grid
@@ -43,7 +50,8 @@ namespace osgx {
 //   grid->setGridInterval(1.0f);
 //   grid->setEdgeMode(osgx::Grid::EDGE_NUDGE);
 //
-// The GLSL vertex/fragment shader source (grid-space projection; gridLine()/pristineGridLine(),
+// The GLSL vertex/fragment shader source (grid-space projection; osgx_GridLine()/
+// osgx_PristineGridLine(),
 // Ben Golus' "Pristine Grid" technique: https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8)
 // lives entirely in Grid.cpp -- nothing outside this repo's own build has ever referenced those
 // strings by name.
@@ -152,8 +160,19 @@ public:
 		return make_ref<Grid>(corner, widthVec, heightVec)->orthoCamera();
 	}
 
+	// Builds a UV sphere using this Grid's own shader and uniforms. The duplicated seam/pole
+	// vertices make the equirectangular grid coordinates continuous everywhere except the
+	// intentional longitude wrap, so the usual live style setters work unchanged.
+	static osg::ref_ptr<Grid> createSphere(float radius=1.0f, unsigned int slices=48, unsigned int stacks=24);
+
+	// Adds Grid's default uniforms and blending state to an existing StateSet without attaching a
+	// Program. Pair this with a fragment shader importing `#pragma osgx::grid GRID`; this is the
+	// bridge for arbitrary geometry such as osgx::Polyhedron.
+	static void configureStateSet(osg::StateSet* stateSet);
+
 private:
 	void _build(const osg::Vec3& corner, const osg::Vec3& widthVec, const osg::Vec3& heightVec);
+	void _buildSphere(float radius, unsigned int slices, unsigned int stacks);
 	void _installState();
 
 	// Re-locates uniform pointers from the (possibly newly-cloned) StateSet after a copy --

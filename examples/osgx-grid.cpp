@@ -2,6 +2,7 @@
 
 #include "osgx/Core.hpp"
 #include "osgx/Grid.hpp"
+#include "osgx/Shapes.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -107,6 +108,40 @@ void main() {
 }
 )GLSL";
 
+// Grid's fragment library is independent of the mesh. This adapter maps Polyhedron's face-local
+// UV chart into the same grid space that Grid's own vertex shader uses; the `dice` mode below is
+// therefore a direct proof that the procedural line code is reusable rather than quad-specific.
+constexpr const char* GRID_POLYHEDRON_VERTEX_SHADER = R"GLSL(
+#version 430 core
+
+in vec4 osg_Vertex;
+in vec2 osg_MultiTexCoord0;
+
+uniform mat4 osg_ModelViewProjectionMatrix;
+uniform vec2 u_canvasSize;
+
+out vec2 gridPos;
+
+void main() {
+	gridPos = osg_MultiTexCoord0 * u_canvasSize;
+	gl_Position = osg_ModelViewProjectionMatrix * osg_Vertex;
+}
+)GLSL";
+
+constexpr const char* GRID_POLYHEDRON_FRAGMENT_SHADER = R"GLSL(
+#version 430 core
+
+#pragma osgx::grid GRID
+
+in vec2 gridPos;
+
+out vec4 fragColor;
+
+void main() {
+	fragColor = osgx_GridColor(gridPos);
+}
+)GLSL";
+
 osg::ref_ptr<osg::Node> makeInfiniteFloor() {
 	auto vertices = osgx::make_ref<osg::Vec3Array>();
 
@@ -174,6 +209,42 @@ osg::ref_ptr<osg::Node> makeInfiniteFloorScene() {
 	root->addChild(makeInfiniteFloor());
 
 	return root;
+}
+
+osg::ref_ptr<osg::Node> makeGridDie() {
+	// Icosahedron supplies a separate equilateral-triangle UV chart for every face. The grid
+	// remains continuous within a face while its deliberate chart seams make every facet legible.
+	auto die = osgx::make_ref<osgx::Icosahedron>(osg::Vec3(), 3.0f);
+	auto program = osgx::make_ref<osg::Program>();
+
+	osgx::registerGridShaderLibs();
+	program->addShader(new osg::Shader(osg::Shader::VERTEX, GRID_POLYHEDRON_VERTEX_SHADER));
+	program->addShader(new osg::Shader(
+		osg::Shader::FRAGMENT,
+		osgx::resolveShaderLibs(GRID_POLYHEDRON_FRAGMENT_SHADER)
+	));
+
+	auto* stateSet = die->getOrCreateStateSet();
+
+	osgx::Grid::configureStateSet(stateSet);
+	stateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
+	stateSet->getUniform("u_canvasSize")->set(osg::Vec2(12.0f, 12.0f));
+	stateSet->getUniform("u_gridInterval")->set(2.0f);
+	stateSet->getUniform("u_gridIntervalStrong")->set(6.0f);
+	stateSet->getUniform("u_lineWidthPx")->set(1.0f);
+	stateSet->getUniform("u_lineWidth")->set(0.055f);
+	stateSet->getUniform("u_edgeMode")->set(static_cast<int>(osgx::Grid::EDGE_ASIS));
+	stateSet->getUniform("u_lineMode")->set(static_cast<int>(osgx::Grid::LINE_GRID_UNITS));
+	stateSet->getUniform("u_colorBg")->set(osg::Vec4(0.025f, 0.040f, 0.070f, 1.0f));
+	stateSet->getUniform("u_colorLine")->set(osg::Vec4(0.20f, 0.42f, 0.74f, 1.0f));
+	stateSet->getUniform("u_colorLineStrong")->set(osg::Vec4(0.72f, 0.90f, 1.0f, 1.0f));
+	stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+
+	auto geode = osgx::make_ref<osg::Geode>();
+
+	geode->addDrawable(die);
+
+	return geode;
 }
 
 osg::ref_ptr<osg::Node> makeFrameRod(
@@ -298,6 +369,7 @@ void addGridRoom(osg::Group* root) {
 int main(int argc, char** argv) {
 	bool orthoMode = argc > 1 && std::string(argv[1]) == "ortho";
 	bool floorMode = argc > 1 && std::string(argv[1]) == "floor";
+	bool diceMode = argc > 1 && std::string(argv[1]) == "dice";
 
 	osg::ref_ptr<osg::Node> root;
 
@@ -317,6 +389,8 @@ int main(int argc, char** argv) {
 
 	else if(floorMode) root = makeInfiniteFloorScene();
 
+	else if(diceMode) root = makeGridDie();
+
 	else {
 		auto room = osgx::make_ref<osg::Group>();
 
@@ -329,11 +403,11 @@ int main(int argc, char** argv) {
 	viewer.setSceneData(root);
 	viewer.getCamera()->setClearColor(osg::Vec4(0.015f, 0.020f, 0.035f, 1.0f));
 
-	if(floorMode) {
+	if(floorMode || diceMode) {
 		auto manipulator = new osgGA::TrackballManipulator();
 
 		manipulator->setHomePosition(
-			osg::Vec3d(12.0, -16.0, 10.0),
+			diceMode ? osg::Vec3d(9.0, -11.0, 7.0) : osg::Vec3d(12.0, -16.0, 10.0),
 			osg::Vec3d(0.0, 0.0, 0.0),
 			osg::Vec3d(0.0, 0.0, 1.0)
 		);

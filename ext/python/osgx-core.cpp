@@ -125,6 +125,8 @@ void bind_core(py::module_& m) {
 			&osgx::Grid::createSphere,
 			"radius"_a=1.0f, "slices"_a=48, "stacks"_a=24
 		)
+		.def_static("registerShaderLibs", &osgx::registerGridShaderLibs)
+		.def_static("configureStateSet", &osgx::Grid::configureStateSet, "state_set"_a)
 	;
 
 	// osgx::Ortho2DManipulator / OrbitAxisManipulator / MultiCameraManipulator (osgx/Manipulators.hpp).
@@ -473,7 +475,7 @@ void bind_core(py::module_& m) {
 		"resolveShaderLibs",
 		&osgx::resolveShaderLibs,
 		"src"_a,
-		"Expand '#pragma osgx::pbr ...' / '#pragma osgx::ibl ...' lines into their GLSL source."
+		"Expand registered '#pragma osgx::...' lines into their GLSL source."
 	);
 
 	// Shader-object substitution hook slots, the counterpart to resolveShaderLibs()' text
