@@ -12,6 +12,19 @@
 // OSGX_WITH_IMGUI is on -- osgx::imgui's own types don't exist otherwise (see osgx/ImGui.hpp).
 #ifdef OSGX_IMGUI
 
+namespace pybind11x {
+	template<>
+	void kwargs_init_own(osgx::imgui::Options& self, const py::kwargs& kwargs) {
+		if(kwargs.contains("show_gpu_info")) self.showGPUInfo = kwargs["show_gpu_info"].cast<bool>();
+
+		if(kwargs.contains("show_frame_info")) self.showFrameInfo = kwargs["show_frame_info"].cast<bool>();
+
+		if(kwargs.contains("dock")) self.dock = kwargs["dock"].cast<osgx::imgui::Dock>();
+
+		if(kwargs.contains("dock_width")) self.dockWidth = kwargs["dock_width"].cast<float>();
+	}
+}
+
 namespace osgx_python {
 
 void bind_imgui(py::module_& m_imgui) {
@@ -23,7 +36,15 @@ void bind_imgui(py::module_& m_imgui) {
 	;
 
 	py::class_<osgx::imgui::Options>(m_imgui, "Options")
-		.def(py::init<>())
+		// Use the same kwargs_init convention as OpenSceneGraph.py's OSG wrappers, so
+		// the construction spelling stays extensible as this small options bag grows.
+		.def(py::init([](py::kwargs kwargs) {
+			osgx::imgui::Options result;
+
+			pyx::kwargs_init(result, kwargs);
+
+			return result;
+		}))
 		.def_readwrite("show_gpu_info", &osgx::imgui::Options::showGPUInfo)
 		.def_readwrite("show_frame_info", &osgx::imgui::Options::showFrameInfo)
 		.def_readwrite("dock", &osgx::imgui::Options::dock)

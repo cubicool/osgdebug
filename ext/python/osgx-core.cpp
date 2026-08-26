@@ -120,6 +120,11 @@ void bind_core(py::module_& m) {
 			),
 			"corner"_a, "width_vec"_a, "height_vec"_a
 		)
+		.def_static(
+			"createSphere",
+			&osgx::Grid::createSphere,
+			"radius"_a=1.0f, "slices"_a=48, "stacks"_a=24
+		)
 	;
 
 	// osgx::Ortho2DManipulator / OrbitAxisManipulator / MultiCameraManipulator (osgx/Manipulators.hpp).
