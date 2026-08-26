@@ -5,23 +5,86 @@
 OSGX_DISABLE_WARNINGS
 
 #include <osg/BlendFunc>
+#include <osg/Array>
 #include <osg/Camera>
 #include <osg/Geode>
 #include <osg/Geometry>
 #include <osg/Program>
 #include <osg/Shader>
-#include <osg/StateSet>
-#include <osg/Uniform>
+#include <osg/StateAttribute>
 
 OSGX_ENABLE_WARNINGS
 
+namespace osg {
+	class ShaderStorageBufferBinding;
+}
+
 namespace osgx {
 
-// Registers the `#pragma osgx::grid GRID` fragment-library block. The block declares Grid's
-// uniforms and exposes `osgx_GridColor(vec2 gridPos)`; callers provide their own vertex-coordinate
-// mapping and fragment `main()`, so it works equally with Grid's own quad, a UV sphere, or a
-// Polyhedron's face-local UV chart.
+// Registers the `#pragma osgx::grid INPUTS` and `#pragma osgx::grid GRID` shader-library blocks.
+// INPUTS declares GridSettings' shader-storage data for a vertex stage; GRID declares the same
+// inputs and exposes `osgx_GridColor(vec2 gridPos)` for a fragment stage.
 void registerGridShaderLibs();
+
+class GridSettings: public osg::StateAttribute {
+public:
+	static constexpr Type GRID_SETTINGS_TYPE = CAPABILITY;
+	static constexpr unsigned int GRID_SETTINGS_MEMBER = 2;
+	// Binding 4 follows Material (0), glTF joints (2), and LightSet (3). The FloatArray backing
+	// store has the exact std430 layout declared by the shader-library blocks in Grid.cpp.
+	static constexpr unsigned int GRID_SETTINGS_BINDING = 4;
+
+	enum EdgeMode {
+		EDGE_ASIS = 0,
+		EDGE_HIDE = 1,
+		EDGE_NUDGE = 2
+	};
+
+	enum LineMode {
+		LINE_SCREEN_PIXELS = 0,
+		LINE_GRID_UNITS = 1
+	};
+
+	GridSettings();
+	GridSettings(const GridSettings& settings, const osg::CopyOp& copyop=osg::CopyOp::SHALLOW_COPY);
+
+	META_StateAttribute(osgx, GridSettings, GRID_SETTINGS_TYPE)
+
+	unsigned int getMember() const override { return GRID_SETTINGS_MEMBER; }
+	int compare(const osg::StateAttribute& sa) const override;
+	void apply(osg::State& state) const override;
+
+	void setCanvasSize(const osg::Vec2& value);
+	osg::Vec2 getCanvasSize() const;
+	void setGridInterval(float value);
+	float getGridInterval() const;
+	void setGridIntervalStrong(float value);
+	float getGridIntervalStrong() const;
+	void setLineWidthPx(float value);
+	float getLineWidthPx() const;
+	void setLineWidth(float value);
+	float getLineWidth() const;
+	void setEdgeMode(EdgeMode value);
+	EdgeMode getEdgeMode() const;
+	void setLineMode(LineMode value);
+	LineMode getLineMode() const;
+	void setColorBg(const osg::Vec4& value);
+	osg::Vec4 getColorBg() const;
+	void setColorLine(const osg::Vec4& value);
+	osg::Vec4 getColorLine() const;
+	void setColorLineStrong(const osg::Vec4& value);
+	osg::Vec4 getColorLineStrong() const;
+
+protected:
+	virtual ~GridSettings();
+
+private:
+	void _initBuffer();
+	float* _data() const;
+
+	osg::ref_ptr<osg::FloatArray> _buffer;
+	osg::ref_ptr<osg::ShaderStorageBufferBinding> _binding;
+};
 
 // ================================================================================================
 // Grid
@@ -64,16 +127,14 @@ public:
 	// Boundary-line handling for lines that fall exactly on the canvas edge (pos == 0 or
 	// pos == canvasSize) -- see EDGE_ASIS/EDGE_HIDE/EDGE_NUDGE in the fragment shader (Grid.cpp)
 	// for the full rationale.
-	enum EdgeMode {
-		EDGE_ASIS = 0,  // leave half-clipped boundary lines as rendered
-		EDGE_HIDE = 1,  // don't draw boundary lines at all
-		EDGE_NUDGE = 2  // shift boundary lines inward by half their width to full strength
-	};
+	using EdgeMode = GridSettings::EdgeMode;
+	using LineMode = GridSettings::LineMode;
 
-	enum LineMode {
-		LINE_SCREEN_PIXELS = 0,  // constant screen-pixel hairlines, useful for HUD/ortho grids
-		LINE_GRID_UNITS = 1      // perspective/world-width lines with derivative-limited AA
-	};
+	static constexpr EdgeMode EDGE_ASIS = GridSettings::EDGE_ASIS;
+	static constexpr EdgeMode EDGE_HIDE = GridSettings::EDGE_HIDE;
+	static constexpr EdgeMode EDGE_NUDGE = GridSettings::EDGE_NUDGE;
+	static constexpr LineMode LINE_SCREEN_PIXELS = GridSettings::LINE_SCREEN_PIXELS;
+	static constexpr LineMode LINE_GRID_UNITS = GridSettings::LINE_GRID_UNITS;
 
 	// Default: a fullscreen NDC quad (XY plane, z=0, -1..1) -- the most common case, meant to
 	// pair with orthoCamera()/createOrthoCamera() below.
@@ -89,47 +150,36 @@ public:
 
 	Grid(const Grid& g, const osg::CopyOp& co = osg::CopyOp::SHALLOW_COPY):
 	osg::Geometry(g, co) {
-		_bindUniforms();
+		_bindSettings();
 	}
 
-	// --- Live uniform updates ---------------------------------------------------------------
+	// --- Live settings updates --------------------------------------------------------------
 
-	void setCanvasSize(const osg::Vec2& v) { _canvasSize->set(v); }
-	void setGridInterval(float v) { _gridInterval->set(v); }
-	void setGridIntervalStrong(float v) { _gridIntervalStrong->set(v); } // <= 0 disables
-	void setLineWidthPx(float v) { _lineWidthPx->set(v); }
-	void setLineWidth(float v) { _lineWidth->set(v); }
-	void setEdgeMode(EdgeMode v) { _edgeMode->set(static_cast<int>(v)); }
-	void setLineMode(LineMode v) { _lineMode->set(static_cast<int>(v)); }
-	void setColorBg(const osg::Vec4& v) { _colorBg->set(v); }
-	void setColorLine(const osg::Vec4& v) { _colorLine->set(v); }
-	void setColorLineStrong(const osg::Vec4& v) { _colorLineStrong->set(v); }
+	void setCanvasSize(const osg::Vec2& value) { _settings->setCanvasSize(value); }
+	void setGridInterval(float value) { _settings->setGridInterval(value); }
+	void setGridIntervalStrong(float value) { _settings->setGridIntervalStrong(value); }
+	void setLineWidthPx(float value) { _settings->setLineWidthPx(value); }
+	void setLineWidth(float value) { _settings->setLineWidth(value); }
+	void setEdgeMode(EdgeMode value) { _settings->setEdgeMode(value); }
+	void setLineMode(LineMode value) { _settings->setLineMode(value); }
+	void setColorBg(const osg::Vec4& value) { _settings->setColorBg(value); }
+	void setColorLine(const osg::Vec4& value) { _settings->setColorLine(value); }
+	void setColorLineStrong(const osg::Vec4& value) { _settings->setColorLineStrong(value); }
 
-	osg::Vec2 getCanvasSize() const { osg::Vec2 v; _canvasSize->get(v); return v; }
-	float getGridInterval() const { float v = 0.0f; _gridInterval->get(v); return v; }
-	float getGridIntervalStrong() const { float v = 0.0f; _gridIntervalStrong->get(v); return v; }
-	float getLineWidthPx() const { float v = 0.0f; _lineWidthPx->get(v); return v; }
-	float getLineWidth() const { float v = 0.0f; _lineWidth->get(v); return v; }
+	osg::Vec2 getCanvasSize() const { return _settings->getCanvasSize(); }
+	float getGridInterval() const { return _settings->getGridInterval(); }
+	float getGridIntervalStrong() const { return _settings->getGridIntervalStrong(); }
+	float getLineWidthPx() const { return _settings->getLineWidthPx(); }
+	float getLineWidth() const { return _settings->getLineWidth(); }
+	EdgeMode getEdgeMode() const { return _settings->getEdgeMode(); }
+	LineMode getLineMode() const { return _settings->getLineMode(); }
+	osg::Vec4 getColorBg() const { return _settings->getColorBg(); }
+	osg::Vec4 getColorLine() const { return _settings->getColorLine(); }
+	osg::Vec4 getColorLineStrong() const { return _settings->getColorLineStrong(); }
 
-	EdgeMode getEdgeMode() const {
-		int v = 0;
-
-		_edgeMode->get(v);
-
-		return static_cast<EdgeMode>(v);
-	}
-
-	LineMode getLineMode() const {
-		int v = 0;
-
-		_lineMode->get(v);
-
-		return static_cast<LineMode>(v);
-	}
-
-	osg::Vec4 getColorBg() const { osg::Vec4 v; _colorBg->get(v); return v; }
-	osg::Vec4 getColorLine() const { osg::Vec4 v; _colorLine->get(v); return v; }
-	osg::Vec4 getColorLineStrong() const { osg::Vec4 v; _colorLineStrong->get(v); return v; }
+	GridSettings* getSettings() { return _settings.get(); }
+	const GridSettings* getSettings() const { return _settings.get(); }
+	void setSettings(GridSettings* settings);
 
 	// --- Fullscreen overlay wiring -----------------------------------------------------------
 
@@ -165,31 +215,14 @@ public:
 	// intentional longitude wrap, so the usual live style setters work unchanged.
 	static osg::ref_ptr<Grid> createSphere(float radius=1.0f, unsigned int slices=48, unsigned int stacks=24);
 
-	// Adds Grid's default uniforms and blending state to an existing StateSet without attaching a
-	// Program. Pair this with a fragment shader importing `#pragma osgx::grid GRID`; this is the
-	// bridge for arbitrary geometry such as osgx::Polyhedron.
-	static void configureStateSet(osg::StateSet* stateSet);
-
 private:
 	void _build(const osg::Vec3& corner, const osg::Vec3& widthVec, const osg::Vec3& heightVec);
 	void _buildSphere(float radius, unsigned int slices, unsigned int stacks);
 	void _installState();
 
-	// Re-locates uniform pointers from the (possibly newly-cloned) StateSet after a copy --
-	// robust to both SHALLOW_COPY (StateSet shared, same uniform objects) and a deep-copy
-	// CopyOp (StateSet cloned, uniforms cloned along with it).
-	void _bindUniforms();
+	void _bindSettings();
 
-	osg::ref_ptr<osg::Uniform> _canvasSize;
-	osg::ref_ptr<osg::Uniform> _gridInterval;
-	osg::ref_ptr<osg::Uniform> _gridIntervalStrong;
-	osg::ref_ptr<osg::Uniform> _lineWidthPx;
-	osg::ref_ptr<osg::Uniform> _lineWidth;
-	osg::ref_ptr<osg::Uniform> _edgeMode;
-	osg::ref_ptr<osg::Uniform> _lineMode;
-	osg::ref_ptr<osg::Uniform> _colorBg;
-	osg::ref_ptr<osg::Uniform> _colorLine;
-	osg::ref_ptr<osg::Uniform> _colorLineStrong;
+	osg::ref_ptr<GridSettings> _settings;
 };
 
 }

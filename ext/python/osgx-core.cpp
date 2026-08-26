@@ -69,6 +69,34 @@ void bind_core(py::module_& m) {
 		"Returns an empty string when no file is found."
 	);
 
+	auto gridSettings = py::class_<
+		osgx::GridSettings,
+		osg::StateAttribute,
+		osg::ref_ptr<osgx::GridSettings>
+	>(m, "GridSettings");
+
+	gridSettings
+		.def(py::init<>())
+		.def_property("canvasSize", &osgx::GridSettings::getCanvasSize, &osgx::GridSettings::setCanvasSize)
+		.def_property("gridInterval", &osgx::GridSettings::getGridInterval, &osgx::GridSettings::setGridInterval)
+		.def_property(
+			"gridIntervalStrong",
+			&osgx::GridSettings::getGridIntervalStrong,
+			&osgx::GridSettings::setGridIntervalStrong
+		)
+		.def_property("lineWidthPx", &osgx::GridSettings::getLineWidthPx, &osgx::GridSettings::setLineWidthPx)
+		.def_property("lineWidth", &osgx::GridSettings::getLineWidth, &osgx::GridSettings::setLineWidth)
+		.def_property("edgeMode", &osgx::GridSettings::getEdgeMode, &osgx::GridSettings::setEdgeMode)
+		.def_property("lineMode", &osgx::GridSettings::getLineMode, &osgx::GridSettings::setLineMode)
+		.def_property("colorBg", &osgx::GridSettings::getColorBg, &osgx::GridSettings::setColorBg)
+		.def_property("colorLine", &osgx::GridSettings::getColorLine, &osgx::GridSettings::setColorLine)
+		.def_property(
+			"colorLineStrong",
+			&osgx::GridSettings::getColorLineStrong,
+			&osgx::GridSettings::setColorLineStrong
+		)
+	;
+
 	auto grid = py::class_<
 		osgx::Grid,
 		osg::Geometry,
@@ -111,6 +139,11 @@ void bind_core(py::module_& m) {
 			&osgx::Grid::getColorLineStrong,
 			&osgx::Grid::setColorLineStrong
 		)
+		.def_property(
+			"settings",
+			static_cast<osgx::GridSettings* (osgx::Grid::*)()>(&osgx::Grid::getSettings),
+			&osgx::Grid::setSettings
+		)
 		.def("orthoCamera", &osgx::Grid::orthoCamera)
 		.def_static("createOrthoCamera", py::overload_cast<>(&osgx::Grid::createOrthoCamera))
 		.def_static(
@@ -126,7 +159,6 @@ void bind_core(py::module_& m) {
 			"radius"_a=1.0f, "slices"_a=48, "stacks"_a=24
 		)
 		.def_static("registerShaderLibs", &osgx::registerGridShaderLibs)
-		.def_static("configureStateSet", &osgx::Grid::configureStateSet, "state_set"_a)
 	;
 
 	// osgx::Ortho2DManipulator / OrbitAxisManipulator / MultiCameraManipulator (osgx/Manipulators.hpp).

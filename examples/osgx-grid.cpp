@@ -3,6 +3,7 @@
 #include "osgx/Core.hpp"
 #include "osgx/Grid.hpp"
 #include "osgx/Shapes.hpp"
+#include "osgx/Shader.hpp"
 
 OSGX_DISABLE_WARNINGS
 
@@ -114,16 +115,17 @@ void main() {
 constexpr const char* GRID_POLYHEDRON_VERTEX_SHADER = R"GLSL(
 #version 430 core
 
+#pragma osgx::grid INPUTS
+
 in vec4 osg_Vertex;
 in vec2 osg_MultiTexCoord0;
 
 uniform mat4 osg_ModelViewProjectionMatrix;
-uniform vec2 u_canvasSize;
 
 out vec2 gridPos;
 
 void main() {
-	gridPos = osg_MultiTexCoord0 * u_canvasSize;
+	gridPos = osg_MultiTexCoord0 * u_grid.canvasSize;
 	gl_Position = osg_ModelViewProjectionMatrix * osg_Vertex;
 }
 )GLSL";
@@ -216,9 +218,12 @@ osg::ref_ptr<osg::Node> makeGridDie() {
 	// remains continuous within a face while its deliberate chart seams make every facet legible.
 	auto die = osgx::make_ref<osgx::Icosahedron>(osg::Vec3(), 3.0f);
 	auto program = osgx::make_ref<osg::Program>();
+	auto settings = osgx::make_ref<osgx::GridSettings>();
 
-	osgx::registerGridShaderLibs();
-	program->addShader(new osg::Shader(osg::Shader::VERTEX, GRID_POLYHEDRON_VERTEX_SHADER));
+	program->addShader(new osg::Shader(
+		osg::Shader::VERTEX,
+		osgx::resolveShaderLibs(GRID_POLYHEDRON_VERTEX_SHADER)
+	));
 	program->addShader(new osg::Shader(
 		osg::Shader::FRAGMENT,
 		osgx::resolveShaderLibs(GRID_POLYHEDRON_FRAGMENT_SHADER)
@@ -226,18 +231,18 @@ osg::ref_ptr<osg::Node> makeGridDie() {
 
 	auto* stateSet = die->getOrCreateStateSet();
 
-	osgx::Grid::configureStateSet(stateSet);
 	stateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
-	stateSet->getUniform("u_canvasSize")->set(osg::Vec2(12.0f, 12.0f));
-	stateSet->getUniform("u_gridInterval")->set(2.0f);
-	stateSet->getUniform("u_gridIntervalStrong")->set(6.0f);
-	stateSet->getUniform("u_lineWidthPx")->set(1.0f);
-	stateSet->getUniform("u_lineWidth")->set(0.055f);
-	stateSet->getUniform("u_edgeMode")->set(static_cast<int>(osgx::Grid::EDGE_ASIS));
-	stateSet->getUniform("u_lineMode")->set(static_cast<int>(osgx::Grid::LINE_GRID_UNITS));
-	stateSet->getUniform("u_colorBg")->set(osg::Vec4(0.025f, 0.040f, 0.070f, 1.0f));
-	stateSet->getUniform("u_colorLine")->set(osg::Vec4(0.20f, 0.42f, 0.74f, 1.0f));
-	stateSet->getUniform("u_colorLineStrong")->set(osg::Vec4(0.72f, 0.90f, 1.0f, 1.0f));
+	stateSet->setAttributeAndModes(settings, osg::StateAttribute::ON);
+	settings->setCanvasSize(osg::Vec2(12.0f, 12.0f));
+	settings->setGridInterval(2.0f);
+	settings->setGridIntervalStrong(6.0f);
+	settings->setLineWidthPx(1.0f);
+	settings->setLineWidth(0.055f);
+	settings->setEdgeMode(osgx::GridSettings::EDGE_ASIS);
+	settings->setLineMode(osgx::GridSettings::LINE_GRID_UNITS);
+	settings->setColorBg(osg::Vec4(0.025f, 0.040f, 0.070f, 1.0f));
+	settings->setColorLine(osg::Vec4(0.20f, 0.42f, 0.74f, 1.0f));
+	settings->setColorLineStrong(osg::Vec4(0.72f, 0.90f, 1.0f, 1.0f));
 	stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 
 	auto geode = osgx::make_ref<osg::Geode>();
