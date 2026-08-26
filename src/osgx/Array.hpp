@@ -64,6 +64,15 @@ public:
 		std::ranges::copy(r, begin());
 	}
 
+	// std::vector-style "N default-constructed elements" constructor. Guarded off whenever
+	// size_t is itself convertible to ElementDataType (e.g. FloatArray/IntArray) -- there,
+	// Array(5) already means "one element valued 5" via the variadic constructor below, and an
+	// unconstrained sized constructor would make that call ambiguous. No such collision for
+	// struct-like element types (Vec2/Vec3/Vec4Array), where this is unambiguous and safe.
+	explicit Array(size_t n) requires(!std::convertible_to<size_t, ElementDataType>) {
+		resize(n);
+	}
+
 	template<typename... Args>
 	requires(std::convertible_to<Args, ElementDataType> && ...)
 	explicit Array(Args&&... args) {
@@ -335,5 +344,35 @@ public:
 using DrawElementsUByte = DrawElements<osg::DrawElementsUByte>;
 using DrawElementsUShort = DrawElements<osg::DrawElementsUShort>;
 using DrawElementsUInt = DrawElements<osg::DrawElementsUInt>;
+
+// ================================================================================================
+// DrawArrays wrapper
+// ================================================================================================
+
+// osg::DrawArrays isn't a template family like DrawElements (one concrete class, no index-type
+// variants), so this is a direct subclass rather than another OSGArray-style template. Its real
+// job: osg::DrawArrays' first/count/numInstances are GLint/GLsizei/int, but real call sites almost
+// always compute them from size_t (container.size(), size() - 1, etc.), which trips
+// -Wconversion under -Werror at every call site. Smooth that over here once instead.
+class DrawArrays: public osg::DrawArrays {
+public:
+	DrawArrays(GLenum mode=0): osg::DrawArrays(mode) {}
+
+	DrawArrays(GLenum mode, size_t first, size_t count, size_t numInstances=0):
+	osg::DrawArrays(
+		mode,
+		static_cast<GLint>(first),
+		static_cast<GLsizei>(count),
+		static_cast<int>(numInstances)
+	) {}
+
+	DrawArrays(const DrawArrays& da, const osg::CopyOp& co=osg::CopyOp::SHALLOW_COPY):
+	osg::DrawArrays(da, co) {}
+
+	template<typename... Args>
+	static auto create(Args&&... args) {
+		return osg::ref_ptr<DrawArrays>(new DrawArrays(std::forward<Args>(args)...));
+	}
+};
 
 }
