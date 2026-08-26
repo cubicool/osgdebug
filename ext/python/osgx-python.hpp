@@ -20,7 +20,7 @@ OSGX_ENABLE_WARNINGS
 
 #include "pyosg/pyosg.hpp"
 
-#include "pybind11x.hpp"
+#include "pybind11x-osg.hpp"
 
 #include <pybind11/functional.h>
 #include <pybind11/stl.h>
