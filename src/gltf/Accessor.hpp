@@ -1,5 +1,6 @@
 #pragma once
 
+#include "osgx/Array.hpp"
 #include "osgx/Warnings.hpp"
 
 OSGX_DISABLE_WARNINGS

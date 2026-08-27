@@ -13,6 +13,69 @@ OSGX_ENABLE_WARNINGS
 #include <ranges>
 #include <span>
 
+// Every osg::XxxArray typedef (IntArray, Vec3Array, FloatArray, ...) derives, via
+// osg::TemplateArray/TemplateIndexArray, from an osg::MixinVector<T> specialization. Unlike
+// TemplateArray/TemplateIndexArray's OTHER base (Array/IndexArray, both OSG_EXPORT), MixinVector
+// itself carries no export annotation anywhere in OSG, and every one of its methods is defined
+// inline inside its class body (see <osg/MixinVector>) -- so any translation unit that touches
+// one of these array types implicitly compiles its own private copy of MixinVector<T>'s methods
+// for that T.
+//
+// GCC/Clang treat that as an ordinary weak/COMDAT symbol and silently fold duplicates, no matter
+// how many translation units bring one, or whether OSG's own DLL happens to carry a dormant copy
+// too. MSVC will ALSO fold it right up until something in the final link causes it to actually
+// need a different symbol living in the same object file inside osg.lib as one of these dormant
+// copies -- at which point that whole object file gets pulled in, the duplicate is no longer
+// dormant, and the link fails with LNK2005 "already defined". This bit osgx::gltf::Accessor's
+// IntArray/UIntArray usage the moment osgx::PixelText was added elsewhere in the same module,
+// with zero changes to Accessor.cpp itself -- confirming this isn't a bug in any one file, but a
+// standing gap in every osg::XxxArray specialization this project actually constructs.
+//
+// Declaring every such specialization `extern` here -- matched by the one real instantiation of
+// each in Array.cpp -- stops every OTHER translation unit that includes this header from
+// compiling its own copy. osgx then contributes exactly one copy of each, project-wide, instead
+// of one per translation unit -- closing off this whole class of bug instead of firefighting it
+// one newly-exposed type at a time. The list below is every element type osgx::gltf::Accessor
+// (the one file that constructs nearly the full glTF component-type space) actually instantiates;
+// extend it if a new file starts constructing an osg::XxxArray specialization not already here.
+extern template class osg::MixinVector<GLbyte>;
+extern template class osg::MixinVector<GLubyte>;
+extern template class osg::MixinVector<GLshort>;
+extern template class osg::MixinVector<GLushort>;
+extern template class osg::MixinVector<GLint>;
+extern template class osg::MixinVector<GLuint>;
+extern template class osg::MixinVector<GLfloat>;
+
+extern template class osg::MixinVector<osg::Vec2>;
+extern template class osg::MixinVector<osg::Vec3>;
+extern template class osg::MixinVector<osg::Vec4>;
+
+extern template class osg::MixinVector<osg::Vec2b>;
+extern template class osg::MixinVector<osg::Vec3b>;
+extern template class osg::MixinVector<osg::Vec4b>;
+
+extern template class osg::MixinVector<osg::Vec2ub>;
+extern template class osg::MixinVector<osg::Vec3ub>;
+extern template class osg::MixinVector<osg::Vec4ub>;
+
+extern template class osg::MixinVector<osg::Vec2s>;
+extern template class osg::MixinVector<osg::Vec3s>;
+extern template class osg::MixinVector<osg::Vec4s>;
+
+extern template class osg::MixinVector<osg::Vec2us>;
+extern template class osg::MixinVector<osg::Vec3us>;
+extern template class osg::MixinVector<osg::Vec4us>;
+
+extern template class osg::MixinVector<osg::Vec2i>;
+extern template class osg::MixinVector<osg::Vec3i>;
+extern template class osg::MixinVector<osg::Vec4i>;
+
+extern template class osg::MixinVector<osg::Vec2ui>;
+extern template class osg::MixinVector<osg::Vec3ui>;
+extern template class osg::MixinVector<osg::Vec4ui>;
+
+extern template class osg::MixinVector<osg::Matrixf>;
+
 namespace osgx {
 
 template<typename T>

@@ -182,6 +182,7 @@ else()
 endif()
 
 add_library(osgx ${OSGX_LIBRARY_TYPE}
+	src/Array.cpp
 	src/CameraIntents.cpp
 	src/CaptureCubeMap.cpp
 	src/Debug.cpp
