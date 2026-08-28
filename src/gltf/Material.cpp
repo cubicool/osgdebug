@@ -489,6 +489,18 @@ void MaterialBuilder::applyMaterial(
 		osgx::gltf::shader::ALPHA_CUTOFF_UNIFORM,
 		static_cast<float>(mat.alpha_cutoff)
 	));
+	stateSet->addUniform(new osg::Uniform(
+		"osgx_gltf_emissiveFactor",
+		osg::Vec3(
+			static_cast<float>(mat.emissive_factor[0]),
+			static_cast<float>(mat.emissive_factor[1]),
+			static_cast<float>(mat.emissive_factor[2])
+		)
+	));
+	stateSet->addUniform(new osg::Uniform(
+		"osgx_gltf_hasEmissiveMap",
+		mat.emissive_texture.index >= 0 ? 1 : 0
+	));
 	if(tg3_str_equals_cstr(mat.alpha_mode, "BLEND")) {
 		// glTF BLEND uses conventional non-premultiplied source-over alpha.
 		// Render it after opaque geometry and leave depth testing enabled while

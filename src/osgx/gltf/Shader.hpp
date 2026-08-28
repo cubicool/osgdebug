@@ -73,6 +73,8 @@ struct GLTFTextures {
 uniform GLTFTextures osgx_gltf_textures;
 uniform float osgx_gltf_alphaMode;
 uniform float osgx_gltf_alphaCutoff;
+uniform vec3 osgx_gltf_emissiveFactor;
+uniform int osgx_gltf_hasEmissiveMap;
 )GLSL";
 
 // Vertex-side hook: FULL_PBR_VERTEX_SHADER (PBRIBL.cpp) forward-declares osgx_gltf_ApplySkin() and

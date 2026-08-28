@@ -56,20 +56,20 @@ namespace osgx::gltf::pbribl {
 // roughnessFactor=0.58 with no texture at all) would otherwise read an unbound texture unit as
 // black/zero and silently discard the authored factor instead of falling back to it.
 const char GET_MATERIAL[] = R"GLSL(
-osgx_Material osgx_gltf_GetMaterial(vec2 uv, vec3 N) {
+osgx_Material osgx_gltf_GetMaterial(vec2 baseColorUV, vec2 ormUV, vec3 N) {
 	osgx_Material mat;
 
 	mat.albedo = bool(osgx_gltf_material.hasBaseColorMap)
-		? texture(osgx_gltf_textures.baseColor, uv).rgb
+		? texture(osgx_gltf_textures.baseColor, baseColorUV).rgb
 		: osgx_gltf_material.baseColorFactor.rgb
 	;
-	mat.ao = bool(osgx_gltf_material.hasOcclusion) ? texture(osgx_gltf_textures.orm, uv).r : 1.0;
+	mat.ao = bool(osgx_gltf_material.hasOcclusion) ? texture(osgx_gltf_textures.orm, ormUV).r : 1.0;
 	mat.roughness = bool(osgx_gltf_material.hasMetallicRoughnessMap)
-		? texture(osgx_gltf_textures.orm, uv).g * osgx_gltf_material.roughnessFactor
+		? texture(osgx_gltf_textures.orm, ormUV).g * osgx_gltf_material.roughnessFactor
 		: osgx_gltf_material.roughnessFactor
 	;
 	mat.metallic = bool(osgx_gltf_material.hasMetallicRoughnessMap)
-		? texture(osgx_gltf_textures.orm, uv).b * osgx_gltf_material.metallicFactor
+		? texture(osgx_gltf_textures.orm, ormUV).b * osgx_gltf_material.metallicFactor
 		: osgx_gltf_material.metallicFactor
 	;
 
@@ -87,14 +87,14 @@ osgx_Material osgx_gltf_GetMaterial(vec2 uv, vec3 N) {
 // default (0,0,0,1), and normalizing that zero vector produces NaN, so the degenerate check here
 // isn't optional. Requires MATERIAL_INPUTS already in scope.
 const char SHADING_NORMAL[] = R"GLSL(
-vec3 osgx_gltf_ShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 uv) {
+vec3 osgx_gltf_ShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 normalUV) {
 	vec3 Nb = normalize(Ngeom);
 
 	if(!bool(osgx_gltf_material.hasNormalMap)) return Nb;
 
 	// The Khronos reference normalizes in tangent space before applying TBN. Keeping that
 	// normalization here matters when interpolation leaves TBN slightly non-orthonormal.
-	vec3 tangentNormal = normalize(texture(osgx_gltf_textures.normal, uv).rgb * 2.0 - 1.0);
+	vec3 tangentNormal = normalize(texture(osgx_gltf_textures.normal, normalUV).rgb * 2.0 - 1.0);
 	vec3 T, B;
 
 	// TODO: How much is this conditional hurting us? It might be worth looking into having two
@@ -107,8 +107,8 @@ vec3 osgx_gltf_ShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 uv) {
 	else {
 		vec3 q1 = dFdx(position);
 		vec3 q2 = dFdy(position);
-		vec2 st1 = dFdx(uv);
-		vec2 st2 = dFdy(uv);
+		vec2 st1 = dFdx(normalUV);
+		vec2 st2 = dFdy(normalUV);
 
 		// Derive both tangent axes from position and UV derivatives.  The
 		// determinant carries the UV handedness: constructing B from a fixed
@@ -148,8 +148,13 @@ vec3 osgx_gltf_ShadingNormal(vec3 Ngeom, vec4 tangent, vec3 position, vec2 uv) {
 
 // Requires MATERIAL_INPUTS already in scope.
 const char EMISSIVE[] = R"GLSL(
-vec3 osgx_gltf_Emissive(vec2 uv, vec3 emissiveFactor) {
-	return texture(osgx_gltf_textures.emissive, uv).rgb * emissiveFactor;
+vec3 osgx_gltf_Emissive(vec2 emissiveUV) {
+	vec3 emissive = osgx_gltf_hasEmissiveMap != 0
+		? texture(osgx_gltf_textures.emissive, emissiveUV).rgb
+		: vec3(1.0)
+	;
+
+	return emissive * osgx_gltf_emissiveFactor;
 }
 )GLSL";
 
@@ -158,9 +163,9 @@ vec3 osgx_gltf_Emissive(vec2 uv, vec3 emissiveFactor) {
 // discard, since some callers want the alpha for BLEND instead). Requires MATERIAL_INPUTS
 // already in scope.
 const char ALPHA_COVERAGE[] = R"GLSL(
-float osgx_gltf_AlphaCoverage(vec2 uv) {
+float osgx_gltf_AlphaCoverage(vec2 baseColorUV) {
 	float alpha = bool(osgx_gltf_material.hasBaseColorMap)
-		? texture(osgx_gltf_textures.baseColor, uv).a
+		? texture(osgx_gltf_textures.baseColor, baseColorUV).a
 		: 1.0
 	;
 
@@ -305,6 +310,9 @@ in vec4 osg_Vertex;
 in vec3 osg_Normal;
 in vec4 osg_Tangent;
 in vec2 osg_MultiTexCoord0;
+in vec2 osg_MultiTexCoord1;
+in vec2 osg_MultiTexCoord2;
+in vec2 osg_MultiTexCoord3;
 
 uniform mat4 osg_ModelViewProjectionMatrix;
 uniform mat4 osg_ModelViewMatrix;
@@ -313,7 +321,14 @@ uniform mat3 osg_NormalMatrix;
 out vec3 vNGeom;
 out vec3 vPosition;
 out vec4 vTangent;
-out vec2 vUV;
+// Material.cpp assigns each glTF texture slot's requested TEXCOORD_n array to
+// the corresponding texture unit. Keep those four coordinates distinct here:
+// glTF permits the slots to select different UV sets, and an emissive-only
+// material has no reason to populate unit 0 at all.
+out vec2 vBaseColorUV;
+out vec2 vNormalUV;
+out vec2 vOrmUV;
+out vec2 vEmissiveUV;
 
 // osgx_gltf_ApplySkin() CONTRACT -- forward-declared here, DEFINED in a separate, separately
 // compiled VERTEX shader object (shader::SKINNING_HOOK_IDENTITY by default, or a caller-supplied
@@ -332,7 +347,10 @@ void main() {
 	osgx_gltf_SkinnedVertex skinned = osgx_gltf_ApplySkin(osg_Vertex, osg_Normal, osg_Tangent.xyz);
 	vec4 eyePos = osg_ModelViewMatrix * skinned.position;
 	vPosition = eyePos.xyz;
-	vUV = osg_MultiTexCoord0;
+	vBaseColorUV = osg_MultiTexCoord0;
+	vNormalUV = osg_MultiTexCoord1;
+	vOrmUV = osg_MultiTexCoord2;
+	vEmissiveUV = osg_MultiTexCoord3;
 	vNGeom = normalize(osg_NormalMatrix * skinned.normal);
 	vTangent = vec4(osg_NormalMatrix * skinned.tangent, osg_Tangent.w);
 
@@ -353,9 +371,11 @@ const float PI = 3.14159265359;
 in vec3 vNGeom;
 in vec3 vPosition;
 in vec4 vTangent;
-in vec2 vUV;
+in vec2 vBaseColorUV;
+in vec2 vNormalUV;
+in vec2 vOrmUV;
+in vec2 vEmissiveUV;
 
-uniform vec3 emissiveFactor;
 uniform mat4 osg_ViewMatrix;
 uniform mat4 osg_ViewMatrixInverse;
 
@@ -384,17 +404,17 @@ vec3 osgx_LinearToSRGB(vec3 c) {
 }
 
 void main() {
-	float alpha = osgx_gltf_AlphaCoverage(vUV);
+	float alpha = osgx_gltf_AlphaCoverage(vBaseColorUV);
 
 	if(osgx_gltf_alphaMode == 1.0 && alpha < osgx_gltf_alphaCutoff) discard;
 
-	vec3 N = osgx_gltf_ShadingNormal(vNGeom, vTangent, vPosition, vUV);
+	vec3 N = osgx_gltf_ShadingNormal(vNGeom, vTangent, vPosition, vNormalUV);
 
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 	if(disableNormalMap != 0) N = normalize(vNGeom);
 #endif
 	vec3 V = normalize(-vPosition);
-	osgx_Material mat = osgx_gltf_GetMaterial(vUV, N);
+	osgx_Material mat = osgx_gltf_GetMaterial(vBaseColorUV, vOrmUV, N);
 
 
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
@@ -410,13 +430,13 @@ void main() {
 	if(debugMode == 4) { fragColor = vec4(vec3(mat.roughness), alpha); return; }
 	if(debugMode == 5) { fragColor = vec4(vec3(mat.metallic), alpha); return; }
 	if(debugMode == 6) {
-		vec3 raw = texture(osgx_gltf_textures.normal, vUV).rgb;
+		vec3 raw = texture(osgx_gltf_textures.normal, vNormalUV).rgb;
 		fragColor = vec4(bool(osgx_gltf_material.hasNormalMap) ? normalize(raw * 2.0 - 1.0) * 0.5 + 0.5 : vec3(1.0), alpha);
 		return;
 	}
 	if(debugMode == 7) {
 		fragColor = vec4(
-			bool(osgx_gltf_material.hasNormalMap) ? texture(osgx_gltf_textures.normal, vUV).rgb : vec3(1.0),
+			bool(osgx_gltf_material.hasNormalMap) ? texture(osgx_gltf_textures.normal, vNormalUV).rgb : vec3(1.0),
 			alpha
 		);
 		return;
@@ -454,7 +474,7 @@ void main() {
 
 	osgx_Lighting ambient = osgx_EvaluateIBL(mat, N_world, V_world);
 	vec3 surface = ambient.diffuse + ambient.specular;
-	vec3 emissive = osgx_gltf_Emissive(vUV, emissiveFactor);
+	vec3 emissive = osgx_gltf_Emissive(vEmissiveUV);
 
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 	surface = (debugMode == 1 || debugMode == 12)
@@ -491,8 +511,9 @@ void main() {
 
 // Geometry-pass fragment shader for the deferred split (PBRIBLGBuffer::create() below) --
 // material only, no lighting at all, not even emissive combine (emissive is stored, not added
-// yet). Reuses FULL_PBR_VERTEX_SHADER above unchanged: vNGeom/vPosition/vTangent/vUV are already
-// exactly what osgx_gltf_ShadingNormal()/osgx_gltf_GetMaterial() need, and are already VIEW
+// yet). Reuses FULL_PBR_VERTEX_SHADER above unchanged: its view-space position/normal/tangent and
+// per-slot UV varyings are already exactly what osgx_gltf_ShadingNormal()/osgx_gltf_GetMaterial()
+// need, and are already VIEW
 // space, which is exactly the convention gNormal below stores (matching the main camera whose
 // real matrices PBRIBLLightingScene::create()'s fullscreen quad reconstructs world-space values
 // from).
@@ -505,9 +526,10 @@ constexpr const char GBUFFER_FRAGMENT_SHADER_SRC[] = R"GLSL(
 in vec3 vNGeom;
 in vec3 vPosition;
 in vec4 vTangent;
-in vec2 vUV;
-
-uniform vec3 emissiveFactor;
+in vec2 vBaseColorUV;
+in vec2 vNormalUV;
+in vec2 vOrmUV;
+in vec2 vEmissiveUV;
 
 layout(location = 0) out vec4 gAlbedo;   // rgb = albedo, a = ambient occlusion
 layout(location = 1) out vec4 gNormal;   // rgb = view-space shading normal
@@ -516,17 +538,17 @@ layout(location = 3) out vec4 gEmissive; // rgb = emissive (HDR), a = alpha cove
 layout(location = 4) out vec4 gPosition; // rgb = view-space position
 
 void main() {
-	float alpha = osgx_gltf_AlphaCoverage(vUV);
+	float alpha = osgx_gltf_AlphaCoverage(vBaseColorUV);
 
 	if(osgx_gltf_alphaMode == 1.0 && alpha < osgx_gltf_alphaCutoff) discard;
 
-	vec3 N = osgx_gltf_ShadingNormal(vNGeom, vTangent, vPosition, vUV);
-	osgx_Material mat = osgx_gltf_GetMaterial(vUV, N);
+	vec3 N = osgx_gltf_ShadingNormal(vNGeom, vTangent, vPosition, vNormalUV);
+	osgx_Material mat = osgx_gltf_GetMaterial(vBaseColorUV, vOrmUV, N);
 
 	gAlbedo = vec4(mat.albedo, mat.ao);
 	gNormal = vec4(normalize(N), 0.0);
 	gMaterial = vec4(mat.roughness, mat.metallic, 0.0, 0.0);
-	gEmissive = vec4(osgx_gltf_Emissive(vUV, emissiveFactor), alpha);
+	gEmissive = vec4(osgx_gltf_Emissive(vEmissiveUV), alpha);
 	// Real eye-space position, straight from the vertex shader -- NOT reconstructed from depth
 	// in the lighting pass (see PBRIBLGBuffer::positionTexture's comment in PBRIBL.hpp for why).
 	gPosition = vec4(vPosition, 1.0);
@@ -996,7 +1018,6 @@ PBRIBLScene PBRIBLScene::create(
 	pis.iblSpecularIntensity = new osg::Uniform("iblSpecularIntensity", iblSpecularIntensity);
 	ss->addUniform(pis.iblDiffuseIntensity);
 	ss->addUniform(pis.iblSpecularIntensity);
-	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 
 	// Shadow: unit 4 -- matches the fixed unit the old hand-rolled pyosg-lighting examples always
 	// used for their own shadowMap sampler (0-3 are glTF material, 5/6/7 are IBL above), kept here
@@ -1089,7 +1110,6 @@ PBRIBLGBuffer PBRIBLGBuffer::create(osg::Node* node, int width, int height) {
 	auto* ss = node->getOrCreateStateSet();
 
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
 
 	// Same texture-unit-labeling fix PBRIBLScene::create() needs -- the loader binds the actual
 	// Texture2Ds per geometry but never sets the sampler uniforms naming which unit is which.

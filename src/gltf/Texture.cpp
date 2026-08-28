@@ -20,9 +20,13 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include <algorithm>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef GL_SRGB8
 # define GL_SRGB8 0x8C41
@@ -82,6 +86,61 @@ std::string extensionForMimeType(const std::string& mimeType) {
 	return slash == std::string::npos ? std::string() : mimeType.substr(slash + 1);
 }
 
+// glTF defines each texture slot's color space itself, so PNG gAMA/cHRM/sRGB/iCCP chunks must
+// not affect decoding. OSG's PNG plugin applies gAMA unconditionally; remove these metadata
+// chunks before passing the original compressed pixels to that plugin. Chunk payloads and CRCs
+// are copied verbatim, so this is not a PNG re-encode.
+bool stripPNGColorMetadata(
+	const unsigned char* bytes,
+	std::size_t size,
+	std::vector<unsigned char>& output
+) {
+	static constexpr unsigned char signature[] = {
+		0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a
+	};
+
+	if(size < sizeof(signature) || !std::equal(
+		std::begin(signature), std::end(signature), bytes
+	)) return false;
+
+	auto isColorMetadata = [](const unsigned char* type) {
+		return
+			std::equal(type, type + 4, "gAMA") ||
+			std::equal(type, type + 4, "cHRM") ||
+			std::equal(type, type + 4, "sRGB") ||
+			std::equal(type, type + 4, "iCCP")
+		;
+	};
+
+	output.clear();
+	output.insert(output.end(), bytes, bytes + sizeof(signature));
+
+	for(std::size_t offset = sizeof(signature); offset < size;) {
+		if(size - offset < 12) return false;
+
+		const unsigned char* chunk = bytes + offset;
+		const std::size_t length =
+			(static_cast<std::size_t>(chunk[0]) << 24) |
+			(static_cast<std::size_t>(chunk[1]) << 16) |
+			(static_cast<std::size_t>(chunk[2]) << 8) |
+			static_cast<std::size_t>(chunk[3])
+		;
+		const std::size_t chunkSize = length + 12;
+
+		if(chunkSize < length || chunkSize > size - offset) return false;
+
+		if(!isColorMetadata(chunk + 4)) output.insert(
+			output.end(), chunk, chunk + chunkSize
+		);
+
+		offset += chunkSize;
+
+		if(std::equal(chunk + 4, chunk + 8, "IEND")) return offset == size;
+	}
+
+	return false;
+}
+
 osg::Image* decodeCompressedImage(
 	const unsigned char* bytes,
 	std::size_t size,
@@ -89,6 +148,13 @@ osg::Image* decodeCompressedImage(
 	const osgDB::Options* readOptions
 ) {
 	if(extension.empty()) return nullptr;
+
+	std::vector<unsigned char> pngWithoutColorMetadata;
+
+	if(extension == "png" && stripPNGColorMetadata(bytes, size, pngWithoutColorMetadata)) {
+		bytes = pngWithoutColorMetadata.data();
+		size = pngWithoutColorMetadata.size();
+	}
 
 	osgDB::ReaderWriter* readerWriter =
 		osgDB::Registry::instance()->getReaderWriterForExtension(extension);
@@ -166,6 +232,7 @@ osg::Image* TextureLoader::loadRawImage(int textureIndex) const {
 
 	const tg3_image& source = _model.images[static_cast<std::uint32_t>(texture.source)];
 	osg::ref_ptr<osg::Image> image;
+	bool imageAlreadyFlipped = false;
 
 	// Deliberately never consumes source.image (tinygltf's own decoded-pixel-data field), even
 	// though tg3_image declares it. OSG's own image ReaderWriter plugins are the one and only
@@ -218,9 +285,24 @@ osg::Image* TextureLoader::loadRawImage(int textureIndex) const {
 			tg3_to_string(source.uri)
 		);
 
-		image = osgDB::readImageFile(path, _readOptions);
+		if(osgDB::getLowerCaseFileExtension(path) == "png") {
+			std::ifstream file(path, std::ios::binary);
 
-		if(image) image->flipVertical();
+			if(file) {
+				std::string bytes(
+					(std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>()
+				);
+
+				image = decodeCompressedImage(
+					reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size(), "png", _readOptions
+				);
+				imageAlreadyFlipped = image.valid();
+			}
+		}
+
+		else image = osgDB::readImageFile(path, _readOptions);
+
+		if(image && !imageAlreadyFlipped) image->flipVertical();
 	}
 
 	return image.release();

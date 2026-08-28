@@ -54,11 +54,10 @@ PYBIND11_MODULE(osgx, m) {
 
 	py::dict info;
 
-	info["version"] = py::make_tuple(
-		OSGX_VERSION_MAJOR,
-		OSGX_VERSION_MINOR,
-		OSGX_VERSION_PATCH
-	);
+	// A plain version string, matching OpenSceneGraph.py's build_info()["version"] and this
+	// same dict's own "osg" key -- was a (major, minor, patch) tuple, the only non-string value
+	// build_info() ever returned.
+	info["version"] = OSGX_VERSION;
 
 	pyx::build_info(m, info);
 }
