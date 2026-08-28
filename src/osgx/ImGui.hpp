@@ -24,12 +24,11 @@ namespace osgx {
 #ifdef OSGX_IMGUI
 namespace imgui {
 
-// The system imgui package (pkg-config `imgui`) isn't built from the docking
-// branch (no IMGUI_HAS_DOCK/DockSpaceOverViewport), so there's no drag-to-dock
-// here the way osgEarth's ImGuiEventHandler does it with its own vendored
-// docking-branch imgui.h. Dock::LEFT/RIGHT instead just pins the "osgx::imgui"
-// window to that edge, full viewport height, every frame -- no dragging, but
-// no new build dependency either.
+// Vendored ext/imgui is pinned to a plain release tag, not the docking branch (no
+// IMGUI_HAS_DOCK/DockSpaceOverViewport), so there's no drag-to-dock here the way
+// osgEarth's ImGuiEventHandler does it with its own vendored docking-branch imgui.h.
+// Dock::LEFT/RIGHT instead just pins the "osgx::imgui" window to that edge, full
+// viewport height, every frame -- no dragging, but no extra build surface either.
 enum class Dock { NONE, LEFT, RIGHT };
 
 // Controls what the Widget window shows.

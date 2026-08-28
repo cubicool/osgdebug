@@ -580,7 +580,7 @@ void Panel::draw(osg::RenderInfo& ri) {
 				ImGui::BeginChild(
 					"##expand",
 					ImVec2(0.0f, ImGui::GetContentRegionAvail().y / static_cast<float>(rem)),
-					ImGuiChildFlags_Border
+					ImGuiChildFlags_Borders
 				);
 				section.fn(ri);
 				ImGui::EndChild();

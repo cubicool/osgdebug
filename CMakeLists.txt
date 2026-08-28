@@ -112,7 +112,6 @@ endif()
 # a hard requirement for the portable library and Python module.
 if(OSGX_PLATFORM_SUPPORTED)
 	find_package(PkgConfig REQUIRED)
-	pkg_check_modules(IMGUI imgui)
 	pkg_check_modules(EGL egl)
 	pkg_check_modules(GBM gbm libdrm)
 
@@ -120,15 +119,50 @@ if(OSGX_PLATFORM_SUPPORTED)
 		pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xrandr)
 	endif()
 else()
-	set(IMGUI_FOUND OFF)
 	set(EGL_FOUND OFF)
 	set(GBM_FOUND OFF)
 endif()
 
-option(OSGX_WITH_IMGUI "Compile osgx::imgui (Dear ImGui overlay) into libosgx" ${IMGUI_FOUND})
+# Dear ImGui is vendored (ext/imgui submodule) by default rather than found via pkg-config, so
+# unlike OSGX_WITH_PLATFORM/EGL/GBM above, its availability has nothing to do with
+# OSGX_PLATFORM_SUPPORTED -- it's buildable on every platform this project targets.
+#
+# A parent project that already builds/links its own Dear ImGui (its own version, its own
+# context) can instead point OSGX_IMGUI_TARGET at that target -- set it BEFORE
+# add_subdirectory(osgx) -- and osgx defers to it entirely: no ext/imgui sources are compiled, no
+# second copy of ImGui::Begin() etc. ends up in the link (which, with osgx's default shared-library
+# build on Linux, wouldn't even fail cleanly -- it'd silently pick one copy's globals via ELF
+# symbol interposition instead of erroring, which is worse). This is the build-level half of
+# "defer to your pipeline"; osgx::imgui::Panel (see ImGui.hpp) is the API-level half -- it draws
+# into a context/frame the host already owns rather than creating its own the way Widget does.
+set(OSGX_IMGUI_TARGET "" CACHE STRING
+	"Existing CMake target providing Dear ImGui (headers + compiled ImGui:: symbols) for osgx \
+to link against, instead of vendoring/compiling ext/imgui itself. Empty (the default) vendors \
+ext/imgui."
+)
 
-if(OSGX_WITH_IMGUI AND NOT IMGUI_FOUND)
-	message(FATAL_ERROR "OSGX_WITH_IMGUI is ON but Dear ImGui was not found via pkg-config")
+if(OSGX_IMGUI_TARGET)
+	if(NOT TARGET "${OSGX_IMGUI_TARGET}")
+		message(FATAL_ERROR
+			"OSGX_IMGUI_TARGET is set to '${OSGX_IMGUI_TARGET}', but no such CMake target exists "
+			"yet -- it must be defined before add_subdirectory(osgx)."
+		)
+	endif()
+	set(OSGX_IMGUI_AVAILABLE ON)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ext/imgui/imgui.cpp")
+	set(OSGX_IMGUI_AVAILABLE ON)
+else()
+	set(OSGX_IMGUI_AVAILABLE OFF)
+endif()
+
+option(OSGX_WITH_IMGUI "Compile osgx::imgui (Dear ImGui overlay) into libosgx" ${OSGX_IMGUI_AVAILABLE})
+
+if(OSGX_WITH_IMGUI AND NOT OSGX_IMGUI_AVAILABLE)
+	message(FATAL_ERROR
+		"OSGX_WITH_IMGUI is ON, but ext/imgui doesn't contain imgui.cpp -- initialize the "
+		"submodule with 'git submodule update --init ext/imgui', or point -DOSGX_IMGUI_TARGET= "
+		"at a CMake target that already provides Dear ImGui."
+	)
 endif()
 
 # GraphicsWindowEGL/GBM are Linux-only extensions of osgx::platform. They are
@@ -259,8 +293,51 @@ endif()
 if(OSGX_WITH_IMGUI)
 	target_sources(osgx PRIVATE src/ImGui.cpp)
 	target_compile_definitions(osgx PUBLIC OSGX_IMGUI)
-	target_include_directories(osgx PUBLIC ${IMGUI_INCLUDE_DIRS})
-	target_link_libraries(osgx PUBLIC ${IMGUI_LINK_LIBRARIES})
+
+	if(OSGX_IMGUI_TARGET)
+		# Deferring to the host's own Dear ImGui: no ext/imgui sources compiled, no include dirs
+		# of our own -- OSGX_IMGUI_TARGET's PUBLIC/INTERFACE usage requirements carry both.
+		target_link_libraries(osgx PUBLIC "${OSGX_IMGUI_TARGET}")
+	else()
+		target_sources(osgx PRIVATE
+			ext/imgui/imgui.cpp
+			ext/imgui/imgui_draw.cpp
+			ext/imgui/imgui_tables.cpp
+			ext/imgui/imgui_widgets.cpp
+			ext/imgui/backends/imgui_impl_opengl3.cpp
+		)
+		# ext/imgui itself (not .../backends) is the one include dir: it holds imgui.h directly,
+		# and ImGui.hpp's #include <backends/imgui_impl_opengl3.h> resolves under it via that
+		# subdirectory -- mirrors the layout pkg-config's imgui.pc used to hand back
+		# (-I.../include/imgui). The INSTALL_INTERFACE side comes for free from osgx::core, which
+		# already exports $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}> -- see the
+		# install(FILES ext/imgui/...) rule below that puts
+		# imgui.h/imconfig.h/backends/imgui_impl_opengl3.h there to match.
+		target_include_directories(osgx PUBLIC
+			$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ext/imgui>
+		)
+
+		# OSGX_WARNING_OPTIONS above (-Werror -Wconversion et al.) is our own bar, not one Dear
+		# ImGui's sources are held to -- OSGX_DISABLE_WARNINGS can't reach these since it only
+		# wraps #include lines in OUR translation units, and these compile as translation units of
+		# their own. -w/ /w unconditionally silence all warnings (even after -Werror: with nothing
+		# left active, there's nothing left to promote to an error), same as KTX-Software sidesteps
+		# this by owning its own CMakeLists.txt/compile options entirely instead.
+		if(MSVC)
+			set(OSGX_IMGUI_VENDOR_WARNING_OPTIONS /w)
+		else()
+			set(OSGX_IMGUI_VENDOR_WARNING_OPTIONS -w)
+		endif()
+
+		set_source_files_properties(
+			ext/imgui/imgui.cpp
+			ext/imgui/imgui_draw.cpp
+			ext/imgui/imgui_tables.cpp
+			ext/imgui/imgui_widgets.cpp
+			ext/imgui/backends/imgui_impl_opengl3.cpp
+			PROPERTIES COMPILE_OPTIONS "${OSGX_IMGUI_VENDOR_WARNING_OPTIONS}"
+		)
+	endif()
 endif()
 
 if(OSGX_WITH_EGL)
@@ -298,6 +375,21 @@ if(OSGX_INSTALL)
 			src/osgx/GraphicsWindowGBM.hpp
 			src/osgx/Cursor.hpp
 			DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgx"
+		)
+	endif()
+	if(OSGX_WITH_IMGUI AND NOT OSGX_IMGUI_TARGET)
+		# Only ours to install when we vendored it -- with OSGX_IMGUI_TARGET set, those headers
+		# belong to whatever installs that target, not to osgx.
+		# Matches the include layout ImGui.hpp expects (imgui.h at the include root,
+		# backends/imgui_impl_opengl3.h under it) -- see the target_include_directories()
+		# comment above.
+		install(FILES
+			ext/imgui/imgui.h
+			ext/imgui/imconfig.h
+			DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+		)
+		install(FILES ext/imgui/backends/imgui_impl_opengl3.h
+			DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/backends"
 		)
 	endif()
 	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/osgx/Version.hpp"
