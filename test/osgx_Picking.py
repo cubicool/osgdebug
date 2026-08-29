@@ -1,5 +1,3 @@
-#vimrun! pytest -sv ../test/osgx_Picking.py
-
 import osgx
 
 from OpenSceneGraph import *

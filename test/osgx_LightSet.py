@@ -1,5 +1,3 @@
-#vimrun! pytest -sv ../test/osgx_LightSet.py
-
 import math
 
 import pytest

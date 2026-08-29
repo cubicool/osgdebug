@@ -1,5 +1,3 @@
-#vimrun! pytest -sv ../test/osgx_Callbacks.py
-
 import osgx
 
 from OpenSceneGraph import *

@@ -1,9 +1,6 @@
-#vimrun! pytest -sv ../test/osgx_Shapes.py
-
 import osgx
 
 from OpenSceneGraph import *
-
 
 def test_named_shapes_have_expected_topology_and_face_basis():
 	# These counts are the unexpanded polyhedron data exposed to a dice layer.  Geometry itself
@@ -31,7 +28,6 @@ def test_named_shapes_have_expected_topology_and_face_basis():
 		assert abs(normal.dot(up)) < 1e-5
 		assert shape.restingOffset() >= 0.0
 
-
 def test_named_shapes_accept_a_common_circumradius():
 	for kind in (
 		osgx.Cube,
@@ -44,7 +40,6 @@ def test_named_shapes_accept_a_common_circumradius():
 		shape = kind(radius=2.0)
 
 		assert abs(max(vertex.length() for vertex in shape.vertices) - 2.0) < 1e-5
-
 
 def test_face_resting_offset_places_the_selected_face_on_the_floor():
 	cube = osgx.Cube(size=osg.Vec3(2.0, 2.0, 2.0))
@@ -60,7 +55,6 @@ def test_face_resting_offset_places_the_selected_face_on_the_floor():
 		for vertex_index in face.vertices:
 			assert abs((orientation * cube.vertices[vertex_index]).z + offset) < 1e-5
 
-
 def test_face_derives_a_stable_local_plane_from_polyhedron_positions():
 	cube = osgx.Cube(size=osg.Vec3(2.0, 2.0, 2.0))
 	face = cube.faces[0] # -Z: 0, 3, 2, 1
@@ -74,7 +68,6 @@ def test_face_derives_a_stable_local_plane_from_polyhedron_positions():
 		osg.Vec2(0.0, 0.0), osg.Vec2(2.0, 0.0),
 		osg.Vec2(2.0, 2.0), osg.Vec2(0.0, 2.0)
 	]
-
 
 def test_named_shape_faces_reconstruct_from_their_local_planes():
 	for kind in (
@@ -99,7 +92,6 @@ def test_named_shape_faces_reconstruct_from_their_local_planes():
 				assert (reconstructed - shape.vertices[vertex_index]).length() < 1e-5
 
 			assert abs((face.center(shape.vertices) - origin).dot(normal)) < 1e-5
-
 
 def test_polyhedron_expands_face_attributes_and_removes_them():
 	face = osgx.Polyhedron.Face(

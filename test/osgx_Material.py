@@ -1,5 +1,3 @@
-#vimrun! pytest -sv ../test/osgx_Material.py
-
 import pytest
 
 import osgx
