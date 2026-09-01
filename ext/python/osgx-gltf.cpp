@@ -772,8 +772,16 @@ void bind_gltf(py::module_& m_gltf) {
 		py::str(osgx::gltf::shader::SKINNING_HOOK_LINEAR_BLEND);
 
 	m_gltf_shader
-		.def("configureProgram", &osgx::gltf::shader::configureProgram, "program"_a)
-		.def("configureStateSet", &osgx::gltf::shader::configureStateSet, "stateSet"_a)
+		.def(
+			"configureProgram", &osgx::gltf::shader::configureProgram, "program"_a,
+			"Binds the tangent/skinning generic vertex attribute locations (TANGENT_ATTRIBUTE, "
+			"JOINT_INDICES_ATTRIBUTE, JOINT_WEIGHTS_ATTRIBUTE) on `program`."
+		)
+		.def(
+			"configureStateSet", &osgx::gltf::shader::configureStateSet, "stateSet"_a,
+			"Binds the four material sampler uniforms (base color/normal/ORM/emissive) on "
+			"`stateSet` to their fixed texture units."
+		)
 	;
 
 	auto m_gltf_pbribl = m_gltf.def_submodule(
@@ -785,19 +793,57 @@ void bind_gltf(py::module_& m_gltf) {
 	m_gltf_pbribl.attr("SHADING_NORMAL") = py::str(osgx::gltf::pbribl::SHADING_NORMAL);
 	m_gltf_pbribl.attr("EMISSIVE") = py::str(osgx::gltf::pbribl::EMISSIVE);
 	m_gltf_pbribl.attr("ALPHA_COVERAGE") = py::str(osgx::gltf::pbribl::ALPHA_COVERAGE);
-	m_gltf_pbribl.def("registerShaderLibs", &osgx::gltf::pbribl::registerShaderLibs);
+	m_gltf_pbribl.def(
+		"registerShaderLibs", &osgx::gltf::pbribl::registerShaderLibs,
+		"Registers the pbribl-specific `#pragma osgx::gltf ...` GLSL catalogs (GET_MATERIAL, "
+		"SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE, DEFERRED_LIGHTING_INPUTS, GET_GBUFFER) so "
+		"resolveShaderLibs() can expand them. Idempotent; called automatically on module import."
+	);
 	m_gltf_pbribl.def("resolveShaderLibs", [](const std::string& source) {
 		return osgx::gltf::pbribl::resolveShaderLibs(source);
-	}, "source"_a);
+	}, "source"_a,
+		"Expands `#pragma osgx::gltf ...` (plus the generic osgx::pbr/ibl/shadow catalogs) in "
+		"`source`, returning the fully expanded GLSL. Required before wrapping a custom "
+		"Hook shader that uses the pbribl-specific catalog in an osg.Shader."
+	);
 
-	py::class_<osgx::gltf::pbribl::PBRIBLEnvironment>(m_gltf_pbribl, "PBRIBLEnvironment")
-		.def(py::init<>())
-		.def_readwrite("root", &osgx::gltf::pbribl::PBRIBLEnvironment::root)
-		.def_readwrite("envMap", &osgx::gltf::pbribl::PBRIBLEnvironment::envMap)
-		.def_readwrite("brdfLUT", &osgx::gltf::pbribl::PBRIBLEnvironment::brdfLUT)
-		.def_readwrite("diffuseEnv", &osgx::gltf::pbribl::PBRIBLEnvironment::diffuseEnv)
-		.def_readwrite("iblAxis", &osgx::gltf::pbribl::PBRIBLEnvironment::iblAxis)
-		.def("valid", &osgx::gltf::pbribl::PBRIBLEnvironment::valid)
+	py::class_<osgx::gltf::pbribl::PBRIBLEnvironment>(
+		m_gltf_pbribl,
+		"PBRIBLEnvironment",
+		"Prepared IBL resources: a GGX-prefiltered specular cubemap, a Lambertian diffuse "
+		"cubemap, a BRDF LUT, plus the KTX/OpenGL cubemap lookup basis relative to the loader's "
+		"Z-up world. `root`, when present, holds PRE_RENDER bake passes still populating a "
+		"texture -- add it to a rendered scene graph before relying on that texture's contents; "
+		"a fully pre-baked environment has no root and leaves it None."
+	)
+		.def(py::init<>(), "Constructs an empty, invalid PBRIBLEnvironment.")
+		.def_readwrite(
+			"root", &osgx::gltf::pbribl::PBRIBLEnvironment::root,
+			"The Group holding this environment's PRE_RENDER bake passes, if any are still "
+			"populating a texture; None for a fully pre-baked environment."
+		)
+		.def_readwrite(
+			"envMap", &osgx::gltf::pbribl::PBRIBLEnvironment::envMap,
+			"The GGX-prefiltered specular cubemap."
+		)
+		.def_readwrite(
+			"brdfLUT", &osgx::gltf::pbribl::PBRIBLEnvironment::brdfLUT,
+			"The split-sum BRDF lookup texture."
+		)
+		.def_readwrite(
+			"diffuseEnv", &osgx::gltf::pbribl::PBRIBLEnvironment::diffuseEnv,
+			"The Lambertian diffuse-irradiance cubemap."
+		)
+		.def_readwrite(
+			"iblAxis", &osgx::gltf::pbribl::PBRIBLEnvironment::iblAxis,
+			"The KTX/OpenGL cubemap lookup basis (3 orthonormal row vectors), expressed relative "
+			"to the loader's Z-up world."
+		)
+		.def(
+			"valid", &osgx::gltf::pbribl::PBRIBLEnvironment::valid,
+			"True once envMap/brdfLUT/diffuseEnv are all set, regardless of whether any bake "
+			"pass under `root` has actually finished populating them yet."
+		)
 		.def_static(
 			"prepare",
 			py::overload_cast<const std::string&, int>(
@@ -817,28 +863,50 @@ void bind_gltf(py::module_& m_gltf) {
 		)
 	;
 
-	py::class_<osgx::gltf::pbribl::PBRIBLScene>(m_gltf_pbribl, "PBRIBLScene")
-		.def(py::init<>())
-		.def_readwrite("node", &osgx::gltf::pbribl::PBRIBLScene::node)
-		.def_readwrite("debugMode", &osgx::gltf::pbribl::PBRIBLScene::debugMode)
-		.def_readwrite("disableNormalMap", &osgx::gltf::pbribl::PBRIBLScene::disableNormalMap)
+	py::class_<osgx::gltf::pbribl::PBRIBLScene>(
+		m_gltf_pbribl,
+		"PBRIBLScene",
+		"The result of applying osgx::gltf::pbribl's renderer to a node -- the node itself plus "
+		"live debug/intensity osg.Uniform refs a caller can tune after scene creation."
+	)
+		.def(py::init<>(), "Constructs an empty, invalid PBRIBLScene.")
+		.def_readwrite(
+			"node", &osgx::gltf::pbribl::PBRIBLScene::node,
+			"The node the renderer was applied to."
+		)
+		.def_readwrite(
+			"debugMode", &osgx::gltf::pbribl::PBRIBLScene::debugMode,
+			"Debug-visualization mode uniform (see the shader's debugMode switch)."
+		)
+		.def_readwrite(
+			"disableNormalMap", &osgx::gltf::pbribl::PBRIBLScene::disableNormalMap,
+			"When set, forces the shading normal to the geometric normal, ignoring any normal map."
+		)
 		.def_readwrite(
 			"disableRoughnessMap",
-			&osgx::gltf::pbribl::PBRIBLScene::disableRoughnessMap
+			&osgx::gltf::pbribl::PBRIBLScene::disableRoughnessMap,
+			"When set, ignores the material's roughness texture, using a constant instead."
 		)
 		.def_readwrite(
 			"disableSpecularAA",
-			&osgx::gltf::pbribl::PBRIBLScene::disableSpecularAA
+			&osgx::gltf::pbribl::PBRIBLScene::disableSpecularAA,
+			"When set, disables geometric specular anti-aliasing (roughness widening from normal "
+			"map curvature)."
 		)
 		.def_readwrite(
 			"iblDiffuseIntensity",
-			&osgx::gltf::pbribl::PBRIBLScene::iblDiffuseIntensity
+			&osgx::gltf::pbribl::PBRIBLScene::iblDiffuseIntensity,
+			"Live multiplier on the IBL diffuse-irradiance contribution, independent of specular."
 		)
 		.def_readwrite(
 			"iblSpecularIntensity",
-			&osgx::gltf::pbribl::PBRIBLScene::iblSpecularIntensity
+			&osgx::gltf::pbribl::PBRIBLScene::iblSpecularIntensity,
+			"Live multiplier on the IBL specular-reflection contribution, independent of diffuse."
 		)
-		.def("valid", &osgx::gltf::pbribl::PBRIBLScene::valid)
+		.def(
+			"valid", &osgx::gltf::pbribl::PBRIBLScene::valid,
+			"True once node and every debug/intensity uniform are set."
+		)
 		.def_static(
 			"create",
 			&osgx::gltf::pbribl::PBRIBLScene::create,
@@ -864,16 +932,45 @@ void bind_gltf(py::module_& m_gltf) {
 		)
 	;
 
-	py::class_<osgx::gltf::pbribl::PBRIBLGBuffer>(m_gltf_pbribl, "PBRIBLGBuffer")
-		.def(py::init<>())
-		.def_readwrite("gbuffer", &osgx::gltf::pbribl::PBRIBLGBuffer::gbuffer)
-		.def_readwrite("albedoTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::albedoTexture)
-		.def_readwrite("normalTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::normalTexture)
-		.def_readwrite("materialTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::materialTexture)
-		.def_readwrite("emissiveTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::emissiveTexture)
-		.def_readwrite("positionTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::positionTexture)
-		.def_readwrite("depthTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::depthTexture)
-		.def("valid", &osgx::gltf::pbribl::PBRIBLGBuffer::valid)
+	py::class_<osgx::gltf::pbribl::PBRIBLGBuffer>(
+		m_gltf_pbribl,
+		"PBRIBLGBuffer",
+		"Deferred-split geometry-pass output: material only (no lighting, not even emissive "
+		"add), ready to feed PBRIBLLightingScene.create()."
+	)
+		.def(py::init<>(), "Constructs an empty, invalid PBRIBLGBuffer.")
+		.def_readwrite(
+			"gbuffer", &osgx::gltf::pbribl::PBRIBLGBuffer::gbuffer,
+			"The underlying osgx.gbuffer.GBuffer this was built from."
+		)
+		.def_readwrite(
+			"albedoTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::albedoTexture,
+			"rgb = albedo, a = ambient occlusion."
+		)
+		.def_readwrite(
+			"normalTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::normalTexture,
+			"rgb = view-space shading normal (RGB16F)."
+		)
+		.def_readwrite(
+			"materialTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::materialTexture,
+			"r = roughness, g = metallic."
+		)
+		.def_readwrite(
+			"emissiveTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::emissiveTexture,
+			"rgb = emissive (HDR), a = alpha coverage."
+		)
+		.def_readwrite(
+			"positionTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::positionTexture,
+			"rgb = view-space position (RGBA32F)."
+		)
+		.def_readwrite(
+			"depthTexture", &osgx::gltf::pbribl::PBRIBLGBuffer::depthTexture,
+			"The geometry pass's depth attachment."
+		)
+		.def(
+			"valid", &osgx::gltf::pbribl::PBRIBLGBuffer::valid,
+			"True once every G-buffer texture is set."
+		)
 		.def_static(
 			"create",
 			&osgx::gltf::pbribl::PBRIBLGBuffer::create,
@@ -886,39 +983,92 @@ void bind_gltf(py::module_& m_gltf) {
 		)
 	;
 
-	py::class_<osgx::gltf::pbribl::PBRIBLLightingPassOptions>(m_gltf_pbribl, "PBRIBLLightingPassOptions")
-		.def(py::init<>())
-		.def_readwrite("tonemap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::tonemap)
-		.def_readwrite("hooks", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::hooks)
-		.def_readwrite("shadowMap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::shadowMap)
-		.def_readwrite("aoTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::aoTexture)
-		.def_readwrite("diagnostics", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::diagnostics)
-		.def_readwrite("colorTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::colorTexture)
+	py::class_<osgx::gltf::pbribl::PBRIBLLightingPassOptions>(
+		m_gltf_pbribl,
+		"PBRIBLLightingPassOptions",
+		"Extra PBRIBLLightingScene.create() inputs, each an independent, optional seam rather "
+		"than one monolithic flag blob."
+	)
+		.def(py::init<>(), "Constructs the default options (tonemap on, everything else unset).")
 		.def_readwrite(
-			"renderOrderNum", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::renderOrderNum
+			"tonemap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::tonemap,
+			"True applies the built-in (or hooks[osgx.Hook.Tonemap]-substituted) tonemap curve; "
+			"False leaves the result linear HDR, for a caller chaining further passes."
+		)
+		.def_readwrite(
+			"hooks", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::hooks,
+			"An osgx.HookList substituting this pass's built-in shader for a slot -- "
+			"osgx.Hook.DeferredLighting (the whole fragment main()), osgx.Hook.DirectLighting, "
+			"and osgx.Hook.Tonemap are supported. Each REPLACES its default, it does not add "
+			"alongside it."
+		)
+		.def_readwrite(
+			"shadowMap", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::shadowMap,
+			"Mirrors PBRIBLScene.create()'s own parameter exactly; None is unshadowed."
+		)
+		.def_readwrite(
+			"aoTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::aoTexture,
+			"Optional ambient-occlusion texture, multiplied into the ambient term. This pass does "
+			"not bake SSAO itself -- feed osgx.gbuffer.SSAO.create()'s result here, or any other "
+			"occlusion source."
+		)
+		.def_readwrite(
+			"diagnostics", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::diagnostics,
+			"Enables extra debug output on the lighting pass."
+		)
+		.def_readwrite(
+			"colorTexture", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::colorTexture,
+			"None (default) draws to whatever framebuffer the returned camera ends up under -- "
+			"POST_RENDER to the backbuffer for a caller adding it straight to the viewer. Set it "
+			"to instead build this pass as a PRE_RENDER/FBO camera targeting that texture, for a "
+			"caller chaining further passes (bloom, exposure, tonemap comparison) that need this "
+			"pass's linear HDR result as a sampler input -- normally paired with tonemap=False."
+		)
+		.def_readwrite(
+			"renderOrderNum", &osgx::gltf::pbribl::PBRIBLLightingPassOptions::renderOrderNum,
+			"Render order for the PRE_RENDER camera, honored only when colorTexture is set. Must "
+			"sort after the geometry pass (and any shadow/SSAO pass feeding this one) and before "
+			"whatever consumes colorTexture next."
 		)
 	;
 
-	py::class_<osgx::gltf::pbribl::PBRIBLLightingScene>(m_gltf_pbribl, "PBRIBLLightingScene")
-		.def(py::init<>())
-		.def_readwrite("node", &osgx::gltf::pbribl::PBRIBLLightingScene::node)
+	py::class_<osgx::gltf::pbribl::PBRIBLLightingScene>(
+		m_gltf_pbribl,
+		"PBRIBLLightingScene",
+		"The result of PBRIBLLightingScene.create(): a fullscreen-quad deferred lighting pass "
+		"reading a PBRIBLGBuffer, plus live uniforms a caller must keep in sync via update()."
+	)
+		.def(py::init<>(), "Constructs an empty, invalid PBRIBLLightingScene.")
+		.def_readwrite(
+			"node", &osgx::gltf::pbribl::PBRIBLLightingScene::node,
+			"The fullscreen-quad lighting-pass node (an ABSOLUTE_RF camera)."
+		)
 		.def_readwrite(
 			"iblDiffuseIntensity",
-			&osgx::gltf::pbribl::PBRIBLLightingScene::iblDiffuseIntensity
+			&osgx::gltf::pbribl::PBRIBLLightingScene::iblDiffuseIntensity,
+			"Live multiplier on the IBL diffuse-irradiance contribution, independent of specular."
 		)
 		.def_readwrite(
 			"iblSpecularIntensity",
-			&osgx::gltf::pbribl::PBRIBLLightingScene::iblSpecularIntensity
+			&osgx::gltf::pbribl::PBRIBLLightingScene::iblSpecularIntensity,
+			"Live multiplier on the IBL specular-reflection contribution, independent of diffuse."
 		)
 		.def_readwrite(
 			"mainViewMatrix",
-			&osgx::gltf::pbribl::PBRIBLLightingScene::mainViewMatrix
+			&osgx::gltf::pbribl::PBRIBLLightingScene::mainViewMatrix,
+			"mainCamera's view matrix, refreshed by update() -- the quad's own camera is "
+			"ABSOLUTE_RF, so OSG's automatic osg_ViewMatrix resolves to identity, not mainCamera's "
+			"real matrix."
 		)
 		.def_readwrite(
 			"mainViewMatrixInverse",
-			&osgx::gltf::pbribl::PBRIBLLightingScene::mainViewMatrixInverse
+			&osgx::gltf::pbribl::PBRIBLLightingScene::mainViewMatrixInverse,
+			"mainCamera's inverse view matrix, refreshed by update() alongside mainViewMatrix."
 		)
-		.def("valid", &osgx::gltf::pbribl::PBRIBLLightingScene::valid)
+		.def(
+			"valid", &osgx::gltf::pbribl::PBRIBLLightingScene::valid,
+			"True once node and every uniform are set."
+		)
 		.def_static(
 			"create",
 			&osgx::gltf::pbribl::PBRIBLLightingScene::create,
@@ -953,25 +1103,41 @@ void bind_gltf(py::module_& m_gltf) {
 		)
 	;
 
-	py::class_<osgx::gltf::SimplePlayer>(m_gltf, "SimplePlayer")
-		.def(py::init<osg::Node*>(), "model"_a)
+	py::class_<osgx::gltf::SimplePlayer>(
+		m_gltf,
+		"SimplePlayer",
+		"A thin, optional wrapper that finds a loaded glTF model's animation-playback control "
+		"(by walking its update callback chain) and exposes play/pause/restart. bool(player) "
+		"reports whether a playable control was actually found; every accessor degrades to a "
+		"harmless no-op/default otherwise."
+	)
+		.def(
+			py::init<osg::Node*>(), "model"_a,
+			"Wraps `model`, searching its update callback chain for animation playback control."
+		)
 		.def("__bool__", [](const osgx::gltf::SimplePlayer& player) {
 			return static_cast<bool>(player);
-		})
+		}, "True if a playable animation control was found on the wrapped model.")
 		.def_property_readonly(
 			"numAnimations",
-			&osgx::gltf::SimplePlayer::getNumAnimations
+			&osgx::gltf::SimplePlayer::getNumAnimations,
+			"Number of animations available (0 if no control was found)."
 		)
-		.def("getAnimationName", &osgx::gltf::SimplePlayer::getAnimationName, "index"_a)
+		.def(
+			"getAnimationName", &osgx::gltf::SimplePlayer::getAnimationName, "index"_a,
+			"Returns the name of animation `index` (empty string if no control was found)."
+		)
 		.def(
 			"playAnimation",
 			py::overload_cast<std::size_t>(&osgx::gltf::SimplePlayer::playAnimation),
-			"index"_a
+			"index"_a,
+			"Starts playing animation `index`. Returns False if no control was found."
 		)
 		.def(
 			"playAnimation",
 			py::overload_cast<const std::string&>(&osgx::gltf::SimplePlayer::playAnimation),
-			"name"_a
+			"name"_a,
+			"Starts playing the animation named `name`. Returns False if no control was found."
 		)
 		.def_property_readonly(
 			"currentAnimationIndex",
@@ -980,23 +1146,32 @@ void bind_gltf(py::module_& m_gltf) {
 				return index == osgx::gltf::SimplePlayer::NoAnimation
 					? py::none()
 					: py::cast(index);
-			}
+			},
+			"Index of the currently selected animation, or None if none is selected/no control was found."
 		)
 		.def_property_readonly(
 			"currentAnimationName",
-			&osgx::gltf::SimplePlayer::getCurrentAnimationName
+			&osgx::gltf::SimplePlayer::getCurrentAnimationName,
+			"Name of the currently selected animation (empty string if none is selected)."
 		)
 		.def_property(
 			"playing",
 			&osgx::gltf::SimplePlayer::getPlaying,
-			&osgx::gltf::SimplePlayer::setPlaying
+			&osgx::gltf::SimplePlayer::setPlaying,
+			"Whether the current animation is playing."
 		)
-		.def("togglePlaying", &osgx::gltf::SimplePlayer::togglePlaying)
-		.def("restart", &osgx::gltf::SimplePlayer::restart)
+		.def("togglePlaying", &osgx::gltf::SimplePlayer::togglePlaying, "Toggles between playing and paused.")
+		.def("restart", &osgx::gltf::SimplePlayer::restart, "Restarts the current animation from the beginning.")
 	;
 
-	py::class_<AsyncProgress>(m_gltf, "AsyncProgress")
-		.def(py::init<>())
+	py::class_<AsyncProgress>(
+		m_gltf,
+		"AsyncProgress",
+		"Owns the pollable progress state a background readNodeFile() call writes into, plus the "
+		"poller's own generation cursor. Construct one, pass it to readNodeFile(), and call "
+		".poll() from a loop with a real sleep between checks."
+	)
+		.def(py::init<>(), "Constructs a fresh progress tracker with nothing reported yet.")
 		.def(
 			"poll",
 			&AsyncProgress::poll,

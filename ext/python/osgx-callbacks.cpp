@@ -87,14 +87,23 @@ void bind_callbacks(py::module_& m) {
 		osgx::CameraDrawCallbacksGroup,
 		osg::Camera::DrawCallback,
 		osg::ref_ptr<osgx::CameraDrawCallbacksGroup>
-	>(m, "CameraDrawCallbacksGroup");
+	>(
+		m,
+		"CameraDrawCallbacksGroup",
+		"Runs several osg.Camera.DrawCallback objects off one draw-callback slot, in list order, "
+		"side by side -- NOT chained via setNestedCallback(). Populate through .callbacks (a real "
+		"Python list: indexing, len(), append(), insert(), del) or the add()/remove() aliases."
+	);
 
 	pyx::bind_proxy_property<
 		detail::CameraDrawCallbacksProxy, osgx::CameraDrawCallbacksGroup, detail::CameraDrawCallbacksStorage
-	>(cameraGroup, "_Callbacks", "callbacks");
+	>(
+		cameraGroup, "_Callbacks", "callbacks",
+		"The group's member callbacks as a real Python list, in run order."
+	);
 
 	cameraGroup
-		.def(py::init<>())
+		.def(py::init<>(), "Creates an empty group.")
 		// Populated through the SAME proxy .callbacks exposes (via extend()), not group->add()
 		// directly -- extend()/append() are what actually cache each element's Python identity
 		// (SlotCache), so a callback passed inline in the list literal with no other Python
@@ -108,29 +117,38 @@ void bind_callbacks(py::module_& m) {
 				.extend(cbs);
 
 			return group;
-		}), "callbacks"_a)
+		}), "callbacks"_a, "Creates a group pre-populated with `callbacks`, run in list order.")
 		// Thin aliases matching osgx::CallbacksGroup's own add()/remove() vocabulary -- both
 		// delegate to the SAME retaining proxy .callbacks exposes, not the raw C++ methods.
 		.def("add", [](osgx::CameraDrawCallbacksGroup& g, py::object cb) {
 			detail::CameraDrawCallbacksStorage::get(g)->template proxy<detail::CameraDrawCallbacksProxy>().append(cb);
-		}, "callback"_a)
+		}, "callback"_a, "Appends `callback` to the group (alias for .callbacks.append()).")
 		.def("remove", [](osgx::CameraDrawCallbacksGroup& g, py::object cb) {
 			detail::CameraDrawCallbacksStorage::get(g)->template proxy<detail::CameraDrawCallbacksProxy>().remove(cb);
-		}, "callback"_a)
+		}, "callback"_a, "Removes `callback` from the group (alias for .callbacks.remove()).")
 	;
 
 	auto nodeGroup = py::class_<
 		osgx::NodeCallbacksGroup,
 		osg::NodeCallback,
 		osg::ref_ptr<osgx::NodeCallbacksGroup>
-	>(m, "NodeCallbacksGroup");
+	>(
+		m,
+		"NodeCallbacksGroup",
+		"Runs several osg.NodeCallback objects off one update/event/cull callback slot, in list "
+		"order, side by side -- NOT chained via setNestedCallback(). Populate through .callbacks "
+		"(a real Python list: indexing, len(), append(), insert(), del) or the add()/remove() aliases."
+	);
 
 	pyx::bind_proxy_property<
 		detail::NodeCallbacksGroupProxy, osgx::NodeCallbacksGroup, detail::NodeCallbacksGroupStorage
-	>(nodeGroup, "_Callbacks", "callbacks");
+	>(
+		nodeGroup, "_Callbacks", "callbacks",
+		"The group's member callbacks as a real Python list, in run order."
+	);
 
 	nodeGroup
-		.def(py::init<>())
+		.def(py::init<>(), "Creates an empty group.")
 		.def(py::init([](py::sequence cbs) {
 			auto* group = new osgx::NodeCallbacksGroup();
 
@@ -139,27 +157,36 @@ void bind_callbacks(py::module_& m) {
 				.extend(cbs);
 
 			return group;
-		}), "callbacks"_a)
+		}), "callbacks"_a, "Creates a group pre-populated with `callbacks`, run in list order.")
 		.def("add", [](osgx::NodeCallbacksGroup& g, py::object cb) {
 			detail::NodeCallbacksGroupStorage::get(g)->template proxy<detail::NodeCallbacksGroupProxy>().append(cb);
-		}, "callback"_a)
+		}, "callback"_a, "Appends `callback` to the group (alias for .callbacks.append()).")
 		.def("remove", [](osgx::NodeCallbacksGroup& g, py::object cb) {
 			detail::NodeCallbacksGroupStorage::get(g)->template proxy<detail::NodeCallbacksGroupProxy>().remove(cb);
-		}, "callback"_a)
+		}, "callback"_a, "Removes `callback` from the group (alias for .callbacks.remove()).")
 	;
 
 	auto drawableGroup = py::class_<
 		osgx::DrawableDrawCallbacksGroup,
 		osg::Drawable::DrawCallback,
 		osg::ref_ptr<osgx::DrawableDrawCallbacksGroup>
-	>(m, "DrawableDrawCallbacksGroup");
+	>(
+		m,
+		"DrawableDrawCallbacksGroup",
+		"Runs several osg.Drawable.DrawCallback objects off one draw-callback slot, in list "
+		"order, side by side -- NOT chained via setNestedCallback(). Populate through .callbacks "
+		"(a real Python list: indexing, len(), append(), insert(), del) or the add()/remove() aliases."
+	);
 
 	pyx::bind_proxy_property<
 		detail::DrawableDrawCallbacksProxy, osgx::DrawableDrawCallbacksGroup, detail::DrawableDrawCallbacksStorage
-	>(drawableGroup, "_Callbacks", "callbacks");
+	>(
+		drawableGroup, "_Callbacks", "callbacks",
+		"The group's member callbacks as a real Python list, in run order."
+	);
 
 	drawableGroup
-		.def(py::init<>())
+		.def(py::init<>(), "Creates an empty group.")
 		.def(py::init([](py::sequence cbs) {
 			auto* group = new osgx::DrawableDrawCallbacksGroup();
 
@@ -168,13 +195,13 @@ void bind_callbacks(py::module_& m) {
 				.extend(cbs);
 
 			return group;
-		}), "callbacks"_a)
+		}), "callbacks"_a, "Creates a group pre-populated with `callbacks`, run in list order.")
 		.def("add", [](osgx::DrawableDrawCallbacksGroup& g, py::object cb) {
 			detail::DrawableDrawCallbacksStorage::get(g)->template proxy<detail::DrawableDrawCallbacksProxy>().append(cb);
-		}, "callback"_a)
+		}, "callback"_a, "Appends `callback` to the group (alias for .callbacks.append()).")
 		.def("remove", [](osgx::DrawableDrawCallbacksGroup& g, py::object cb) {
 			detail::DrawableDrawCallbacksStorage::get(g)->template proxy<detail::DrawableDrawCallbacksProxy>().remove(cb);
-		}, "callback"_a)
+		}, "callback"_a, "Removes `callback` from the group (alias for .callbacks.remove()).")
 	;
 
 	// No keep_alive on the texture argument: WriteTextureCallback holds a real
@@ -186,8 +213,17 @@ void bind_callbacks(py::module_& m) {
 		osgx::WriteTextureCallback,
 		osg::Camera::DrawCallback,
 		osg::ref_ptr<osgx::WriteTextureCallback>
-	>(m, "WriteTextureCallback")
-		.def(py::init<osg::Texture*>(), "texture"_a)
+	>(
+		m,
+		"WriteTextureCallback",
+		"A Camera.DrawCallback that asynchronously writes its texture to disk when requested via "
+		"write(); does nothing on frames where write() hasn't been called since the last run."
+	)
+		.def(
+			py::init<osg::Texture*>(), "texture"_a,
+			"Wraps `texture`; call .write(filename) to request one readback-and-save the next "
+			"time this callback runs."
+		)
 		.def(
 			"write", &osgx::WriteTextureCallback::write, "filename"_a,
 			"Request that this callback's texture be written to `filename` the NEXT time the "

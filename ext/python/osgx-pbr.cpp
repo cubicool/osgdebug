@@ -50,17 +50,26 @@ void bind_pbr(py::module_& m_pbr) {
 	// osg::StateAttribute by the time this module's own init runs. Requires `import osg` (pyosg)
 	// to have already happened in this interpreter -- pybind11 has no way to resolve a base class
 	// it hasn't seen registered yet.
-	py::class_<osgx::Material, osg::StateAttribute, osg::ref_ptr<osgx::Material>>(m_pbr, "Material")
-		.def(py::init<>())
+	py::class_<osgx::Material, osg::StateAttribute, osg::ref_ptr<osgx::Material>>(
+		m_pbr,
+		"Material",
+		"A real osg.StateAttribute carrying PBR material factors (base color/roughness/metallic/"
+		"occlusion) and texture maps (base color/normal/metallicRoughness/emissive), applied via "
+		"a std430 shader storage buffer. Attach with setAttributeAndModes() like any "
+		"StateAttribute -- two drawables sharing an equal Material dedup automatically."
+	)
+		.def(py::init<>(), "Constructs a default-white, fully-rough, fully-metallic Material with no maps set.")
 		.def_property(
 			"baseColor", &osgx::Material::getBaseColor, &osgx::Material::setBaseColor,
 			"RGBA base color factor, multiplied against baseColorMap when one is set."
 		)
 		.def_property(
-			"roughness", &osgx::Material::getRoughness, &osgx::Material::setRoughness
+			"roughness", &osgx::Material::getRoughness, &osgx::Material::setRoughness,
+			"Roughness factor in [0, 1], multiplied against metallicRoughnessMap's G channel when one is set."
 		)
 		.def_property(
-			"metallic", &osgx::Material::getMetallic, &osgx::Material::setMetallic
+			"metallic", &osgx::Material::getMetallic, &osgx::Material::setMetallic,
+			"Metallic factor in [0, 1], multiplied against metallicRoughnessMap's B channel when one is set."
 		)
 		.def_property(
 			"hasOcclusion", &osgx::Material::getHasOcclusion, &osgx::Material::setHasOcclusion,
@@ -68,10 +77,12 @@ void bind_pbr(py::module_& m_pbr) {
 			"the other has*Map flags, this has no dedicated texture of its own to derive from."
 		)
 		.def_property(
-			"baseColorMap", &osgx::Material::getBaseColorMap, &osgx::Material::setBaseColorMap
+			"baseColorMap", &osgx::Material::getBaseColorMap, &osgx::Material::setBaseColorMap,
+			"Base color (albedo) texture."
 		)
 		.def_property(
-			"normalMap", &osgx::Material::getNormalMap, &osgx::Material::setNormalMap
+			"normalMap", &osgx::Material::getNormalMap, &osgx::Material::setNormalMap,
+			"Tangent-space normal map texture."
 		)
 		.def_property(
 			"metallicRoughnessMap",
@@ -79,11 +90,17 @@ void bind_pbr(py::module_& m_pbr) {
 			"glTF's combined occlusion/roughness/metallic texture."
 		)
 		.def_property(
-			"emissiveMap", &osgx::Material::getEmissiveMap, &osgx::Material::setEmissiveMap
+			"emissiveMap", &osgx::Material::getEmissiveMap, &osgx::Material::setEmissiveMap,
+			"Emissive color texture."
 		)
 	;
 
-	m_pbr.def("snippets", &osgx::snippets);
+	m_pbr.def(
+		"snippets", &osgx::snippets,
+		"Returns the five core BRDF snippets (D_GGX, G_SCHLICK, G_SMITH, F_SCHLICK, "
+		"F_SCHLICK_ROUGHNESS) concatenated in dependency order -- convenience for a caller that "
+		"wants the whole toolkit at once; use the individual constants if only part is needed."
+	);
 
 	// Assembles the osgx_DirectLighting() CONTRACT's default definition as a standalone FRAGMENT
 	// osg::Shader, ready to add()/append() onto an osg::Program alongside a consumer's own
@@ -136,7 +153,12 @@ void bind_pbr(py::module_& m_pbr) {
 		"that only declares TONEMAP_DECL plus a call site."
 	);
 
-	py::class_<osgx::OrbitLightRig::Orbit>(m_pbr, "Orbit")
+	py::class_<osgx::OrbitLightRig::Orbit>(
+		m_pbr,
+		"Orbit",
+		"One light's orbit parameters for OrbitLightRig: radius/height around `center`, angular "
+		"speed and phase offset, and a per-orbit intensity scale."
+	)
 		.def(
 			py::init([](float radius, float height, float speed, float phase, float intensity) {
 				return osgx::OrbitLightRig::Orbit{radius, height, speed, phase, intensity};
@@ -145,24 +167,38 @@ void bind_pbr(py::module_& m_pbr) {
 			"height"_a=0.5f,
 			"speed"_a=0.5f,
 			"phase"_a=0.0f,
-			"intensity"_a=1.0f
+			"intensity"_a=1.0f,
+			"Constructs one orbit's parameters."
 		)
-		.def_readwrite("radius", &osgx::OrbitLightRig::Orbit::radius)
-		.def_readwrite("height", &osgx::OrbitLightRig::Orbit::height)
-		.def_readwrite("speed", &osgx::OrbitLightRig::Orbit::speed)
-		.def_readwrite("phase", &osgx::OrbitLightRig::Orbit::phase)
-		.def_readwrite("intensity", &osgx::OrbitLightRig::Orbit::intensity)
+		.def_readwrite("radius", &osgx::OrbitLightRig::Orbit::radius, "Orbit radius around `center`, in world units.")
+		.def_readwrite("height", &osgx::OrbitLightRig::Orbit::height, "Height above `center`, in world units.")
+		.def_readwrite("speed", &osgx::OrbitLightRig::Orbit::speed, "Angular speed, in radians per second.")
+		.def_readwrite("phase", &osgx::OrbitLightRig::Orbit::phase, "Starting angular phase offset, in radians.")
+		.def_readwrite("intensity", &osgx::OrbitLightRig::Orbit::intensity, "Per-orbit intensity scale.")
 	;
 
-	py::enum_<osgx::LightType>(m_pbr, "LightType")
+	py::enum_<osgx::LightType>(
+		m_pbr,
+		"LightType",
+		"Selects the radiance function LightSet's per-light `type` field picks in the fragment "
+		"shader loop. No Sphere member: a sphere light is a Point or Spot light with a nonzero "
+		"sourceRadius, not a fourth type."
+	)
 		.value("Point", osgx::LightType::Point)
 		.value("Directional", osgx::LightType::Directional)
 		.value("Spot", osgx::LightType::Spot)
 	;
 
-	py::class_<osgx::LightSet, osg::StateAttribute, osg::ref_ptr<osgx::LightSet>>(m_pbr, "LightSet")
-		.def(py::init<>())
-		.def("valid", &osgx::LightSet::valid)
+	py::class_<osgx::LightSet, osg::StateAttribute, osg::ref_ptr<osgx::LightSet>>(
+		m_pbr,
+		"LightSet",
+		"A real osg.StateAttribute owning up to MAX_LIGHTS punctual lights in one std430 shader "
+		"storage buffer plus their count uniform. Attach with setAttributeAndModes() on an "
+		"ancestor StateSet and every lit subgraph beneath it inherits the same lights. "
+		"OrbitLightRig can animate a subset of an attached LightSet's lights on top of this."
+	)
+		.def(py::init<>(), "Constructs a LightSet with 0 active lights; valid to attach immediately.")
+		.def("valid", &osgx::LightSet::valid, "True if this LightSet still has its buffer binding and count uniform.")
 		.def(
 			"setPoint",
 			&osgx::LightSet::setPoint,
@@ -170,9 +206,16 @@ void bind_pbr(py::module_& m_pbr) {
 			"position"_a,
 			"color"_a,
 			"intensity"_a,
-			"sourceRadius"_a=0.0f
+			"sourceRadius"_a=0.0f,
+			"Configures light `index` as a point light and enables it. `sourceRadius` > 0 widens "
+			"its specular highlight to read as a physical sphere light; falloff/diffuse are unchanged."
 		)
-		.def("setDirectional", &osgx::LightSet::setDirectional, "index"_a, "direction"_a, "color"_a, "intensity"_a)
+		.def(
+			"setDirectional", &osgx::LightSet::setDirectional, "index"_a, "direction"_a, "color"_a, "intensity"_a,
+			"Configures light `index` as a directional light and enables it. `direction` is the "
+			"ray travel direction (KHR_lights_punctual convention), e.g. (0, 0, -1) for straight "
+			"down in a Z-up world."
+		)
 		.def(
 			"setSpot",
 			&osgx::LightSet::setSpot,
@@ -183,37 +226,60 @@ void bind_pbr(py::module_& m_pbr) {
 			"intensity"_a,
 			"innerConeAngle"_a,
 			"outerConeAngle"_a,
-			"sourceRadius"_a=0.0f
+			"sourceRadius"_a=0.0f,
+			"Configures light `index` as a spot light and enables it. Cone angles are in radians "
+			"(KHR_lights_punctual convention); `sourceRadius` > 0 widens its specular highlight, "
+			"same as setPoint()."
 		)
-		.def("setCount", &osgx::LightSet::setCount)
-		.def("setEnabled", &osgx::LightSet::setEnabled, "index"_a, "enabled"_a)
-		.def("setPosition", &osgx::LightSet::setPosition, "index"_a, "position"_a, "intensity"_a)
-		.def("getCount", &osgx::LightSet::getCount)
-		.def("getPosIntensity", &osgx::LightSet::getPosIntensity, "index"_a)
-		.def("getColor", &osgx::LightSet::getColor, "index"_a)
+		.def(
+			"setCount", &osgx::LightSet::setCount, "count"_a,
+			"Sets how many of MAX_LIGHTS light slots the shader loop actually iterates."
+		)
+		.def(
+			"setEnabled", &osgx::LightSet::setEnabled, "index"_a, "enabled"_a,
+			"Enables or disables an already-configured light without changing its data."
+		)
+		.def(
+			"setPosition", &osgx::LightSet::setPosition, "index"_a, "position"_a, "intensity"_a,
+			"Sets only light `index`'s position/intensity, leaving color/type/direction/"
+			"spotAngles/sourceRadius untouched -- the primitive OrbitLightRig uses to animate an "
+			"already-configured light every frame."
+		)
+		.def("getCount", &osgx::LightSet::getCount, "Returns how many light slots are currently active.")
+		.def("getPosIntensity", &osgx::LightSet::getPosIntensity, "index"_a, "Returns light `index`'s (position.xyz, intensity.w).")
+		.def("getColor", &osgx::LightSet::getColor, "index"_a, "Returns light `index`'s color.")
 		.def(
 			"getType",
 			static_cast<osgx::LightType (osgx::LightSet::*)(std::size_t) const>(
 				&osgx::LightSet::getType
 			),
-			"index"_a
+			"index"_a,
+			"Returns light `index`'s LightType."
 		)
-		.def("getEnabled", &osgx::LightSet::getEnabled, "index"_a)
-		.def("getDirection", &osgx::LightSet::getDirection, "index"_a)
-		.def("getSpotAngles", &osgx::LightSet::getSpotAngles, "index"_a)
-		.def("getSourceRadius", &osgx::LightSet::getSourceRadius, "index"_a)
+		.def("getEnabled", &osgx::LightSet::getEnabled, "index"_a, "Returns whether light `index` is currently enabled.")
+		.def("getDirection", &osgx::LightSet::getDirection, "index"_a, "Returns light `index`'s ray travel direction.")
+		.def("getSpotAngles", &osgx::LightSet::getSpotAngles, "index"_a, "Returns light `index`'s (cos(inner), cos(outer)) cone angles.")
+		.def("getSourceRadius", &osgx::LightSet::getSourceRadius, "index"_a, "Returns light `index`'s physical source radius (0 = ideal point/spot).")
 	;
 
 	py::class_<
 		osgx::OrbitLightRig,
 		osg::NodeCallback,
 		osg::ref_ptr<osgx::OrbitLightRig>
-	>(m_pbr, "OrbitLightRig")
-		.def(py::init<>())
-		.def_readwrite("lights", &osgx::OrbitLightRig::lights)
-		.def_readwrite("center", &osgx::OrbitLightRig::center)
-		.def_readwrite("intensity", &osgx::OrbitLightRig::intensity)
-		.def_readwrite("orbits", &osgx::OrbitLightRig::orbits)
+	>(
+		m_pbr,
+		"OrbitLightRig",
+		"Animates a handful of point lights orbiting a center point, writing world-space "
+		"position+intensity into an attached LightSet's posIntensity field every update "
+		"traversal. `lights` must already have at least len(orbits) lights configured via "
+		"setPoint()/setSpot() for their color/type/etc. -- this callback only ever touches "
+		"position/intensity."
+	)
+		.def(py::init<>(), "Constructs a rig with the default three-orbit badge-lighting setup; set `lights` before use.")
+		.def_readwrite("lights", &osgx::OrbitLightRig::lights, "The LightSet this rig animates.")
+		.def_readwrite("center", &osgx::OrbitLightRig::center, "World-space center every orbit revolves around.")
+		.def_readwrite("intensity", &osgx::OrbitLightRig::intensity, "Global intensity scale applied on top of each Orbit's own intensity.")
+		.def_readwrite("orbits", &osgx::OrbitLightRig::orbits, "The list of Orbit parameters, one per animated light.")
 	;
 }
 

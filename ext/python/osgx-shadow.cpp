@@ -34,26 +34,83 @@ void bind_shadow(py::module_& m_shadow) {
 		"osgx_shadowCasterIndex is multiplied by osgx_ShadowFactor()."
 	);
 
-	py::class_<osgx::ShadowMapOptions>(m_shadow, "ShadowMapOptions")
-		.def(py::init<>())
-		.def_readwrite("size", &osgx::ShadowMapOptions::size)
-		.def_readwrite("extent", &osgx::ShadowMapOptions::extent)
-		.def_readwrite("margin", &osgx::ShadowMapOptions::margin)
-		.def_readwrite("bias", &osgx::ShadowMapOptions::bias)
-		.def_readwrite("strength", &osgx::ShadowMapOptions::strength)
+	py::class_<osgx::ShadowMapOptions>(
+		m_shadow,
+		"ShadowMapOptions",
+		"Tuning knobs for ShadowMap.create()/reposition(): orthographic frustum size, depth "
+		"precision, and shadow darkness."
+	)
+		.def(
+			py::init<>(),
+			"Constructs default options (size=1024, extent=0 i.e. auto, margin=1.3, bias=0.005, strength=0.7)."
+		)
+		.def_readwrite(
+			"size", &osgx::ShadowMapOptions::size,
+			"Shadow map texture resolution (width == height), in texels."
+		)
+		.def_readwrite(
+			"extent", &osgx::ShadowMapOptions::extent,
+			"Half-width, in world units, of the orthographic shadow frustum's box. 0 (default) "
+			"derives it from sceneBoundRadius * margin."
+		)
+		.def_readwrite(
+			"margin", &osgx::ShadowMapOptions::margin,
+			"Multiplies sceneBoundRadius both when deriving a default `extent` and when sizing "
+			"near/far planes, keeping near:far depth precision bounded regardless of scene scale."
+		)
+		.def_readwrite(
+			"bias", &osgx::ShadowMapOptions::bias,
+			"Depth-comparison bias added during the shadow test to avoid self-shadowing artifacts."
+		)
+		.def_readwrite(
+			"strength", &osgx::ShadowMapOptions::strength,
+			"How dark a shadowed fragment gets: 0 = shadows have no effect, 1 = fully black."
+		)
 	;
 
-	py::class_<osgx::ShadowMap>(m_shadow, "ShadowMap")
-		.def(py::init<>())
-		.def_readwrite("camera", &osgx::ShadowMap::camera)
-		.def_readwrite("depthTexture", &osgx::ShadowMap::depthTexture)
-		.def_readwrite("shadowMatrix", &osgx::ShadowMap::shadowMatrix)
-		.def_readwrite("bias", &osgx::ShadowMap::bias)
-		.def_readwrite("strength", &osgx::ShadowMap::strength)
-		.def_readwrite("casterIndex", &osgx::ShadowMap::casterIndex)
-		.def_readwrite("lightView", &osgx::ShadowMap::lightView)
-		.def_readwrite("lightProj", &osgx::ShadowMap::lightProj)
-		.def("valid", &osgx::ShadowMap::valid)
+	py::class_<osgx::ShadowMap>(
+		m_shadow,
+		"ShadowMap",
+		"A directional shadow map: owns the PRE_RENDER depth-only orthographic camera plus the "
+		"uniforms DIRECT_LIGHTING_HOOK_SHADOWED reads every frame. World-space, not eye-space -- "
+		"shadowMatrix is just lightProj * lightView, with no per-frame main-camera dependency."
+	)
+		.def(py::init<>(), "Constructs an empty ShadowMap with no camera/textures set; see ShadowMap.create().")
+		.def_readwrite(
+			"camera", &osgx::ShadowMap::camera,
+			"The PRE_RENDER depth-only orthographic camera; add it to the scene graph."
+		)
+		.def_readwrite(
+			"depthTexture", &osgx::ShadowMap::depthTexture,
+			"The rendered depth attachment, sampled by osgx_ShadowFactor()."
+		)
+		.def_readwrite(
+			"shadowMatrix", &osgx::ShadowMap::shadowMatrix,
+			"world space -> light clip space. Set by create(); recompute via updateMatrix() if "
+			"lightView/lightProj change directly."
+		)
+		.def_readwrite(
+			"bias", &osgx::ShadowMap::bias,
+			"Depth-comparison bias uniform read by osgx_ShadowFactor()."
+		)
+		.def_readwrite(
+			"strength", &osgx::ShadowMap::strength,
+			"Shadow darkness uniform: 0 = shadows have no effect, 1 = fully black."
+		)
+		.def_readwrite(
+			"casterIndex", &osgx::ShadowMap::casterIndex,
+			"Which osgx_lights[] index this shadow map is cast by -- only that light's "
+			"contribution is multiplied by osgx_ShadowFactor(); every other light is unaffected."
+		)
+		.def_readwrite(
+			"lightView", &osgx::ShadowMap::lightView,
+			"The shadow camera's view matrix, as last computed by create()/reposition()."
+		)
+		.def_readwrite(
+			"lightProj", &osgx::ShadowMap::lightProj,
+			"The shadow camera's projection matrix, as last computed by create()/reposition()."
+		)
+		.def("valid", &osgx::ShadowMap::valid, "True if camera and depthTexture were successfully built.")
 		.def_static(
 			"create",
 			&osgx::ShadowMap::create,

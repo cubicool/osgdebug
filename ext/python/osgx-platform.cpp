@@ -33,13 +33,18 @@ void bind_platform(py::module_& m_platform) {
 		"Pin the viewer's native X11 window above other windows (EWMH _NET_WM_STATE_ABOVE)."
 	);
 
-	py::class_<osgx::platform::Monitor>(m_platform, "Monitor")
-		.def_readonly("name", &osgx::platform::Monitor::name)
-		.def_readonly("x", &osgx::platform::Monitor::x)
-		.def_readonly("y", &osgx::platform::Monitor::y)
-		.def_readonly("width", &osgx::platform::Monitor::width)
-		.def_readonly("height", &osgx::platform::Monitor::height)
-		.def_readonly("primary", &osgx::platform::Monitor::primary)
+	py::class_<osgx::platform::Monitor>(
+		m_platform,
+		"Monitor",
+		"One XRandR monitor, in real root-window coordinates. Monitors are NOT assumed to be "
+		"flush/adjacent -- see listMonitors()."
+	)
+		.def_readonly("name", &osgx::platform::Monitor::name, "This monitor's XRandR output name (e.g. 'DP-1', 'HDMI-0').")
+		.def_readonly("x", &osgx::platform::Monitor::x, "Left edge, in root-window pixels.")
+		.def_readonly("y", &osgx::platform::Monitor::y, "Top edge, in root-window pixels.")
+		.def_readonly("width", &osgx::platform::Monitor::width, "Width in pixels.")
+		.def_readonly("height", &osgx::platform::Monitor::height, "Height in pixels.")
+		.def_readonly("primary", &osgx::platform::Monitor::primary, "True if this is the XRandR-designated primary monitor.")
 		.def("__repr__", [](const osgx::platform::Monitor& self) {
 			return
 				"Monitor(name='"s + self.name + "', "
@@ -49,7 +54,7 @@ void bind_platform(py::module_& m_platform) {
 				"height="s + std::to_string(self.height) + ", "
 				"primary="s + (self.primary ? "True"s : "False"s) + ")"s
 			;
-		})
+		}, "A readable Monitor(name=..., x=..., y=..., width=..., height=..., primary=...) representation.")
 	;
 
 	m_platform.def(
@@ -135,14 +140,28 @@ void bind_platform(py::module_& m_platform) {
 		osgx::platform::PointerCapture,
 		osgGA::GUIEventHandler,
 		osg::ref_ptr<osgx::platform::PointerCapture>
-	>(m_platform, "PointerCapture")
-		.def(py::init<osgViewer::View&>(), "view"_a)
+	>(
+		m_platform,
+		"PointerCapture",
+		"Software hide+warp+accumulate mouse capture for turntable/FPS-style relative-motion look "
+		"controls. NOT true OS-level pointer confinement -- see osgx/Cursor.hpp."
+	)
+		.def(
+			py::init<osgViewer::View&>(), "view"_a,
+			"Wraps `view`; capture starts disabled -- set .captured = True to begin hiding+warping+accumulating."
+		)
 		.def_property(
 			"captured",
 			&osgx::platform::PointerCapture::isCaptured,
-			&osgx::platform::PointerCapture::setCaptured
+			&osgx::platform::PointerCapture::setCaptured,
+			"Whether capture is active: while True, hides the cursor and re-centers it on every "
+			"MOVE/DRAG event, accumulating the raw delta. Disabled by default."
 		)
-		.def("consume", &osgx::platform::PointerCapture::consume)
+		.def(
+			"consume", &osgx::platform::PointerCapture::consume,
+			"Returns the accumulated delta since the last consume() call and resets it to zero. "
+			"Poll once per update traversal."
+		)
 	;
 }
 

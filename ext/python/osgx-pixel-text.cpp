@@ -11,7 +11,14 @@ void bind_pixel_text(py::module_& m) {
 		osgx::PixelText,
 		osg::Geometry,
 		osg::ref_ptr<osgx::PixelText>
-	>(m, "PixelText");
+	>(
+		m,
+		"PixelText",
+		"A deliberately small, deliberately inflexible procedural 5x7 bitmap font -- uppercase "
+		"A-Z, digits 0-9, space, and a handful of punctuation -- for quick in-scene labels and "
+		"decal text until slughorn/osgSlug (the real text renderer) is wired in. One "
+		"gl_InstanceID-emitted quad per character, painted from a shared, process-wide atlas."
+	);
 
 	pixelText.attr("CHARSET") = std::string(osgx::PixelText::CHARSET);
 	pixelText.attr("GLYPH_COLS") = osgx::PixelText::GLYPH_COLS;
@@ -48,10 +55,25 @@ void bind_pixel_text(py::module_& m) {
 			"One atlas cell per entry in `cells`, each string centered within its own cell - for "
 			"decal-style use (pyosg_dice.py calls this directly per die face)."
 		)
-		.def_property("text", &osgx::PixelText::getText, &osgx::PixelText::setText)
-		.def_property("cellSize", &osgx::PixelText::getCellSize, &osgx::PixelText::setCellSize)
-		.def_property("advance", &osgx::PixelText::getAdvance, &osgx::PixelText::setAdvance)
-		.def_property("ink", &osgx::PixelText::getInk, &osgx::PixelText::setInk)
+		.def_property(
+			"text", &osgx::PixelText::getText, &osgx::PixelText::setText,
+			"The rendered string. Characters outside CHARSET (after uppercase-folding) render as "
+			"a blank space rather than raising."
+		)
+		.def_property(
+			"cellSize", &osgx::PixelText::getCellSize, &osgx::PixelText::setCellSize,
+			"World-space size of one glyph's quad. Affects the label's extent, so it dirties bounds."
+		)
+		.def_property(
+			"advance", &osgx::PixelText::getAdvance, &osgx::PixelText::setAdvance,
+			"Distance between successive glyph origins along local +X; defaults to cellSize, so "
+			"this is only touched to add letter-spacing. Affects the label's extent, so it "
+			"dirties bounds."
+		)
+		.def_property(
+			"ink", &osgx::PixelText::getInk, &osgx::PixelText::setInk,
+			"Text color (RGBA), multiplied against the glyph atlas's coverage in the fragment shader."
+		)
 	;
 }
 

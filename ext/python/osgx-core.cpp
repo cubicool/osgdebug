@@ -73,27 +73,59 @@ void bind_core(py::module_& m) {
 		osgx::GridSettings,
 		osg::StateAttribute,
 		osg::ref_ptr<osgx::GridSettings>
-	>(m, "GridSettings");
+	>(
+		m,
+		"GridSettings",
+		"Live-tunable Grid rendering parameters (line width/intervals/colors/modes), stored in a "
+		"std430 SSBO. Normally accessed through a Grid's own property passthroughs -- construct "
+		"directly only to share one GridSettings across multiple Grid instances."
+	);
 
 	gridSettings
-		.def(py::init<>())
-		.def_property("canvasSize", &osgx::GridSettings::getCanvasSize, &osgx::GridSettings::setCanvasSize)
-		.def_property("gridInterval", &osgx::GridSettings::getGridInterval, &osgx::GridSettings::setGridInterval)
+		.def(py::init<>(), "Constructs default grid settings.")
+		.def_property(
+			"canvasSize", &osgx::GridSettings::getCanvasSize, &osgx::GridSettings::setCanvasSize,
+			"Size of the grid's canvas in local UV space."
+		)
+		.def_property(
+			"gridInterval", &osgx::GridSettings::getGridInterval, &osgx::GridSettings::setGridInterval,
+			"Spacing between minor grid lines, in canvas units."
+		)
 		.def_property(
 			"gridIntervalStrong",
 			&osgx::GridSettings::getGridIntervalStrong,
-			&osgx::GridSettings::setGridIntervalStrong
+			&osgx::GridSettings::setGridIntervalStrong,
+			"Spacing between major (strong) grid lines, in canvas units."
 		)
-		.def_property("lineWidthPx", &osgx::GridSettings::getLineWidthPx, &osgx::GridSettings::setLineWidthPx)
-		.def_property("lineWidth", &osgx::GridSettings::getLineWidth, &osgx::GridSettings::setLineWidth)
-		.def_property("edgeMode", &osgx::GridSettings::getEdgeMode, &osgx::GridSettings::setEdgeMode)
-		.def_property("lineMode", &osgx::GridSettings::getLineMode, &osgx::GridSettings::setLineMode)
-		.def_property("colorBg", &osgx::GridSettings::getColorBg, &osgx::GridSettings::setColorBg)
-		.def_property("colorLine", &osgx::GridSettings::getColorLine, &osgx::GridSettings::setColorLine)
+		.def_property(
+			"lineWidthPx", &osgx::GridSettings::getLineWidthPx, &osgx::GridSettings::setLineWidthPx,
+			"Line width in screen pixels, used when lineMode is LINE_SCREEN_PIXELS."
+		)
+		.def_property(
+			"lineWidth", &osgx::GridSettings::getLineWidth, &osgx::GridSettings::setLineWidth,
+			"Line width in grid/world units, used when lineMode is LINE_GRID_UNITS."
+		)
+		.def_property(
+			"edgeMode", &osgx::GridSettings::getEdgeMode, &osgx::GridSettings::setEdgeMode,
+			"How lines exactly on the canvas boundary are handled -- see Grid.EdgeMode."
+		)
+		.def_property(
+			"lineMode", &osgx::GridSettings::getLineMode, &osgx::GridSettings::setLineMode,
+			"Whether line width is measured in screen pixels or grid/world units -- see Grid.LineMode."
+		)
+		.def_property(
+			"colorBg", &osgx::GridSettings::getColorBg, &osgx::GridSettings::setColorBg,
+			"Background fill color."
+		)
+		.def_property(
+			"colorLine", &osgx::GridSettings::getColorLine, &osgx::GridSettings::setColorLine,
+			"Minor grid line color."
+		)
 		.def_property(
 			"colorLineStrong",
 			&osgx::GridSettings::getColorLineStrong,
-			&osgx::GridSettings::setColorLineStrong
+			&osgx::GridSettings::setColorLineStrong,
+			"Major (strong) grid line color."
 		)
 	;
 
@@ -101,64 +133,121 @@ void bind_core(py::module_& m) {
 		osgx::Grid,
 		osg::Geometry,
 		osg::ref_ptr<osgx::Grid>
-	>(m, "Grid");
+	>(
+		m,
+		"Grid",
+		"Procedurally-generated, antialiased, view-aware grid lines on a single quad. Supports "
+		"crisp constant screen-pixel lines for flat overlays and grid/world-unit line widths for "
+		"perspective ground planes."
+	);
 
-	py::enum_<osgx::Grid::EdgeMode>(grid, "EdgeMode")
+	py::enum_<osgx::Grid::EdgeMode>(
+		grid,
+		"EdgeMode",
+		"Boundary-line handling for lines that fall exactly on the canvas edge."
+	)
 		.value("EDGE_ASIS", osgx::Grid::EDGE_ASIS)
 		.value("EDGE_HIDE", osgx::Grid::EDGE_HIDE)
 		.value("EDGE_NUDGE", osgx::Grid::EDGE_NUDGE)
 		.export_values()
 	;
 
-	py::enum_<osgx::Grid::LineMode>(grid, "LineMode")
+	py::enum_<osgx::Grid::LineMode>(
+		grid,
+		"LineMode",
+		"Whether lineWidth/lineWidthPx is measured in grid/world units or constant screen pixels."
+	)
 		.value("LINE_SCREEN_PIXELS", osgx::Grid::LINE_SCREEN_PIXELS)
 		.value("LINE_GRID_UNITS", osgx::Grid::LINE_GRID_UNITS)
 		.export_values()
 	;
 
 	grid
-		.def(py::init<>())
-		.def(py::init<const osg::Vec3&, const osg::Vec3&, const osg::Vec3&>(),
-			"corner"_a, "width_vec"_a, "height_vec"_a
+		.def(
+			py::init<>(),
+			"Constructs a fullscreen NDC quad (XY plane, z=0, -1..1) -- pairs with orthoCamera()/"
+			"createOrthoCamera()."
 		)
-		.def_property("canvasSize", &osgx::Grid::getCanvasSize, &osgx::Grid::setCanvasSize)
-		.def_property("gridInterval", &osgx::Grid::getGridInterval, &osgx::Grid::setGridInterval)
+		.def(py::init<const osg::Vec3&, const osg::Vec3&, const osg::Vec3&>(),
+			"corner"_a, "width_vec"_a, "height_vec"_a,
+			"Constructs a quad at `corner` spanning `width_vec`/`height_vec` -- NDC for a "
+			"fullscreen overlay, or world-space for a real 3D ground plane."
+		)
+		.def_property(
+			"canvasSize", &osgx::Grid::getCanvasSize, &osgx::Grid::setCanvasSize,
+			"Size of the grid's canvas in local UV space."
+		)
+		.def_property(
+			"gridInterval", &osgx::Grid::getGridInterval, &osgx::Grid::setGridInterval,
+			"Spacing between minor grid lines, in canvas units."
+		)
 		.def_property(
 			"gridIntervalStrong",
 			&osgx::Grid::getGridIntervalStrong,
-			&osgx::Grid::setGridIntervalStrong
+			&osgx::Grid::setGridIntervalStrong,
+			"Spacing between major (strong) grid lines, in canvas units."
 		)
-		.def_property("lineWidthPx", &osgx::Grid::getLineWidthPx, &osgx::Grid::setLineWidthPx)
-		.def_property("lineWidth", &osgx::Grid::getLineWidth, &osgx::Grid::setLineWidth)
-		.def_property("edgeMode", &osgx::Grid::getEdgeMode, &osgx::Grid::setEdgeMode)
-		.def_property("lineMode", &osgx::Grid::getLineMode, &osgx::Grid::setLineMode)
-		.def_property("colorBg", &osgx::Grid::getColorBg, &osgx::Grid::setColorBg)
-		.def_property("colorLine", &osgx::Grid::getColorLine, &osgx::Grid::setColorLine)
+		.def_property(
+			"lineWidthPx", &osgx::Grid::getLineWidthPx, &osgx::Grid::setLineWidthPx,
+			"Line width in screen pixels, used when lineMode is LINE_SCREEN_PIXELS."
+		)
+		.def_property(
+			"lineWidth", &osgx::Grid::getLineWidth, &osgx::Grid::setLineWidth,
+			"Line width in grid/world units, used when lineMode is LINE_GRID_UNITS."
+		)
+		.def_property(
+			"edgeMode", &osgx::Grid::getEdgeMode, &osgx::Grid::setEdgeMode,
+			"How lines exactly on the canvas boundary are handled."
+		)
+		.def_property(
+			"lineMode", &osgx::Grid::getLineMode, &osgx::Grid::setLineMode,
+			"Whether line width is measured in screen pixels or grid/world units."
+		)
+		.def_property("colorBg", &osgx::Grid::getColorBg, &osgx::Grid::setColorBg, "Background fill color.")
+		.def_property("colorLine", &osgx::Grid::getColorLine, &osgx::Grid::setColorLine, "Minor grid line color.")
 		.def_property(
 			"colorLineStrong",
 			&osgx::Grid::getColorLineStrong,
-			&osgx::Grid::setColorLineStrong
+			&osgx::Grid::setColorLineStrong,
+			"Major (strong) grid line color."
 		)
 		.def_property(
 			"settings",
 			static_cast<osgx::GridSettings* (osgx::Grid::*)()>(&osgx::Grid::getSettings),
-			&osgx::Grid::setSettings
+			&osgx::Grid::setSettings,
+			"This Grid's own GridSettings; assign a shared GridSettings to have multiple Grids "
+			"track the same live parameters."
 		)
-		.def("orthoCamera", &osgx::Grid::orthoCamera)
-		.def_static("createOrthoCamera", py::overload_cast<>(&osgx::Grid::createOrthoCamera))
+		.def(
+			"orthoCamera", &osgx::Grid::orthoCamera,
+			"Wraps this Grid in a Geode, and that Geode in an ABSOLUTE_RF, PRE_RENDER, "
+			"ortho2D(-1,1,-1,1) camera -- the always-drawn-first fullscreen NDC setup. The caller "
+			"still needs to set the main camera's clear mask to GL_DEPTH_BUFFER_BIT-only, or its "
+			"default color clear will stomp this camera's paint."
+		)
+		.def_static(
+			"createOrthoCamera", py::overload_cast<>(&osgx::Grid::createOrthoCamera),
+			"Constructs a default fullscreen Grid and immediately wraps it via orthoCamera()."
+		)
 		.def_static(
 			"createOrthoCamera",
 			py::overload_cast<const osg::Vec3&, const osg::Vec3&, const osg::Vec3&>(
 				&osgx::Grid::createOrthoCamera
 			),
-			"corner"_a, "width_vec"_a, "height_vec"_a
+			"corner"_a, "width_vec"_a, "height_vec"_a,
+			"Constructs a Grid at `corner`/`width_vec`/`height_vec` and immediately wraps it via orthoCamera()."
 		)
 		.def_static(
 			"createSphere",
 			&osgx::Grid::createSphere,
-			"radius"_a=1.0f, "slices"_a=48, "stacks"_a=24
+			"radius"_a=1.0f, "slices"_a=48, "stacks"_a=24,
+			"Builds a UV sphere using this Grid's own shader and uniforms; duplicated seam/pole "
+			"vertices keep grid coordinates continuous except at the intentional longitude wrap."
 		)
-		.def_static("registerShaderLibs", &osgx::registerGridShaderLibs)
+		.def_static(
+			"registerShaderLibs", &osgx::registerGridShaderLibs,
+			"Registers Grid's GLSL snippets under the #pragma osgx::grid shader-library key."
+		)
 	;
 
 	// osgx::Ortho2DManipulator / OrbitAxisManipulator / MultiCameraManipulator (osgx/Manipulators.hpp).
@@ -170,22 +259,31 @@ void bind_core(py::module_& m) {
 		osgx::Ortho2DManipulator,
 		osgGA::CameraManipulator,
 		osg::ref_ptr<osgx::Ortho2DManipulator>
-	>(m, "Ortho2DManipulator")
-		.def(py::init<>())
+	>(
+		m,
+		"Ortho2DManipulator",
+		"An osgGA.CameraManipulator for orthographic 2D scenes, owning both view and projection "
+		"matrices. Pan (drag), zoom (scroll), Shift+scroll pixel-nudge zoom, and Ctrl+drag 3D "
+		"orbit are all supported; Space/Home resets to fit the node's bound."
+	)
+		.def(py::init<>(), "Constructs a manipulator with no node set; call setNode()/setCameraManipulator() before use.")
 		.def_property(
 			"pixelNudge",
 			&osgx::Ortho2DManipulator::getPixelNudge,
-			&osgx::Ortho2DManipulator::setPixelNudge
+			&osgx::Ortho2DManipulator::setPixelNudge,
+			"Shift+scroll zoom step: how many screen pixels the visible boundary moves per click (default 8)."
 		)
 		.def_property(
 			"wheelZoomFactor",
 			&osgx::Ortho2DManipulator::getWheelZoomFactor,
-			&osgx::Ortho2DManipulator::setWheelZoomFactor
+			&osgx::Ortho2DManipulator::setWheelZoomFactor,
+			"Geometric zoom factor applied to halfExtentY per plain-scroll wheel click (default 1.15)."
 		)
 		.def_property(
 			"rotateSensitivity",
 			&osgx::Ortho2DManipulator::getRotateSensitivity,
-			&osgx::Ortho2DManipulator::setRotateSensitivity
+			&osgx::Ortho2DManipulator::setRotateSensitivity,
+			"Sensitivity of Ctrl+drag 3D tilt (yaw/pitch) to mouse motion."
 		)
 		.def_property(
 			"invertY",
@@ -214,12 +312,14 @@ void bind_core(py::module_& m) {
 		.def_property(
 			"center",
 			&osgx::Ortho2DManipulator::getCenter,
-			&osgx::Ortho2DManipulator::setCenter
+			&osgx::Ortho2DManipulator::setCenter,
+			"World-space focal point the view is centered on."
 		)
 		.def_property(
 			"halfExtentY",
 			&osgx::Ortho2DManipulator::getHalfExtentY,
-			&osgx::Ortho2DManipulator::setHalfExtentY
+			&osgx::Ortho2DManipulator::setHalfExtentY,
+			"Half the visible world height; the actual zoom-level state, clamped by zoomLimits."
 		)
 		.def_property(
 			"zoomLimits",
@@ -243,22 +343,31 @@ void bind_core(py::module_& m) {
 		osgx::OrbitAxisManipulator,
 		osgGA::CameraManipulator,
 		osg::ref_ptr<osgx::OrbitAxisManipulator>
-	>(m, "OrbitAxisManipulator")
-		.def(py::init<>())
+	>(
+		m,
+		"OrbitAxisManipulator",
+		"A \"turntable\" osgGA.CameraManipulator: orbits a fixed vertical guide line through the "
+		"model's bounds, always looking level, dollying toward/away from that line on zoom. "
+		"State is cylindrical: yaw, height (clamped to heightLimits), distance (clamped by coverageLimits)."
+	)
+		.def(py::init<>(), "Constructs a manipulator with no node set; call setNode()/setCameraManipulator() before use.")
 		.def_property(
 			"yawSensitivity",
 			&osgx::OrbitAxisManipulator::getYawSensitivity,
-			&osgx::OrbitAxisManipulator::setYawSensitivity
+			&osgx::OrbitAxisManipulator::setYawSensitivity,
+			"Sensitivity of yaw rotation to raw pointer motion."
 		)
 		.def_property(
 			"heightSensitivity",
 			&osgx::OrbitAxisManipulator::getHeightSensitivity,
-			&osgx::OrbitAxisManipulator::setHeightSensitivity
+			&osgx::OrbitAxisManipulator::setHeightSensitivity,
+			"Sensitivity of height changes to raw pointer motion."
 		)
 		.def_property(
 			"wheelZoomFactor",
 			&osgx::OrbitAxisManipulator::getWheelZoomFactor,
-			&osgx::OrbitAxisManipulator::setWheelZoomFactor
+			&osgx::OrbitAxisManipulator::setWheelZoomFactor,
+			"Dolly-distance factor applied per scroll wheel click."
 		)
 		.def_property(
 			"invertY",
@@ -309,8 +418,14 @@ void bind_core(py::module_& m) {
 			},
 			"(minHeight, maxHeight) world-space distances along upAxis that constrain camera height."
 		)
-		.def("clearHeightLimits", &osgx::OrbitAxisManipulator::clearHeightLimits)
-		.def_property_readonly("hasHeightLimits", &osgx::OrbitAxisManipulator::hasHeightLimits)
+		.def(
+			"clearHeightLimits", &osgx::OrbitAxisManipulator::clearHeightLimits,
+			"Removes any height clamp set via heightLimits, letting height move freely."
+		)
+		.def_property_readonly(
+			"hasHeightLimits", &osgx::OrbitAxisManipulator::hasHeightLimits,
+			"True if a height clamp is currently set."
+		)
 		.def_property(
 			"liveOrbitEnabled",
 			&osgx::OrbitAxisManipulator::isLiveOrbitEnabled,
@@ -318,9 +433,9 @@ void bind_core(py::module_& m) {
 			"Disable to drive orbit/height exclusively via orbitByDelta() (e.g. from "
 			"osgx.platform.PointerCapture) instead of raw MOVE/DRAG cursor tracking."
 		)
-		.def_property_readonly("yaw", &osgx::OrbitAxisManipulator::getYaw)
-		.def_property_readonly("height", &osgx::OrbitAxisManipulator::getHeight)
-		.def_property_readonly("distance", &osgx::OrbitAxisManipulator::getDistance)
+		.def_property_readonly("yaw", &osgx::OrbitAxisManipulator::getYaw, "Current yaw angle, in radians.")
+		.def_property_readonly("height", &osgx::OrbitAxisManipulator::getHeight, "Current height along upAxis.")
+		.def_property_readonly("distance", &osgx::OrbitAxisManipulator::getDistance, "Current dolly distance from the guide line.")
 		.def(
 			"orbitByDelta",
 			&osgx::OrbitAxisManipulator::orbitByDelta,
@@ -335,15 +450,21 @@ void bind_core(py::module_& m) {
 		osgx::MultiCameraManipulator,
 		osgGA::CameraManipulator,
 		osg::ref_ptr<osgx::MultiCameraManipulator>
-	>(m, "MultiCameraManipulator")
-		.def(py::init<>())
+	>(
+		m,
+		"MultiCameraManipulator",
+		"A composite manipulator routing input to one active target (name, manipulator, optional "
+		"dedicated camera/scene, optional setActive callback), with a key toggling between them."
+	)
+		.def(py::init<>(), "Constructs a manipulator with no targets; call addTarget() before use.")
 		.def_property(
 			"toggleKey",
 			&osgx::MultiCameraManipulator::getToggleKey,
-			&osgx::MultiCameraManipulator::setToggleKey
+			&osgx::MultiCameraManipulator::setToggleKey,
+			"Key that cycles to the next target (default 'x')."
 		)
-		.def_property_readonly("activeIndex", &osgx::MultiCameraManipulator::getActiveIndex)
-		.def_property_readonly("numTargets", &osgx::MultiCameraManipulator::getNumTargets)
+		.def_property_readonly("activeIndex", &osgx::MultiCameraManipulator::getActiveIndex, "Index of the currently active target.")
+		.def_property_readonly("numTargets", &osgx::MultiCameraManipulator::getNumTargets, "Number of registered targets.")
 		.def(
 			"addTarget",
 			&osgx::MultiCameraManipulator::addTarget,
@@ -351,10 +472,13 @@ void bind_core(py::module_& m) {
 			"manipulator"_a,
 			"camera"_a=nullptr,
 			"scene"_a=nullptr,
-			"setActive"_a=std::function<void(bool)>()
+			"setActive"_a=std::function<void(bool)>(),
+			"Registers a new target: `manipulator` handles input while it is active. Optional "
+			"`camera`/`scene` swap in a dedicated rendered camera/scene graph, and `setActive(bool)` "
+			"-- if given -- is called on activation and deactivation."
 		)
-		.def("activate", &osgx::MultiCameraManipulator::activate, "index"_a)
-		.def("next", &osgx::MultiCameraManipulator::next)
+		.def("activate", &osgx::MultiCameraManipulator::activate, "index"_a, "Activates the target at `index`.")
+		.def("next", &osgx::MultiCameraManipulator::next, "Activates the next target, wrapping around.")
 	;
 
 	// osgx::CameraManipulator<Base> (osgx/Manipulators.hpp) -- CRTP mixin merging one-shot/
@@ -367,8 +491,14 @@ void bind_core(py::module_& m) {
 		TrackballCameraManipulator,
 		osgGA::CameraManipulator,
 		osg::ref_ptr<TrackballCameraManipulator>
-	>(m, "CameraManipulator")
-		.def(py::init<>())
+	>(
+		m,
+		"CameraManipulator",
+		"osgGA.TrackballManipulator with one-shot/persistent \"camera intent\" callbacks (flyTo, "
+		"shake, or any custom osg.Callback) mergeable onto the SAME manipulator instance, rather "
+		"than wrapping or replacing it."
+	)
+		.def(py::init<>(), "Constructs a TrackballManipulator-based manipulator with no camera intents attached.")
 		.def(
 			"addUpdateCameraCallback",
 			&TrackballCameraManipulator::addUpdateCameraCallback,
@@ -380,7 +510,8 @@ void bind_core(py::module_& m) {
 		.def(
 			"removeUpdateCameraCallback",
 			&TrackballCameraManipulator::removeUpdateCameraCallback,
-			"callback"_a
+			"callback"_a,
+			"Detaches a previously attached update-camera callback."
 		)
 		.def_property_readonly(
 			"currentTime",
@@ -436,16 +567,21 @@ void bind_core(py::module_& m) {
 	// .callbacks -- read-only introspection of what's currently attached (see the
 	// pyx::SequenceTraits<TrackballCameraManipulator> specialization above this function).
 	pyx::bind_proxy_property<detail::CallbacksProxy, TrackballCameraManipulator, detail::CallbacksStorage>(
-		cameraManipulator, "_Callbacks", "callbacks"
+		cameraManipulator, "_Callbacks", "callbacks",
+		"Read-only introspection of the update-camera callbacks currently attached, as a real Python list."
 	);
 
-	py::class_<osgx::Viewpoint>(m, "Viewpoint")
+	py::class_<osgx::Viewpoint>(
+		m,
+		"Viewpoint",
+		"An (eye, center, up) camera pose, as used by FlyToCallback's target/waypoints."
+	)
 		.def(py::init([](osg::Vec3d eye, osg::Vec3d center, osg::Vec3d up) {
 			return osgx::Viewpoint{eye, center, up};
-		}), "eye"_a, "center"_a, "up"_a=osg::Vec3d(0.0, 0.0, 1.0))
-		.def_readwrite("eye", &osgx::Viewpoint::eye)
-		.def_readwrite("center", &osgx::Viewpoint::center)
-		.def_readwrite("up", &osgx::Viewpoint::up)
+		}), "eye"_a, "center"_a, "up"_a=osg::Vec3d(0.0, 0.0, 1.0), "Constructs a Viewpoint; `up` defaults to +Z.")
+		.def_readwrite("eye", &osgx::Viewpoint::eye, "Eye (camera) position.")
+		.def_readwrite("center", &osgx::Viewpoint::center, "Look-at target position.")
+		.def_readwrite("up", &osgx::Viewpoint::up, "Up vector.")
 	;
 
 	// osg::Callback itself is registered by pyosg (OpenSceneGraph.py/pyosg/osg/NodeCallback.cpp),
@@ -457,7 +593,13 @@ void bind_core(py::module_& m) {
 		osgx::FlyToCallback,
 		osg::Callback,
 		osg::ref_ptr<osgx::FlyToCallback>
-	>(m, "FlyToCallback")
+	>(
+		m,
+		"FlyToCallback",
+		"A one-shot or multi-waypoint camera fly-to animation, driven by a real osgAnimation "
+		"Motion/CompositeMotion. Attach via CameraManipulator.flyTo() for the single-target case, "
+		"or construct directly (the multi-waypoint constructor) for a scripted patrol/loop."
+	)
 		.def(
 			py::init<
 				const osgx::Viewpoint&,
@@ -492,10 +634,18 @@ void bind_core(py::module_& m) {
 		osgx::ShakeCallback,
 		osg::Callback,
 		osg::ref_ptr<osgx::ShakeCallback>
-	>(m, "ShakeCallback")
+	>(
+		m,
+		"ShakeCallback",
+		"A camera shake/rumble effect layered on top of the manipulator's own view, driven by a "
+		"real osgAnimation Motion. Attach via CameraManipulator.shake() or directly via "
+		"addUpdateCameraCallback()."
+	)
 		.def(
 			py::init<double, double, osgAnimation::Motion::TimeBehaviour>(),
-			"intensity"_a, "duration"_a, "tb"_a=osgAnimation::Motion::CLAMP
+			"intensity"_a, "duration"_a, "tb"_a=osgAnimation::Motion::CLAMP,
+			"Constructs a shake of `intensity` decaying over `duration` seconds. tb=LOOP gives a "
+			"persistent repeating rumble instead of a one-shot decay."
 		)
 	;
 
@@ -515,7 +665,16 @@ void bind_core(py::module_& m) {
 	// parameter. A HookList is just `[(osgx.Hook.Tonemap, shader), ...]` in Python; no separate
 	// binding is needed for HookList itself, pybind11's stl.h vector/pair casters cover it once
 	// osgx.Hook is bound below.
-	py::enum_<osgx::Hook>(m, "Hook")
+	py::enum_<osgx::Hook>(
+		m,
+		"Hook",
+		"Shader-object substitution slots (see resolveShaderLibs()/applyHooks() and "
+		"PBRIBLScene.create()'s `hooks` parameter). Each hook REPLACES its default shader object "
+		"entirely -- GLSL permits one body per function, so attaching a second definition "
+		"alongside the built-in is a link error, not an override. Tonemap replaces "
+		"osgx_Tonemap(); Skinning replaces osgx_gltf_ApplySkin(); DirectLighting replaces "
+		"osgx_DirectLighting(); DeferredLighting replaces the entire fullscreen deferred-lighting shader."
+	)
 		.value("Tonemap", osgx::Hook::Tonemap)
 		.value("Skinning", osgx::Hook::Skinning)
 		.value("DeferredLighting", osgx::Hook::DeferredLighting)

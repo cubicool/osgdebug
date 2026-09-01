@@ -571,6 +571,7 @@ if(OSGX_BUILD_PYTHON AND Python3_Development.Module_FOUND)
 		"ext/python/osgx-shapes.cpp"
 		"ext/python/osgx-gizmos.cpp"
 		"ext/python/osgx-pixel-text.cpp"
+		"ext/python/osgx-aura.cpp"
 	)
 
 	# PUBLIC, not PRIVATE: ext/python/osgx.cpp (compiled into the separate osgx_python target

@@ -4,19 +4,40 @@
 namespace osgx_python {
 
 void bind_gbuffer(py::module_& m_gbuffer) {
-	py::enum_<osgx::AttachmentFormat>(m_gbuffer, "AttachmentFormat")
+	py::enum_<osgx::AttachmentFormat>(
+		m_gbuffer,
+		"AttachmentFormat",
+		"Texture internal-format presets for one G-buffer color attachment: RGBA8 for ordinary "
+		"LDR color/albedo, RGB16F for signed [-1,1] data (e.g. a view-space normal), RGBA16F for "
+		"HDR color that can exceed 1.0 before tonemapping, RGBA32F for real eye-space position data."
+	)
 		.value("RGBA8", osgx::AttachmentFormat::RGBA8)
 		.value("RGB16F", osgx::AttachmentFormat::RGB16F)
 		.value("RGBA16F", osgx::AttachmentFormat::RGBA16F)
 		.value("RGBA32F", osgx::AttachmentFormat::RGBA32F)
 	;
 
-	py::class_<osgx::GBuffer>(m_gbuffer, "GBuffer")
-		.def(py::init<>())
-		.def_readwrite("camera", &osgx::GBuffer::camera)
-		.def_readwrite("colorTextures", &osgx::GBuffer::colorTextures)
-		.def_readwrite("depthTexture", &osgx::GBuffer::depthTexture)
-		.def("valid", &osgx::GBuffer::valid)
+	py::class_<osgx::GBuffer>(
+		m_gbuffer,
+		"GBuffer",
+		"One populated G-buffer: `camera` is the PRE_RENDER FBO pass writing `colorTextures` "
+		"(indexed exactly as passed to create(), i.e. colorTextures[i] is COLOR_BUFFERi) plus "
+		"`depthTexture`. The caller still owns adding `camera` to the rendered scene graph."
+	)
+		.def(py::init<>(), "Constructs an empty GBuffer with no camera/textures set; see GBuffer.create().")
+		.def_readwrite(
+			"camera", &osgx::GBuffer::camera,
+			"The PRE_RENDER FBO camera performing the geometry pass; add it to the scene graph."
+		)
+		.def_readwrite(
+			"colorTextures", &osgx::GBuffer::colorTextures,
+			"The color attachments, indexed exactly as passed to create() (colorTextures[i] is COLOR_BUFFERi)."
+		)
+		.def_readwrite(
+			"depthTexture", &osgx::GBuffer::depthTexture,
+			"The real GL_DEPTH_COMPONENT24 depth attachment."
+		)
+		.def("valid", &osgx::GBuffer::valid, "True if camera and every texture were successfully built.")
 		// GBuffer::create() takes a std::span, which pybind11 has no built-in caster for -- same
 		// pattern osgx-core.cpp's findDataFile() binding uses: wrap in a lambda taking a
 		// std::vector (pybind11/stl.h converts a Python list automatically) and build the span
@@ -45,14 +66,35 @@ void bind_gbuffer(py::module_& m_gbuffer) {
 		)
 	;
 
-	py::class_<osgx::SSAO>(m_gbuffer, "SSAO")
-		.def(py::init<>())
-		.def_readwrite("rawCamera", &osgx::SSAO::rawCamera)
-		.def_readwrite("blurCamera", &osgx::SSAO::blurCamera)
-		.def_readwrite("aoTexture", &osgx::SSAO::aoTexture)
-		.def_readwrite("radius", &osgx::SSAO::radius)
-		.def_readwrite("bias", &osgx::SSAO::bias)
-		.def("valid", &osgx::SSAO::valid)
+	py::class_<osgx::SSAO>(
+		m_gbuffer,
+		"SSAO",
+		"Hemisphere-kernel screen-space ambient occlusion, operating on any G-buffer's "
+		"view-space normal+position channels. `aoTexture` (the blurred result) is a "
+		"single-channel [0, 1] mask (1.0 = fully unoccluded)."
+	)
+		.def(py::init<>(), "Constructs an empty SSAO with no cameras/textures set; see SSAO.create().")
+		.def_readwrite(
+			"rawCamera", &osgx::SSAO::rawCamera,
+			"The raw hemisphere-kernel occlusion pass, reading the G-buffer's normal/position textures directly."
+		)
+		.def_readwrite(
+			"blurCamera", &osgx::SSAO::blurCamera,
+			"The fixed-radius box-blur pass that denoises rawCamera's output into aoTexture."
+		)
+		.def_readwrite(
+			"aoTexture", &osgx::SSAO::aoTexture,
+			"The final blurred occlusion mask: single-channel GL_R8 in [0, 1], 1.0 = fully unoccluded."
+		)
+		.def_readwrite(
+			"radius", &osgx::SSAO::radius,
+			"Live-tunable sample-radius uniform; set() at any time, no pass rebuild needed."
+		)
+		.def_readwrite(
+			"bias", &osgx::SSAO::bias,
+			"Live-tunable depth-comparison bias uniform; set() at any time, no pass rebuild needed."
+		)
+		.def("valid", &osgx::SSAO::valid, "True if both cameras and aoTexture were successfully built.")
 		.def_static(
 			"create",
 			&osgx::SSAO::create,
