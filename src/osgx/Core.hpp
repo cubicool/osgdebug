@@ -152,7 +152,6 @@ T* getFirstParent(const Node* node) {
 
 // ------------------------------------------------------------------------------------------------
 namespace detail {
-
 	// Tries `name` as-is first (so absolute/relative paths and OSG_FILE_PATH both work exactly like
 	// any other osgDB::findDataFile() call), then substitutes `name` into each `{}`-style pattern
 	// in `candidates`, in order, retrying osgDB::findDataFile() on the result.
@@ -163,46 +162,6 @@ namespace detail {
 	// to a `.hdr` next to a `.ktx2`, all sharing one base name in the same data directory--so without
 	// a filter, whichever one osgDB happens to find first silently wins, which is not necessarily
 	// the one the caller actually wants.
-	/* inline std::filesystem::path findDataFileImpl(
-		std::string_view name,
-		std::span<const std::string> candidates,
-		const std::string& suffix,
-		const osgDB::Options* options
-	) {
-		const auto want = suffix.empty()
-			? std::string{}
-			: suffix.front() == '.' ? suffix : "." + suffix
-		;
-
-		auto find = [&](std::string_view candidate) -> std::filesystem::path {
-			auto found = osgDB::findDataFile(std::string(candidate), options);
-
-			OSG_INFO << "osgx::findDataFile: checking " << candidate << std::endl;
-
-			if(found.empty()) return {};
-			if(!want.empty() && std::filesystem::path(found).extension() != want) return {};
-
-			OSG_INFO << "osgx::findDataFile: found " << found << std::endl;
-
-			return found;
-		};
-
-		if(auto found = find(name); !found.empty()) return found;
-
-		for(const auto& pattern: candidates) {
-			std::string candidate = pattern;
-
-			for(std::string::size_type pos = 0;
-				(pos = candidate.find("{}", pos)) != std::string::npos;
-				pos += name.size()
-			) candidate.replace(pos, 2, name);
-
-			if(auto found = find(candidate); !found.empty()) return found;
-		}
-
-		return {};
-	} */
-
 	inline std::filesystem::path findDataFileImpl(
 		std::string_view name,
 		std::span<const std::string> candidates,

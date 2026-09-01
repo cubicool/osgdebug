@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 
-project(osgx VERSION 0.1.1)
+project(osgx VERSION 0.1.2)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -217,6 +217,7 @@ endif()
 
 add_library(osgx ${OSGX_LIBRARY_TYPE}
 	src/Array.cpp
+	src/Aura.cpp
 	src/CameraIntents.cpp
 	src/CaptureCubeMap.cpp
 	src/Debug.cpp
@@ -243,6 +244,7 @@ target_link_libraries(osgx
 )
 target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/osgx.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Aura.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Gizmos.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Grid.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/IBL.hpp>"

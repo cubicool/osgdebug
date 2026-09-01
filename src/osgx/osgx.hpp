@@ -14,6 +14,7 @@
 #include "PBR.hpp"
 #include "Shadow.hpp"
 #include "GBuffer.hpp"
+#include "Aura.hpp"
 #include "Gizmos.hpp"
 #include "IBL.hpp"
 #include "CaptureCubeMap.hpp"
