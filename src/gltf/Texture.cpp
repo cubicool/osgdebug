@@ -23,7 +23,6 @@ OSGX_ENABLE_WARNINGS
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
-#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -84,6 +83,16 @@ std::string extensionForMimeType(const std::string& mimeType) {
 	std::size_t slash = mimeType.rfind('/');
 
 	return slash == std::string::npos ? std::string() : mimeType.substr(slash + 1);
+}
+
+// Opt-in (not the default): stripping walks and copies every PNG's compressed bytes, and most
+// assets don't carry gAMA/cHRM/sRGB/iCCP chunks in the first place. Enable only for sources known
+// to ship them (e.g. the Khronos TextureEncodingTest emissive assets this was added for).
+bool wantsPNGColorMetadataStripping(const osgDB::Options* readOptions) {
+	return
+		readOptions &&
+		readOptions->getOptionString().find("gltfStripPNGColorMetadata") != std::string::npos
+	;
 }
 
 // glTF defines each texture slot's color space itself, so PNG gAMA/cHRM/sRGB/iCCP chunks must
@@ -151,7 +160,11 @@ osg::Image* decodeCompressedImage(
 
 	std::vector<unsigned char> pngWithoutColorMetadata;
 
-	if(extension == "png" && stripPNGColorMetadata(bytes, size, pngWithoutColorMetadata)) {
+	if(
+		extension == "png" &&
+		wantsPNGColorMetadataStripping(readOptions) &&
+		stripPNGColorMetadata(bytes, size, pngWithoutColorMetadata)
+	) {
 		bytes = pngWithoutColorMetadata.data();
 		size = pngWithoutColorMetadata.size();
 	}
@@ -285,18 +298,34 @@ osg::Image* TextureLoader::loadRawImage(int textureIndex) const {
 			tg3_to_string(source.uri)
 		);
 
-		if(osgDB::getLowerCaseFileExtension(path) == "png") {
-			std::ifstream file(path, std::ios::binary);
+		// The manual read+decode below only exists to route PNG bytes through
+		// stripPNGColorMetadata() before OSG's plugin sees them -- skip it (and the file-size
+		// copy it implies) entirely unless that stripping was actually requested; the plugin's
+		// own osgDB::readImageFile() is both simpler and faster for the common case.
+		if(
+			osgDB::getLowerCaseFileExtension(path) == "png" &&
+			wantsPNGColorMetadataStripping(_readOptions)
+		) {
+			std::ifstream file(path, std::ios::binary | std::ios::ate);
 
 			if(file) {
-				std::string bytes(
-					(std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>()
-				);
+				std::string bytes(static_cast<std::size_t>(file.tellg()), '\0');
+
+				file.seekg(0);
+				file.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 
 				image = decodeCompressedImage(
 					reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size(), "png", _readOptions
 				);
 				imageAlreadyFlipped = image.valid();
+
+				// decodeCompressedImage() reads via the PNG plugin's istream overload, which
+				// (unlike its filename overload -- see ReaderWriterPNG::readImage(const
+				// std::string&, ...)) never calls Image::setFileName() itself. Set it here, the
+				// one call site in this function that actually has a real path, so this branch
+				// stays indistinguishable from the osgDB::readImageFile() branch below to any
+				// caller that inspects Image::getFileName() (cache keys, diagnostics, etc.).
+				if(image) image->setFileName(path);
 			}
 		}
 

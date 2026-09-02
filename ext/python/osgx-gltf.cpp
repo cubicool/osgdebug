@@ -17,6 +17,7 @@ OSGX_DISABLE_WARNINGS
 
 #include <osg/Image>
 #include <osgDB/FileNameUtils>
+#include <osgDB/Options>
 
 #include "tiny_gltf_v3.h"
 
@@ -697,7 +698,8 @@ struct AsyncProgress {
 osg::ref_ptr<osg::Node> readNodeFile(
 	std::string location,
 	pyx::StopEvent* stop,
-	AsyncProgress* progress
+	AsyncProgress* progress,
+	const osgDB::Options* readOptions
 ) {
 	py::gil_scoped_release release;
 
@@ -722,7 +724,7 @@ osg::ref_ptr<osg::Node> readNodeFile(
 		}
 	};
 
-	auto result = reader.read(location, isBinary, nullptr, onProgress);
+	auto result = reader.read(location, isBinary, readOptions, onProgress);
 
 	if(stop && stop->stop.load(std::memory_order_relaxed)) return nullptr;
 
@@ -1195,11 +1197,15 @@ void bind_gltf(py::module_& m_gltf) {
 			"location"_a,
 			"stop_event"_a,
 			"progress"_a,
+			"options"_a=nullptr,
 			"Load a glTF/GLB file off the GIL. A plain blocking call -- run it via "
 			"asyncio.to_thread(...) from Python; see examples/pyosg_async.py's "
 			"run_with_progress() and examples/pyosg-async-gltf.py for the awaiting side. "
 			"Progress is written into `progress` (an AsyncProgress) purely through atomics, "
-			"polled rather than pushed -- this function never touches Python once it starts."
+			"polled rather than pushed -- this function never touches Python once it starts. "
+			"`options` is a plain osgDB.Options (its optionString reaches the same "
+			"gltfSkipNormals/gltfZUp/gltfSkipSpecGlossBake/gltfSkipAnimation/"
+			"gltfStripPNGColorMetadata flags osgDB.readNodeFile()'s options honor)."
 		)
 	;
 
