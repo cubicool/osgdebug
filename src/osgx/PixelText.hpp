@@ -24,9 +24,11 @@ namespace osgx {
 // ================================================================================================
 // PixelText
 //
-// A deliberately small, deliberately inflexible procedural 5x7 bitmap font - uppercase A-Z,
-// digits 0-9, space, and a handful of punctuation - for quick in-scene labels and decal text
-// until slughorn/osgSlug (the real text renderer) is wired in. Same spirit as osgx::imgui's
+// A deliberately small, deliberately inflexible procedural 5x9 bitmap font - the full printable
+// ASCII set (upper+lowercase, digits, space, and punctuation), with a 2-row descender band below
+// the baseline for lowercase g/j/p/q/y and a handful of punctuation marks (,;_|) - for quick
+// in-scene labels and decal text until slughorn/osgSlug (the real text renderer) is wired in.
+// Same spirit as osgx::imgui's
 // Widget: one "bin" covering exactly the cases actually needed, not a flexible general-purpose
 // text system - meant for fast prototyping and aipython-driven agentic development, a
 // non-ugly placeholder for something better later, not a competitor to slughorn.
@@ -62,16 +64,18 @@ class PixelText: public osg::Geometry {
 public:
 	OSGX_META_Object(osgx, PixelText)
 
-	// Every printable ASCII character this font can render, in atlas-column order. Lowercase
-	// letters fold to their uppercase glyphs.
+	// Every printable ASCII character this font can render (all 95 of them), in atlas-column
+	// order. Case-sensitive - upper- and lowercase share no glyphs.
 	static constexpr std::string_view CHARSET =
-		" ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		" ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 		"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 	;
 
-	// One glyph is GLYPH_COLS wide x GLYPH_ROWS tall, in source (unscaled) pixels.
+	// One glyph is GLYPH_COLS wide x GLYPH_ROWS tall, in source (unscaled) pixels. Rows 0-6 are
+	// the cap-height/baseline box (row 6 = baseline); rows 7-8 are the descender band, used only
+	// by lowercase g/j/p/q/y and a few punctuation marks (,;_|) that dip below the baseline.
 	static constexpr int GLYPH_COLS = 5;
-	static constexpr int GLYPH_ROWS = 7;
+	static constexpr int GLYPH_ROWS = 9;
 
 	PixelText();
 	explicit PixelText(std::string_view text, float cellSize=1.0f);
@@ -83,7 +87,7 @@ public:
 	// `multiPixelScale` (smaller, so a multi-character block still fits the same fixed cell
 	// width) sizes any cell whose string is more than one character. Throws
 	// std::invalid_argument if `cells` is empty or any entry contains a character outside
-	// CHARSET (case-insensitive - lowercase is folded to upper).
+	// CHARSET (case-sensitive - upper- and lowercase are distinct glyphs).
 	static osg::ref_ptr<osg::Image> createAtlas(
 		std::span<const std::string> cells,
 		int cellSize=64,
@@ -91,8 +95,9 @@ public:
 		int multiPixelScale=5
 	);
 
-	// Characters outside CHARSET (after uppercase-folding) render as a blank space rather than
-	// throwing - a quick/dirty label shouldn't reject a stray character.
+	// Characters outside CHARSET render as a blank space rather than throwing - a quick/dirty
+	// label shouldn't reject a stray character. Case-sensitive - upper- and lowercase are
+	// distinct glyphs.
 	void setText(std::string_view text);
 	const std::string& getText() const { return _text; }
 

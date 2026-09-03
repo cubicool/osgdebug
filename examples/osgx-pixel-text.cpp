@@ -21,8 +21,10 @@ OSGX_DISABLE_WARNINGS
 
 OSGX_ENABLE_WARNINGS
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -143,6 +145,51 @@ osg::ref_ptr<osg::Node> makeDecalCube(const osg::Vec3& center, const std::vector
 	return geode;
 }
 
+// sqrt(PixelText::CHARSET.size()) = sqrt(95) ~= 9.747 - 10 is the smallest column count that
+// fits the whole charset in a square (10x10 = 100 cells, the last row's remaining 5 cells
+// padded with blank space so every row comes out the same width).
+constexpr int CHARSET_GRID_COLUMNS = 10;
+
+// Lays out the ENTIRE osgx::PixelText::CHARSET (all 95 printable ASCII characters - the point of
+// this example, now that lowercase and descenders are real glyphs and not just uppercase-folded
+// aliases) as a square grid of PixelText rows. Anchored so the grid's TOP-RIGHT corner sits at
+// `anchor` - the same relationship the old single-line "ABCDE01234" label had to the die (its
+// right edge stopped just short of the die's left face), generalized from one row to a whole
+// square block: row 0 (starting with a space) is the row nearest `anchor`, and each following
+// row steps toward -Y (a little closer to the camera / lower on screen), so the die anchors the
+// block's near-top-right corner exactly like it anchored the end of the original single line.
+osg::ref_ptr<osg::Group> makeCharsetGrid(const osg::Vec3& anchor, float cellSize) {
+	auto group = osgx::make_ref<osg::Group>();
+	std::string_view charset = osgx::PixelText::CHARSET;
+	int rows = (static_cast<int>(charset.size()) + CHARSET_GRID_COLUMNS - 1) / CHARSET_GRID_COLUMNS;
+	float xOffset = anchor.x() - static_cast<float>(CHARSET_GRID_COLUMNS) * cellSize;
+
+	for(int r = 0; r < rows; r++) {
+		auto start = static_cast<std::size_t>(r) * static_cast<std::size_t>(CHARSET_GRID_COLUMNS);
+		auto count = std::min<std::size_t>(CHARSET_GRID_COLUMNS, charset.size() - start);
+		std::string rowText(charset.substr(start, count));
+
+		rowText.resize(static_cast<std::size_t>(CHARSET_GRID_COLUMNS), ' ');
+
+		auto label = osgx::make_ref<osgx::PixelText>(rowText, cellSize);
+		auto geode = osgx::make_ref<osg::Geode>();
+
+		geode->addDrawable(label);
+
+		auto transform = osgx::make_ref<osg::MatrixTransform>();
+
+		transform->setMatrix(osg::Matrix::translate(
+			xOffset,
+			anchor.y() - static_cast<float>(r + 1) * cellSize,
+			anchor.z()
+		));
+		transform->addChild(geode);
+		group->addChild(transform);
+	}
+
+	return group;
+}
+
 // Recomputes, every update traversal, both the HUD camera's pixel-space ortho projection and
 // the label's screen-space position from the camera's CURRENT viewport - same "recompute a
 // camera parameter live from a NodeCallback" idiom osgx::PickCameraSync already uses (see
@@ -259,15 +306,21 @@ osg::ref_ptr<osg::Camera> makeHudLabel(std::string_view text, float scale=3.0f, 
 
 int main(int, char**) {
 	auto root = osgx::make_ref<osg::Group>();
-	auto label = osgx::make_ref<osgx::PixelText>("abcde01234", 0.5f);
-	auto labelGeode = osgx::make_ref<osg::Geode>();
+	osg::Vec3 dieCenter(6.0f, 0.0f, 0.75f);
+	osg::Vec3 dieSize(1.5f, 1.5f, 1.5f);
+	float gridCellSize = 0.5f;
+	float gridMargin = 0.25f;
 
-	labelGeode->addDrawable(label);
-	root->addChild(labelGeode);
-	root->addChild(makeDecalCube(
-		osg::Vec3(6.0f, 0.0f, 0.75f),
-		{"1", "2", "3", "4", "5", "6"}
-	));
+	// Grid's top-right corner sits `gridMargin` short of the die's left face, at the die's own
+	// y-center - same gap the old single-line "ABCDE01234" label left before the die.
+	osg::Vec3 gridAnchor(
+		dieCenter.x() - dieSize.x() * 0.5f - gridMargin,
+		dieCenter.y(),
+		0.0f
+	);
+
+	root->addChild(makeCharsetGrid(gridAnchor, gridCellSize));
+	root->addChild(makeDecalCube(dieCenter, {"1", "2", "3", "4", "5", "6"}));
 
 	auto hud = makeHudLabel("LOADING");
 
