@@ -151,7 +151,6 @@ constexpr const char AURA_COMPOSITE_FRAGMENT_SHADER[] = R"GLSL(
 
 uniform sampler2D auraOriginalMask;
 uniform sampler2D auraExpanded;
-uniform sampler2D gNormal;
 uniform sampler2D gPosition;
 uniform bool auraUseGBuffer;
 uniform float auraTime;
@@ -179,19 +178,18 @@ void main() {
 		return;
 	}
 
-	vec2 sourceUV = expanded.gb;
-	vec3 sourcePosition = vec3(0.0);
-
 	if(auraUseGBuffer) {
-		sourcePosition = texture(gPosition, sourceUV).xyz;
+		// sourceDepth comes straight from Aura's own propagated depth channel (expanded.g), not a
+		// UV-driven re-lookup into gPosition -- see Aura.hpp for why that distinction matters for
+		// occlusion specifically (a separable max filter's legitimate ties are far less visible
+		// when the propagated payload is the value itself, bounded by local geometry, rather than
+		// a coordinate that can re-sample somewhere unrelated on the surface).
+		float sourceDepth = expanded.g;
 		vec3 herePosition = texture(gPosition, vUV).xyz;
 
 		// View space looks down -Z, so a larger Z is closer. Do not paint a selected object's
-		// aura across unrelated geometry in front of the selected source surface.
-		if(
-			dot(herePosition, herePosition) > 0.0001
-			&& herePosition.z > sourcePosition.z + 0.03
-		) {
+		// aura across unrelated geometry in front of the selected surface.
+		if(dot(herePosition, herePosition) > 0.0001 && herePosition.z > sourceDepth + 0.03) {
 			fragColor = vec4(0.0);
 
 			return;
@@ -327,10 +325,8 @@ osg::ref_ptr<osg::Camera> makeAuraComposite(
 	stateSet->addUniform(aura.radius);
 
 	if(gbuffer) {
-		stateSet->setTextureAttributeAndModes(2, gbuffer->colorTextures[1], osg::StateAttribute::ON);
-		stateSet->setTextureAttributeAndModes(3, gbuffer->colorTextures[2], osg::StateAttribute::ON);
-		stateSet->addUniform(new osg::Uniform("gNormal", 2));
-		stateSet->addUniform(new osg::Uniform("gPosition", 3));
+		stateSet->setTextureAttributeAndModes(2, gbuffer->colorTextures[2], osg::StateAttribute::ON);
+		stateSet->addUniform(new osg::Uniform("gPosition", 2));
 	}
 
 	timeOut = new osg::Uniform("auraTime", 0.0f);
@@ -453,13 +449,15 @@ int main(int argc, char** argv) {
 	viewer.getCamera()->setClearColor(osg::Vec4(0.025f, 0.035f, 0.07f, 1.0f));
 
 	auto selected = makeSelectedModel();
-	auto aura = osgx::Aura::create(selected, WIDTH, HEIGHT, 14);
+	auto aura = osgx::Aura::create(WIDTH, HEIGHT, 14);
 
 	if(!aura.valid()) {
 		std::cerr << "Failed to create Aura" << std::endl;
 
 		return 1;
 	}
+
+	aura.selectionCamera->addChild(selected);
 
 	auto root = osgx::make_ref<osg::Group>();
 	osg::Uniform* auraTime = nullptr;

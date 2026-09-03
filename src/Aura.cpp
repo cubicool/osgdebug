@@ -13,6 +13,8 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
+#include <array>
+#include <span>
 
 namespace osgx {
 
@@ -23,26 +25,40 @@ constexpr const char SELECTION_VERTEX_SHADER[] = R"GLSL(
 
 in vec4 osg_Vertex;
 uniform mat4 osg_ModelViewProjectionMatrix;
+uniform mat4 osg_ModelViewMatrix;
+
+out float vEyeDepth;
 
 void main() {
+	vEyeDepth = (osg_ModelViewMatrix * osg_Vertex).z;
 	gl_Position = osg_ModelViewProjectionMatrix * osg_Vertex;
 }
 )GLSL";
 
+// MRT: COLOR_BUFFER0 = originalMask (unchanged contract), COLOR_BUFFER1 = originalDepth (new).
+// One geometry pass either way -- adding a second render target here is what keeps the whole
+// pipeline at 3 passes instead of a separate depth-capture pass.
 constexpr const char SELECTION_FRAGMENT_SHADER[] = R"GLSL(
 #version 430 core
 
-out vec4 fragColor;
+in float vEyeDepth;
+
+layout(location = 0) out vec4 fragMask;
+layout(location = 1) out vec4 fragDepth;
 
 void main() {
-	fragColor = vec4(1.0);
+	fragMask = vec4(1.0);
+	fragDepth = vec4(vEyeDepth, 0.0, 0.0, 1.0);
 }
 )GLSL";
 
+// Propagates mask AND depth as VALUES through the nearest-neighbor search -- not a UV to re-sample
+// later. dilatedX layout: r=found, g=depth, b=X-distance-so-far, a=unused.
 constexpr const char DILATE_X_FRAGMENT_SHADER[] = R"GLSL(
 #version 430 core
 
 uniform sampler2D auraOriginalMask;
+uniform sampler2D auraOriginalDepth;
 uniform int auraRadius;
 
 in vec2 vUV;
@@ -58,7 +74,7 @@ void main() {
 		vec2 sourceUV = vUV - vec2(float(distance), 0.0) * texel;
 
 		if(texture(auraOriginalMask, sourceUV).r > 0.5) {
-			result = vec4(1.0, sourceUV, float(distance));
+			result = vec4(1.0, texture(auraOriginalDepth, sourceUV).r, float(distance), 0.0);
 
 			break;
 		}
@@ -66,7 +82,7 @@ void main() {
 		sourceUV = vUV + vec2(float(distance), 0.0) * texel;
 
 		if(distance != 0 && texture(auraOriginalMask, sourceUV).r > 0.5) {
-			result = vec4(1.0, sourceUV, float(distance));
+			result = vec4(1.0, texture(auraOriginalDepth, sourceUV).r, float(distance), 0.0);
 
 			break;
 		}
@@ -76,6 +92,8 @@ void main() {
 }
 )GLSL";
 
+// expanded layout: r=found, g=depth (propagated through from dilatedX, itself propagated through
+// from originalDepth), b=unused, a=Chebyshev distance in pixels.
 constexpr const char DILATE_Y_FRAGMENT_SHADER[] = R"GLSL(
 #version 430 core
 
@@ -96,11 +114,10 @@ void main() {
 		vec4 candidate = texture(auraDilatedX, vUV - vec2(0.0, float(distance)) * texel);
 
 		if(candidate.r > 0.5) {
-			float candidateDistance = max(candidate.a, float(distance));
+			float candidateDistance = max(candidate.b, float(distance));
 
 			if(candidateDistance < nearestDistance) {
-				result = candidate;
-				result.a = candidateDistance;
+				result = vec4(1.0, candidate.g, 0.0, candidateDistance);
 				nearestDistance = candidateDistance;
 			}
 		}
@@ -108,11 +125,10 @@ void main() {
 		candidate = texture(auraDilatedX, vUV + vec2(0.0, float(distance)) * texel);
 
 		if(distance != 0 && candidate.r > 0.5) {
-			float candidateDistance = max(candidate.a, float(distance));
+			float candidateDistance = max(candidate.b, float(distance));
 
 			if(candidateDistance < nearestDistance) {
-				result = candidate;
-				result.a = candidateDistance;
+				result = vec4(1.0, candidate.g, 0.0, candidateDistance);
 				nearestDistance = candidateDistance;
 			}
 		}
@@ -144,12 +160,16 @@ osg::ref_ptr<osg::Texture2D> makeTexture(
 	return texture;
 }
 
+struct DilationInput {
+	osg::Texture2D* texture;
+	const char* uniformName;
+};
+
 osg::ref_ptr<osg::Camera> makeDilationPass(
 	const char* name,
-	osg::Texture2D* input,
+	std::span<const DilationInput> inputs,
 	osg::Texture2D* output,
 	osg::Uniform* radius,
-	const char* inputUniform,
 	const char* fragmentShader,
 	int renderOrder
 ) {
@@ -180,8 +200,14 @@ osg::ref_ptr<osg::Camera> makeDilationPass(
 
 	stateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
 	stateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
-	stateSet->setTextureAttributeAndModes(0, input, osg::StateAttribute::ON);
-	stateSet->addUniform(new osg::Uniform(inputUniform, 0));
+
+	for(std::size_t i = 0; i < inputs.size(); i++) {
+		stateSet->setTextureAttributeAndModes(
+			static_cast<unsigned int>(i), inputs[i].texture, osg::StateAttribute::ON
+		);
+		stateSet->addUniform(new osg::Uniform(inputs[i].uniformName, static_cast<int>(i)));
+	}
+
 	stateSet->addUniform(radius);
 
 	return camera;
@@ -194,18 +220,20 @@ bool Aura::valid() const {
 		&& dilateXCamera.valid()
 		&& dilateYCamera.valid()
 		&& originalMask.valid()
+		&& originalDepth.valid()
 		&& dilatedX.valid()
 		&& expanded.valid()
 		&& radius.valid()
 	;
 }
 
-Aura Aura::create(osg::Node* selected, int width, int height, int radiusPixels) {
+Aura Aura::create(int width, int height, int radiusPixels) {
 	Aura result;
 
-	if(!selected || width <= 0 || height <= 0) return result;
+	if(width <= 0 || height <= 0) return result;
 
 	result.originalMask = makeTexture(width, height, GL_R8, GL_RED, GL_UNSIGNED_BYTE);
+	result.originalDepth = makeTexture(width, height, GL_R32F, GL_RED, GL_FLOAT);
 	result.dilatedX = makeTexture(width, height, GL_RGBA16F, GL_RGBA, GL_FLOAT);
 	result.expanded = makeTexture(width, height, GL_RGBA16F, GL_RGBA, GL_FLOAT);
 	result.radius = new osg::Uniform("auraRadius", std::clamp(radiusPixels, 0, 64));
@@ -224,7 +252,7 @@ Aura Aura::create(osg::Node* selected, int width, int height, int radiusPixels) 
 	result.selectionCamera->setClearColor(osg::Vec4(0.0f, 0.0f, 0.0f, 0.0f));
 	result.selectionCamera->setViewport(0, 0, width, height);
 	result.selectionCamera->attach(osg::Camera::COLOR_BUFFER0, result.originalMask);
-	result.selectionCamera->addChild(selected);
+	result.selectionCamera->attach(osg::Camera::COLOR_BUFFER1, result.originalDepth);
 
 	// A selected node commonly already owns its normal material Program. PROTECTED makes this
 	// flat mask Program authoritative for this camera without mutating that visible scene state.
@@ -232,13 +260,19 @@ Aura Aura::create(osg::Node* selected, int width, int height, int radiusPixels) 
 		program, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED
 	);
 
+	const std::array dilateXInputs = {
+		DilationInput{ result.originalMask, "auraOriginalMask" },
+		DilationInput{ result.originalDepth, "auraOriginalDepth" }
+	};
+	const std::array dilateYInputs = {
+		DilationInput{ result.dilatedX, "auraDilatedX" }
+	};
+
 	result.dilateXCamera = makeDilationPass(
-		"osgx_aura_DilateX", result.originalMask, result.dilatedX, result.radius,
-		"auraOriginalMask", DILATE_X_FRAGMENT_SHADER, 2
+		"osgx_aura_DilateX", dilateXInputs, result.dilatedX, result.radius, DILATE_X_FRAGMENT_SHADER, 2
 	);
 	result.dilateYCamera = makeDilationPass(
-		"osgx_aura_DilateY", result.dilatedX, result.expanded, result.radius,
-		"auraDilatedX", DILATE_Y_FRAGMENT_SHADER, 3
+		"osgx_aura_DilateY", dilateYInputs, result.expanded, result.radius, DILATE_Y_FRAGMENT_SHADER, 3
 	);
 
 	return result;

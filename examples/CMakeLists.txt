@@ -6,6 +6,7 @@ set(OSGX_EXAMPLES
 	"eventhandler"
 	"grid"
 	"hover"
+	"hover-aura"
 	"ibl"
 	"ktx2-skybox"
 	"lights"
@@ -26,6 +27,7 @@ endforeach()
 
 find_package(OpenGL REQUIRED)
 target_link_libraries(osgx-hover PRIVATE OpenGL::GL)
+target_link_libraries(osgx-hover-aura PRIVATE OpenGL::GL)
 target_link_libraries(osgx-picking PRIVATE OpenGL::GL)
 
 if(OSGX_BUILD_GLTF)
