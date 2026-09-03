@@ -62,9 +62,11 @@ class PixelText: public osg::Geometry {
 public:
 	OSGX_META_Object(osgx, PixelText)
 
-	// Every character this font can render, in atlas-column order.
+	// Every printable ASCII character this font can render, in atlas-column order. Lowercase
+	// letters fold to their uppercase glyphs.
 	static constexpr std::string_view CHARSET =
-		" ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-_/!?"
+		" ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 	;
 
 	// One glyph is GLYPH_COLS wide x GLYPH_ROWS tall, in source (unscaled) pixels.
