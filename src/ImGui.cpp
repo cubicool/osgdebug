@@ -2,39 +2,31 @@
 
 #ifdef OSGX_IMGUI
 
-#include <type_traits>
+#include <bit>
+#include <cstdint>
 
 namespace osgx::imgui {
 
 namespace {
 
 // ImTextureID's underlying type isn't portable across Dear ImGui versions: older
-// (and the default backend-compat) builds define it as `void*`, needing the
-// pointer-sized-integer round trip below; newer builds (system imgui on Ubuntu 26
-// among them) define it as a plain `ImU64`, for which that same reinterpret_cast
-// is ill-formed (reinterpret_cast doesn't convert between two unrelated
-// non-pointer scalar types) -- GCC 15 rejects it outright where older GCC/imgui
-// combinations tolerated it. Neither `if constexpr` on its own nor tag-dispatch
-// to a second, uncalled function template actually defers this: the cast's
-// target type (ImTextureID) is a fixed alias for the whole translation unit, so
-// it never depends on any function template's own parameter -- only the VALUE
-// being converted does. A discarded/uninstantiated branch only skips checking
-// when the branch's own type (not just the governing condition) depends on a
-// template parameter; a value-dependent-but-type-non-dependent cast is checked
-// at template-parse time regardless. The fix is to make the cast's destination
-// type itself the dependent parameter, by threading it through explicitly.
-template<typename Dest, typename T>
-Dest castToTextureID(T id) {
-	if constexpr(std::is_pointer_v<Dest>) {
-		return reinterpret_cast<Dest>(static_cast<std::intptr_t>(id));
-	}
-
-	else return static_cast<Dest>(id);
-}
-
+// (and the default backend-compat) builds define it as `void*`; newer builds
+// (system imgui on Ubuntu 26 among them) define it as a plain `ImU64`. A single
+// std::bit_cast handles both uniformly -- no reinterpret_cast, no if constexpr,
+// no template-dependency games -- since it doesn't care whether the destination
+// is a pointer or an integer, only that the sizes match. Requires
+// sizeof(ImTextureID) == sizeof(std::uintptr_t), true whenever ImTextureID is a
+// pointer (by definition) and true for ImU64 on any 64-bit target; this project
+// doesn't support 32-bit builds, so the static_assert exists purely to turn a
+// hypothetical mismatch into a clear error instead of a bit_cast SFINAE wall.
 template<typename T>
 ImTextureID toTextureID(T id) {
-	return castToTextureID<ImTextureID>(id);
+	static_assert(
+		sizeof(ImTextureID) == sizeof(std::uintptr_t),
+		"ImTextureID must be pointer-sized (no 32-bit support)"
+	);
+
+	return std::bit_cast<ImTextureID>(static_cast<std::uintptr_t>(id));
 }
 
 }
