@@ -24,10 +24,16 @@ void bind_shadow(py::module_& m_shadow) {
 	m_shadow.def(
 		"makeShadowedDirectLightingHookShader",
 		[]() {
-			return osg::ref_ptr<osg::Shader>(new osg::Shader(
+			auto* shader = new osg::Shader(
 				osg::Shader::FRAGMENT,
 				osgx::resolveShaderLibs(std::string(osgx::DIRECT_LIGHTING_HOOK_SHADOWED))
-			));
+			);
+
+			// Same bare role name as osgx.pbr.makeDirectLightingHookShader() -- this fills the
+			// same logical slot, just with the shadowed implementation.
+			shader->setName("directLightingHook");
+
+			return osg::ref_ptr<osg::Shader>(shader);
 		},
 		"Builds the osgx_DirectLighting() CONTRACT's shadowed-definition FRAGMENT shader object -- "
 		"same contract as osgx.pbr.makeDirectLightingHookShader(), but the light at "

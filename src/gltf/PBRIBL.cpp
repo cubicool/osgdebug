@@ -963,24 +963,38 @@ PBRIBLScene PBRIBLScene::create(
 	shader::configureProgram(*prog);
 
 	prog->setName("osgx_gltf_PBRIBLScene");
-	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
 
-	prog->addShader(new osg::Shader(
+	auto* vertexShader = new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER);
+
+	vertexShader->setName(prog->getName() + ".vertex");
+	prog->addShader(vertexShader);
+
+	auto* fragmentShader = new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::FULL_PBR_FRAGMENT_SHADER_SRC)
-	));
+	);
+
+	fragmentShader->setName(prog->getName() + ".fragment");
+	prog->addShader(fragmentShader);
+
 	// osgx_DirectLighting() CONTRACT's definition -- a second, separately compiled FRAGMENT shader
 	// object with no main() of its own; GLSL cross-shader-object linking resolves the
 	// FULL_PBR_FRAGMENT_SHADER_SRC's forward-declared osgx_DirectLighting() call against this at
 	// Program-link time. See PBR.hpp's DIRECT_LIGHTING_DECL/DIRECT_LIGHTING_HOOK_DEFAULT comment.
 	// `shadowMap` swaps in the shadowed variant (Shadow.hpp's DIRECT_LIGHTING_HOOK_SHADOWED) --
-	// same contract/call signature, so nothing else in this shader changes either way.
-	prog->addShader(new osg::Shader(
+	// same contract/call signature, so nothing else in this shader changes either way. Not routed
+	// through applyHooks() (unlike Skinning/Tonemap just below) -- `shadowMap` picks between two
+	// built-ins directly, there's no caller-override HookList slot for it here -- so it needs its
+	// own explicit setName() rather than picking one up from applyHooks() automatically.
+	auto* directLightingShader = new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(
 			shadowMap ? osgx::DIRECT_LIGHTING_HOOK_SHADOWED : osgx::DIRECT_LIGHTING_HOOK_DEFAULT
 		)
-	));
+	);
+
+	directLightingShader->setName(prog->getName() + ".directLightingHook");
+	prog->addShader(directLightingShader);
 	// osgx_gltf_ApplySkin()/osgx_Tonemap() CONTRACTS' default definitions -- each a separately
 	// compiled shader object with no main() of its own. See PBR.hpp's TONEMAP_DECL/
 	// TONEMAP_HOOK_DEFAULT comment and Shader.hpp's SKINNING_HOOK_IDENTITY/SKINNING_HOOK_LINEAR_BLEND
@@ -1092,20 +1106,35 @@ PBRIBLGBuffer PBRIBLGBuffer::create(osg::Node* node, int width, int height) {
 	shader::configureProgram(*prog);
 
 	prog->setName("osgx_gltf_PBRIBLGeometryPass");
-	prog->addShader(new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER));
+
+	auto* vertexShader = new osg::Shader(osg::Shader::VERTEX, detail::FULL_PBR_VERTEX_SHADER);
+
+	vertexShader->setName(prog->getName() + ".vertex");
+	prog->addShader(vertexShader);
+
 	// osgx_gltf_ApplySkin() CONTRACT's default (identity) definition -- FULL_PBR_VERTEX_SHADER
 	// always calls this hook now (see PBRIBLScene::create()'s own comment for the full mechanism).
 	// This geometry pass doesn't expose a `hooks` parameter of its own yet (see TODO.md), so it
 	// always gets the passthrough -- a skinned model through the deferred split still animates
-	// its joint transforms/gizmos correctly, it just won't deform the G-buffer mesh yet.
-	prog->addShader(new osg::Shader(
+	// its joint transforms/gizmos correctly, it just won't deform the G-buffer mesh yet. Not
+	// routed through applyHooks() (no `hooks` parameter here to substitute it), hence the
+	// explicit setName() rather than picking one up automatically the way PBRIBLScene::create()'s
+	// own Skinning/Tonemap hooks do.
+	auto* skinningShader = new osg::Shader(
 		osg::Shader::VERTEX,
 		resolveShaderLibs(shader::SKINNING_HOOK_IDENTITY)
-	));
-	prog->addShader(new osg::Shader(
+	);
+
+	skinningShader->setName(prog->getName() + ".skinningHook");
+	prog->addShader(skinningShader);
+
+	auto* fragmentShader = new osg::Shader(
 		osg::Shader::FRAGMENT,
 		resolveShaderLibs(detail::GBUFFER_FRAGMENT_SHADER_SRC)
-	));
+	);
+
+	fragmentShader->setName(prog->getName() + ".fragment");
+	prog->addShader(fragmentShader);
 
 	auto* ss = node->getOrCreateStateSet();
 
@@ -1171,7 +1200,11 @@ PBRIBLLightingScene PBRIBLLightingScene::create(
 	auto prog = osgx::make_ref<osg::Program>();
 
 	prog->setName("osgx_gltf_PBRIBLLightingPass");
-	prog->addShader(new osg::Shader(osg::Shader::VERTEX, osgx::FULLSCREEN_VERT));
+
+	auto* vertexShader = new osg::Shader(osg::Shader::VERTEX, osgx::FULLSCREEN_VERT);
+
+	vertexShader->setName(prog->getName() + ".vertex");
+	prog->addShader(vertexShader);
 
 	// EXACTLY ONE definition each of osgx_DirectLighting(), osgx_Tonemap(), and main() (the
 	// DeferredLighting slot), always -- never zero, never two. applyHooks() (Shader.hpp) enforces

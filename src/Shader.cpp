@@ -96,6 +96,27 @@ void registerShaderLibs(std::string_view namespaceName, std::span<const ShaderLi
 	}
 }
 
+namespace {
+
+// "<programName>.<hookName>Hook" is applyHooks()'s own half of the "<programName>.<role>" shader-
+// naming convention every osgx Program-builder follows (see PBRIBL.cpp/IBL.cpp's plain
+// setName() calls for the other half, on shaders that aren't hook slots) -- so a shader shows up
+// meaningfully in introspection/debug UIs (e.g. pyside6-glsl.py's tree/tab view) instead of a
+// bare "VERTEX"/"FRAGMENT". Kept here, next to the enum, so a new Hook value can't be added
+// without this switch failing to compile silently-wrong (no default: case).
+std::string hookName(Hook hook) {
+	switch(hook) {
+		case Hook::Tonemap: return "tonemapHook";
+		case Hook::Skinning: return "skinningHook";
+		case Hook::DeferredLighting: return "deferredLightingHook";
+		case Hook::DirectLighting: return "directLightingHook";
+	}
+
+	return "hook";
+}
+
+}
+
 bool hasHook(const HookList& hooks, Hook hook) {
 	return std::any_of(hooks.begin(), hooks.end(), [hook](const auto& entry) { return entry.first == hook; });
 }
@@ -106,7 +127,13 @@ void applyHooks(osg::Program* program, const HookList& hooks, const HookList& de
 			return entry.first == hook;
 		});
 
-		program->addShader(found != hooks.end() ? found->second : defaultShader);
+		osg::Shader* chosen = (found != hooks.end() ? found->second : defaultShader).get();
+
+		// Only when unnamed -- never clobber a name a caller deliberately gave their own
+		// substituted (hooks-supplied) shader.
+		if(chosen->getName().empty()) chosen->setName(program->getName() + "." + hookName(hook));
+
+		program->addShader(chosen);
 	}
 
 	for(const auto& [hook, shader] : hooks) {

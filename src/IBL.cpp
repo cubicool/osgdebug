@@ -61,8 +61,15 @@ osg::ref_ptr<osg::Camera> makeBRDFLUTCamera(int lutSize, osg::Texture2D* lut) {
 	auto prog = make_ref<osg::Program>();
 
 	prog->setName("osgx_ibl_brdfLutBake");
-	prog->addShader(new osg::Shader(osg::Shader::VERTEX, FULLSCREEN_VERT));
-	prog->addShader(new osg::Shader(osg::Shader::FRAGMENT, BRDF_LUT_FRAG));
+
+	auto* vertexShader = new osg::Shader(osg::Shader::VERTEX, FULLSCREEN_VERT);
+	auto* fragmentShader = new osg::Shader(osg::Shader::FRAGMENT, BRDF_LUT_FRAG);
+
+	vertexShader->setName(prog->getName() + ".vertex");
+	fragmentShader->setName(prog->getName() + ".fragment");
+
+	prog->addShader(vertexShader);
+	prog->addShader(fragmentShader);
 
 	auto quad = osg::createTexturedQuadGeometry(
 		osg::Vec3(-1, -1, 0), osg::Vec3(2, 0, 0), osg::Vec3(0, 2, 0)

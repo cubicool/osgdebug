@@ -112,10 +112,19 @@ void bind_pbr(py::module_& m_pbr) {
 	m_pbr.def(
 		"makeDirectLightingHookShader",
 		[]() {
-			return osg::ref_ptr<osg::Shader>(new osg::Shader(
+			auto* shader = new osg::Shader(
 				osg::Shader::FRAGMENT,
 				osgx::resolveShaderLibs(std::string(osgx::DIRECT_LIGHTING_HOOK_DEFAULT))
-			));
+			);
+
+			// No Program exists yet at this call site (unlike applyHooks(), which knows
+			// program->getName() and can prefix with it) -- a bare role name is the best this
+			// convenience function can do on its own; a caller with more context is always free
+			// to overwrite shader.name afterward. See osgx::applyHooks()'s own naming (Shader.cpp)
+			// for the "<programName>.<role>" convention this deliberately matches the tail of.
+			shader->setName("directLightingHook");
+
+			return osg::ref_ptr<osg::Shader>(shader);
 		},
 		"Builds the osgx_DirectLighting() CONTRACT's default-definition FRAGMENT shader object -- "
 		"add it to a Program alongside a consumer fragment shader that only declares "
@@ -128,10 +137,14 @@ void bind_pbr(py::module_& m_pbr) {
 	m_pbr.def(
 		"makeAmbientLightingHookShader",
 		[]() {
-			return osg::ref_ptr<osg::Shader>(new osg::Shader(
+			auto* shader = new osg::Shader(
 				osg::Shader::FRAGMENT,
 				osgx::resolveShaderLibs(std::string(osgx::AMBIENT_LIGHTING_HOOK_DEFAULT))
-			));
+			);
+
+			shader->setName("ambientLightingHook");
+
+			return osg::ref_ptr<osg::Shader>(shader);
 		},
 		"Builds the osgx_AmbientLighting() CONTRACT's default-definition FRAGMENT shader object "
 		"(specular-only IBL, via osgx_IBLSpecular) -- add it to a Program alongside a consumer "
@@ -143,10 +156,14 @@ void bind_pbr(py::module_& m_pbr) {
 	m_pbr.def(
 		"makeTonemapHookShader",
 		[]() {
-			return osg::ref_ptr<osg::Shader>(new osg::Shader(
+			auto* shader = new osg::Shader(
 				osg::Shader::FRAGMENT,
 				osgx::resolveShaderLibs(std::string(osgx::TONEMAP_HOOK_DEFAULT))
-			));
+			);
+
+			shader->setName("tonemapHook");
+
+			return osg::ref_ptr<osg::Shader>(shader);
 		},
 		"Builds the osgx_Tonemap() CONTRACT's default-definition FRAGMENT shader object "
 		"(osgx_TonemapPBRNeutral) -- add it to a Program alongside a consumer fragment shader "
