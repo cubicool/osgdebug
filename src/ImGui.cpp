@@ -14,16 +14,27 @@ namespace {
 // among them) define it as a plain `ImU64`, for which that same reinterpret_cast
 // is ill-formed (reinterpret_cast doesn't convert between two unrelated
 // non-pointer scalar types) -- GCC 15 rejects it outright where older GCC/imgui
-// combinations tolerated it. `if constexpr` picks the right conversion for
-// whichever ImTextureID this translation unit was compiled against, so this
-// builds clean either way with no version-detection macros.
-template<typename T>
-ImTextureID toTextureID(T id) {
-	if constexpr(std::is_pointer_v<ImTextureID>) {
-		return reinterpret_cast<ImTextureID>(static_cast<std::intptr_t>(id));
+// combinations tolerated it. Neither `if constexpr` on its own nor tag-dispatch
+// to a second, uncalled function template actually defers this: the cast's
+// target type (ImTextureID) is a fixed alias for the whole translation unit, so
+// it never depends on any function template's own parameter -- only the VALUE
+// being converted does. A discarded/uninstantiated branch only skips checking
+// when the branch's own type (not just the governing condition) depends on a
+// template parameter; a value-dependent-but-type-non-dependent cast is checked
+// at template-parse time regardless. The fix is to make the cast's destination
+// type itself the dependent parameter, by threading it through explicitly.
+template<typename Dest, typename T>
+Dest castToTextureID(T id) {
+	if constexpr(std::is_pointer_v<Dest>) {
+		return reinterpret_cast<Dest>(static_cast<std::intptr_t>(id));
 	}
 
-	else return static_cast<ImTextureID>(id);
+	else return static_cast<Dest>(id);
+}
+
+template<typename T>
+ImTextureID toTextureID(T id) {
+	return castToTextureID<ImTextureID>(id);
 }
 
 }

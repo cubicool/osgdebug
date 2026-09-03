@@ -87,6 +87,20 @@ struct PBRIBLEnvironment {
 	// actually run a few frames.
 	static PBRIBLEnvironment prepare(const std::string& hdrPath, int lutSize=1024);
 
+	// Same as prepare(), but never bakes a GGX-prefiltered specular cubemap from `hdrPath` at all
+	// -- for a caller whose specular reflection ALWAYS comes from somewhere else (a live
+	// procedural rebake, e.g. examples/lighting/10-dynamicprobes.py) and would otherwise pay for a
+	// real HDR-sourced GGX prefilter bake only to discard it before a single frame samples it.
+	// `envMap` still comes back as a small, valid, immediately-bindable placeholder cubemap (same
+	// filter/wrap/format setup GGXPrefilterScene's own prefilterTexture uses) -- PBRIBLScene::create()
+	// unconditionally binds environment.envMap to a texture unit, so this keeps that bind
+	// well-defined -- but its content is never populated by this call. The caller supplies the
+	// real content itself, by binding a separately-owned osgx::GGXPrefilterScene's own
+	// prefilterTexture onto the same texture unit (5) PBRIBLScene::create() bound this placeholder
+	// to. `root`/diffuseBakeRoot/lutCamera behave exactly as in prepare() (diffuse + LUT still
+	// bake for real); there is no specularBakeRoot.
+	static PBRIBLEnvironment prepareDiffuseOnly(const std::string& hdrPath, int lutSize=1024);
+
 	// Static/pre-baked path: loads specular + diffuse cubemaps as KTX2. A URI BRDF LUT is loaded
 	// as a plain image; a recognized built-in BRDF LUT is shared and baked once per process/size.
 	// The latter supplies a preparation root on its first use. `manifest`'s relative URIs resolve

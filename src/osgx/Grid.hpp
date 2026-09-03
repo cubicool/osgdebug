@@ -48,7 +48,7 @@ public:
 	GridSettings();
 	GridSettings(const GridSettings& settings, const osg::CopyOp& copyop=osg::CopyOp::SHALLOW_COPY);
 
-	META_StateAttribute(osgx, GridSettings, GRID_SETTINGS_TYPE)
+	OSGX_META_StateAttribute(osgx, GridSettings, GRID_SETTINGS_TYPE)
 
 	unsigned int getMember() const override { return GRID_SETTINGS_MEMBER; }
 	int compare(const osg::StateAttribute& sa) const override;

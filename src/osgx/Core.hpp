@@ -39,6 +39,15 @@ OSGX_ENABLE_WARNINGS
 	const char* libraryName() const override { return #library; }\
 	const char* className() const override { return #name; }
 
+// The same as `META_StateAttribute` but updated for modern C++ warnings.
+#define OSGX_META_StateAttribute(library,name,type) \
+	osg::Object* cloneType() const override { return new name(); } \
+	osg::Object* clone(const osg::CopyOp& copyop) const override { return new name (*this,copyop); } \
+	bool isSameKindAs(const osg::Object* obj) const override { return dynamic_cast<const name *>(obj)!=NULL; } \
+	const char* libraryName() const override { return #library; } \
+	const char* className() const override { return #name; } \
+	Type getType() const override { return type; }
+
 namespace osgx {
 
 // ------------------------------------------------------------------------------------------------

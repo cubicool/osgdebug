@@ -234,8 +234,15 @@ int LightSet::compare(const osg::StateAttribute& sa) const {
 }
 
 void LightSet::apply(osg::State& state) const {
+	// osgx_lightCount is NOT pushed as a uniform at all -- see LIGHT_UNIFORMS/DIRECT_LIGHTING_HOOK_
+	// DEFAULT's own history comment (PBR.hpp) for why two different ways of doing that (OSG's
+	// deprecated applyShaderCompositionUniform() stash, then a direct getLastAppliedProgramObject()
+	// push) both turned out unreliable -- the second broke the moment ANY Program elsewhere in the
+	// same frame used StateAttribute::OVERRIDE (osgx::gltf::pbribl::PBRIBLScene::create() included),
+	// confirmed via a live repro 2026-09-03. The shader loop now reads a compile-time OSGX_MAX_LIGHTS
+	// bound instead, gated per-light by `enabled` -- data that already lives in the SSBO this single
+	// applyAttribute() call binds, so it needs no separate, Program-targeted push at all.
 	state.applyAttribute(_binding.get());
-	state.applyShaderCompositionUniform(_lightCount.get());
 }
 
 bool LightSet::valid() const {
@@ -343,11 +350,21 @@ void LightSet::setSpot(
 	_lights->dirty();
 }
 
-void LightSet::setCount(int count) const {
+void LightSet::setCount(std::size_t count) const {
 	if(!valid()) throw std::logic_error("LightSet is invalid");
-	if(count < 0 || count > MAX_LIGHTS) throw std::out_of_range("LightSet count out of range");
+	if(count > static_cast<std::size_t>(MAX_LIGHTS)) throw std::out_of_range("LightSet count out of range");
 
-	_lightCount->set(count);
+	// _lightCount itself is no longer read by the shader (see DIRECT_LIGHTING_HOOK_DEFAULT's own
+	// history comment, PBR.hpp) -- kept only as this object's own CPU-side bookkeeping for
+	// getCount(). What the shader actually honors is each light's `enabled` flag, so setCount()
+	// disables every slot this new count no longer covers -- preserving the existing
+	// setCount(0)-disables-everything behavior every caller relies on (e.g. a --no-lights CLI
+	// flag) -- without touching slots still in range, which stay however setPoint()/
+	// setDirectional()/setSpot()/setEnabled() last left them; setCount() only ever narrows what's
+	// active, it never (re-)enables anything on its own.
+	_lightCount->set(static_cast<int>(count));
+
+	for(auto i = count; i < static_cast<std::size_t>(MAX_LIGHTS); i++) setEnabled(i, false);
 }
 
 void LightSet::setEnabled(std::size_t index, bool enabled) const {

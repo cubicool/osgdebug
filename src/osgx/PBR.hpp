@@ -180,7 +180,7 @@ class Material : public osg::StateAttribute {
 		Material();
 		Material(const Material& material, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
 
-		META_StateAttribute(osgx, Material, MATERIAL_TYPE)
+		OSGX_META_StateAttribute(osgx, Material, MATERIAL_TYPE)
 
 		int compare(const osg::StateAttribute& sa) const override;
 		void apply(osg::State& state) const override;
@@ -532,7 +532,17 @@ const float PI = 3.14159265359;
 vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 	vec3 color = vec3(0.0);
 
-	for(int i = 0; i < osgx_lightCount; i++) {
+	// Loop OSGX_MAX_LIGHTS (a compile-time constant), gated solely by each light's own `enabled`
+	// flag -- NOT osgx_lightCount (an SSBO-adjacent uniform LightSet::apply() used to push via
+	// osg::State::applyShaderCompositionUniform()/direct getLastAppliedProgramObject() push,
+	// see LightSet::apply()'s own history comment). Both were confirmed unreliable whenever a
+	// DIFFERENT Program elsewhere in the same frame (a sibling subgraph, even) uses
+	// StateAttribute::OVERRIDE -- e.g. osgx::gltf::pbribl::PBRIBLScene::create()'s own Program
+	// attachment -- silently zeroing direct lighting for every OTHER Program sharing this
+	// LightSet. `enabled` travels on the SAME SSBO binding the light data itself does
+	// (state.applyAttribute(), never State's separate/unreliable uniform-push machinery), so it
+	// has none of that fragility.
+	for(int i = 0; i < OSGX_MAX_LIGHTS; i++) {
 		osgx_Light light = osgx_lights[i];
 
 		if(light.enabled == 0) continue;
@@ -791,7 +801,7 @@ struct LightSet: public osg::StateAttribute {
 	LightSet();
 	LightSet(const LightSet& lights, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
 
-	META_StateAttribute(osgx, LightSet, LIGHT_SET_TYPE)
+	OSGX_META_StateAttribute(osgx, LightSet, LIGHT_SET_TYPE)
 
 	unsigned int getMember() const override { return LIGHT_SET_MEMBER; }
 	int compare(const osg::StateAttribute& sa) const override;
@@ -840,7 +850,7 @@ struct LightSet: public osg::StateAttribute {
 	) const;
 
 	// `count` must be in [0, MAX_LIGHTS]; otherwise throws std::out_of_range.
-	void setCount(int count) const;
+	void setCount(std::size_t count) const;
 
 	// Enables or disables an already configured light without changing its data. Typed setup
 	// methods enable their slot, so the established setCount()+setPoint()/setDirectional()/setSpot()

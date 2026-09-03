@@ -18,12 +18,18 @@ OSGX_ENABLE_WARNINGS
 
 OSGX_DISABLE_WARNINGS
 
+#include <osg/GL>
 #include <osg/Image>
 #include <osg/Notify>
 #include <osg/Program>
 #include <osg/Shader>
 #include <osg/StateSet>
+#include <osg/TextureCubeMap>
 #include <osgDB/ReadFile>
+
+#ifndef GL_RGB32F
+#  define GL_RGB32F 0x8815
+#endif
 
 OSGX_ENABLE_WARNINGS
 
@@ -707,6 +713,49 @@ PBRIBLEnvironment PBRIBLEnvironment::prepare(const std::string& hdrPath, int lut
 
 	environment.root->addChild(environment.diffuseBakeRoot);
 	environment.root->addChild(environment.specularBakeRoot);
+
+	return environment;
+}
+
+// See this method's own header comment (PBRIBL.hpp) -- identical to prepare() except it never
+// constructs a GGXPrefilterScene at all, so hdrPath's specular content is never GPU-baked.
+PBRIBLEnvironment PBRIBLEnvironment::prepareDiffuseOnly(const std::string& hdrPath, int lutSize) {
+	PBRIBLEnvironment environment;
+
+	auto hdrImage = osgDB::readRefImageFile(hdrPath);
+
+	if(!hdrImage) return environment;
+
+	auto lut = osgx::SharedBRDFLUT::create(lutSize);
+
+	environment.brdfLUT = lut.texture;
+	environment.lutCamera = lut.camera;
+
+	auto diffuseBake = osgx::LambertianBakeScene::create(hdrImage);
+
+	environment.diffuseBakeRoot = diffuseBake.root;
+	environment.diffuseEnv = diffuseBake.diffuseTexture;
+
+	// Placeholder only -- see this method's own header comment for why envMap still needs to be a
+	// valid, bindable texture despite never being baked here. 1x1 is enough: nothing samples it
+	// before the caller's own live bake replaces it on texture unit 5.
+	auto* placeholder = new osg::TextureCubeMap();
+
+	placeholder->setTextureSize(1, 1);
+	placeholder->setInternalFormat(GL_RGB32F);
+	placeholder->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+	placeholder->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	placeholder->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	placeholder->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+	placeholder->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+
+	environment.envMap = placeholder;
+
+	environment.root = osgx::make_ref<osg::Group>();
+
+	if(environment.lutCamera) environment.root->addChild(environment.lutCamera);
+
+	environment.root->addChild(environment.diffuseBakeRoot);
 
 	return environment;
 }

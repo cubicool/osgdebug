@@ -858,6 +858,20 @@ void bind_gltf(py::module_& m_gltf) {
 			"PRE_RENDER passes can populate the generated textures."
 		)
 		.def_static(
+			"prepareDiffuseOnly",
+			py::overload_cast<const std::string&, int>(
+				&osgx::gltf::pbribl::PBRIBLEnvironment::prepareDiffuseOnly
+			),
+			"hdrPath"_a,
+			"lutSize"_a=1024,
+			"Same as prepare(), but never GGX-prefilters a specular cubemap from hdrPath -- for a "
+			"caller whose specular reflection always comes from somewhere else (e.g. a live "
+			"procedural rebake) and would otherwise pay for a real bake only to discard it before "
+			"it's ever sampled. envMap comes back as a small, valid, unbaked placeholder; supply "
+			"real content yourself by binding your own GGXPrefilterScene's prefilterTexture onto "
+			"the same texture unit (5) PBRIBLScene.create() bound this placeholder to."
+		)
+		.def_static(
 			"load",
 			py::overload_cast<const std::string&>(&osgx::gltf::pbribl::PBRIBLEnvironment::load),
 			"manifestPath"_a,

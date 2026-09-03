@@ -207,7 +207,9 @@ vec3 osgx_DirectLighting(vec3 N, vec3 V, vec3 worldPos, osgx_Material mat) {
 	vec3 color = vec3(0.0);
 	float shadow = osgx_ShadowFactor(worldPos);
 
-	for(int i = 0; i < osgx_lightCount; i++) {
+	// See PBR.hpp's DIRECT_LIGHTING_HOOK_DEFAULT for why this loops the compile-time
+	// OSGX_MAX_LIGHTS bound gated by `enabled`, not the formerly-pushed osgx_lightCount uniform.
+	for(int i = 0; i < OSGX_MAX_LIGHTS; i++) {
 		osgx_Light light = osgx_lights[i];
 
 		if(light.enabled == 0) continue;
