@@ -88,11 +88,28 @@ public:
 	// width) sizes any cell whose string is more than one character. Throws
 	// std::invalid_argument if `cells` is empty or any entry contains a character outside
 	// CHARSET (case-sensitive - upper- and lowercase are distinct glyphs).
+	//
+	// cellSize's default, (GLYPH_ROWS + 2) * pixelScale's default, leaves exactly one glyph-row
+	// of margin above and below a full-height (GLYPH_ROWS * pixelScale tall) block - keep this in
+	// sync if either default changes, or a full-height cell stops being centered with a visible
+	// margin and instead touches the cell's top/bottom edge.
+	//
+	// verticallyCentered=true (the default) centers each cell's block against the ACTUAL ink rows
+	// its own characters use (e.g. digits/uppercase only ever fill rows 0-6, never the rows 7-8
+	// descender band), not the fixed GLYPH_ROWS - so a cell holding only characters that never
+	// dip into the descender band renders identically to how the pre-descender-band 7-row font
+	// centered it, without needing to know in advance whether a given cell's content has
+	// descenders. Pass false for the old fixed-GLYPH_ROWS behavior, needed by the shared
+	// whole-charset atlas PixelText itself renders from - see createCharsetAtlas() in
+	// PixelText.cpp for why: every glyph there must sit on one shared baseline across the WHOLE
+	// charset, not center independently per glyph, or a string mixing e.g. "A" and "q" would show
+	// each letter floating to its own vertical middle instead of sharing a baseline.
 	static osg::ref_ptr<osg::Image> createAtlas(
 		std::span<const std::string> cells,
-		int cellSize=64,
+		int cellSize=77,
 		int pixelScale=7,
-		int multiPixelScale=5
+		int multiPixelScale=5,
+		bool verticallyCentered=true
 	);
 
 	// Characters outside CHARSET render as a blank space rather than throwing - a quick/dirty

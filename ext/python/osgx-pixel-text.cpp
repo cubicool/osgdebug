@@ -46,16 +46,22 @@ void bind_pixel_text(py::module_& m) {
 				const std::vector<std::string>& cells,
 				int cellSize,
 				int pixelScale,
-				int multiPixelScale
+				int multiPixelScale,
+				bool verticallyCentered
 			) {
-				return osgx::PixelText::createAtlas(cells, cellSize, pixelScale, multiPixelScale);
+				return osgx::PixelText::createAtlas(
+					cells, cellSize, pixelScale, multiPixelScale, verticallyCentered
+				);
 			},
 			"cells"_a,
-			"cellSize"_a=64,
+			"cellSize"_a=77,
 			"pixelScale"_a=7,
 			"multiPixelScale"_a=5,
+			"verticallyCentered"_a=true,
 			"One atlas cell per entry in `cells`, each string centered within its own cell - for "
-			"decal-style use (pyosg_dice.py calls this directly per die face)."
+			"decal-style use (pyosg_dice.py calls this directly per die face). verticallyCentered "
+			"(default True) centers each cell against the actual ink rows its own characters use "
+			"(e.g. digits never dip into the descender band) rather than the font's full height."
 		)
 		.def_property(
 			"text", &osgx::PixelText::getText, &osgx::PixelText::setText,

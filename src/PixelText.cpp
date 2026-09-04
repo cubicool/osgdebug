@@ -15,6 +15,7 @@ OSGX_ENABLE_WARNINGS
 #include <array>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 namespace osgx {
 
@@ -192,6 +193,38 @@ void stampGlyph(
 	}
 }
 
+// The tightest [minRow, maxRow] (inclusive) band of rows that actually carry ink across every
+// character in `value` - the shared row range createAtlas() centers a cell's block against when
+// verticallyCentered is true, so e.g. an all-digit cell (ink only in rows 0-6) centers exactly
+// like the pre-descender-band 7-row font did, while a cell mixing ascenders/descenders (e.g.
+// "Aq") still gives every character in it one shared baseline instead of each centering on its
+// own. Falls back to the full glyph height if `value` is empty or every character in it is blank
+// (e.g. an all-space cell) - nothing gets drawn either way, so the exact fallback range is moot,
+// but minRow must not end up greater than maxRow.
+std::pair<int, int> inkRowExtent(const std::string& value) {
+	int minRow = PixelText::GLYPH_ROWS;
+	int maxRow = -1;
+
+	for(char c : value) {
+		auto it = glyphTable().find(normalizeChar(c));
+
+		if(it == glyphTable().end()) continue;
+
+		const Glyph& glyph = it->second;
+
+		for(int row = 0; row < PixelText::GLYPH_ROWS; row++) {
+			if(glyph[static_cast<std::size_t>(row)].find('#') == std::string_view::npos) continue;
+
+			minRow = std::min(minRow, row);
+			maxRow = std::max(maxRow, row);
+		}
+	}
+
+	if(maxRow < minRow) return {0, PixelText::GLYPH_ROWS - 1};
+
+	return {minRow, maxRow};
+}
+
 // One glyph per cell, in PixelText::CHARSET order - the whole-charset atlas
 // PixelText::_atlasTexture() wraps. Private: PixelText::createAtlas() (arbitrary cell lists,
 // for decal-style use) is the one public "give me an atlas" entry point; nothing outside this
@@ -208,7 +241,11 @@ osg::ref_ptr<osg::Image> createCharsetAtlas(int pixelScale=7) {
 	// glyph block is only GLYPH_COLS * pixelScale wide but GLYPH_ROWS * pixelScale tall, and
 	// using the narrower dimension here would silently clip every glyph's top and bottom row.
 	// multiPixelScale never comes into play regardless (every cell has exactly one character).
-	return PixelText::createAtlas(cells, PixelText::GLYPH_ROWS * pixelScale, pixelScale, pixelScale);
+	// verticallyCentered=false: every glyph must sit on the same shared baseline across the whole
+	// charset - see createAtlas()'s docstring in PixelText.hpp.
+	return PixelText::createAtlas(
+		cells, PixelText::GLYPH_ROWS * pixelScale, pixelScale, pixelScale, false
+	);
 }
 
 // Binding point for PixelText's per-glyph index SSBO. Kept alongside osgx::LIGHT_BINDING (3, in
@@ -294,7 +331,8 @@ osg::ref_ptr<osg::Image> PixelText::createAtlas(
 	std::span<const std::string> cells,
 	int cellSize,
 	int pixelScale,
-	int multiPixelScale
+	int multiPixelScale,
+	bool verticallyCentered
 ) {
 	if(cells.empty()) throw std::invalid_argument("osgx::PixelText::createAtlas: cells must not be empty");
 
@@ -318,9 +356,17 @@ osg::ref_ptr<osg::Image> PixelText::createAtlas(
 		int charW = GLYPH_COLS * scale;
 		int gap = scale;
 		int blockW = static_cast<int>(value.size()) * charW + (static_cast<int>(value.size()) - 1) * gap;
-		int blockH = GLYPH_ROWS * scale;
+		int minRow = 0;
+		int maxRow = GLYPH_ROWS - 1;
+
+		if(verticallyCentered) std::tie(minRow, maxRow) = inkRowExtent(value);
+
+		int blockH = (maxRow - minRow + 1) * scale;
 		int marginX = (cellSize - blockW) / 2;
-		int marginY = (cellSize - blockH) / 2;
+		// Shifted by -minRow * scale so row `minRow` (the block's actual top edge) lands at the
+		// computed top margin, rather than row 0 of the glyph's own GLYPH_ROWS-tall coordinate
+		// space - see stampGlyph()'s row/y0 math below.
+		int marginY = (cellSize - blockH) / 2 - minRow * scale;
 		int cellOriginX = static_cast<int>(cellIndex) * cellSize;
 
 		for(std::size_t charSlot = 0; charSlot < value.size(); charSlot++) {
