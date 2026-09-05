@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 
-project(osgx VERSION 0.1.2)
+project(osgx VERSION 0.1.3)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -234,6 +234,7 @@ add_library(osgx ${OSGX_LIBRARY_TYPE}
 	src/Shadow.cpp
 	src/Shapes.cpp
 	src/Shader.cpp
+	# src/TemporalEdge.cpp
 )
 add_library(osgx::osgx ALIAS osgx)
 
@@ -259,6 +260,7 @@ target_sources(osgx PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shadow.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shapes.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Shader.hpp>"
+	# "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/TemporalEdge.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/Debug.hpp>"
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/osgx/ImGui.hpp>"
 )

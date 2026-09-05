@@ -6,7 +6,7 @@ set(OSGX_EXAMPLES
 	"eventhandler"
 	"grid"
 	"hover"
-	"hover-aura"
+	# "hover-aura"
 	"ibl"
 	"ktx2-skybox"
 	"lights"
@@ -17,6 +17,7 @@ set(OSGX_EXAMPLES
 	"platform"
 	"shadow"
 	"shapes"
+	# "temporal-edge"
 	"viewer"
 	"visitor"
 )
@@ -25,10 +26,10 @@ foreach(example IN LISTS OSGX_EXAMPLES)
 	osgx_add_executable("osgx" "${example}")
 endforeach()
 
-find_package(OpenGL REQUIRED)
-target_link_libraries(osgx-hover PRIVATE OpenGL::GL)
-target_link_libraries(osgx-hover-aura PRIVATE OpenGL::GL)
-target_link_libraries(osgx-picking PRIVATE OpenGL::GL)
+# find_package(OpenGL REQUIRED)
+# target_link_libraries(osgx-hover PRIVATE OpenGL::GL)
+# target_link_libraries(osgx-hover-aura PRIVATE OpenGL::GL)
+# target_link_libraries(osgx-picking PRIVATE OpenGL::GL)
 
 if(OSGX_BUILD_GLTF)
 	osgx_add_executable("osgx" "turntable")
